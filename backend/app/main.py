@@ -7,12 +7,27 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import Base, SessionLocal, engine, get_db
-from app.models import Bed, Cost, Crop, Harvest, Planting, Sale, Task, Variety
+from app.models import (
+    Bed,
+    Cost,
+    Crop,
+    Customer,
+    Harvest,
+    Order,
+    OrderItem,
+    Planting,
+    Sale,
+    Task,
+    Variety,
+)
 from app.schemas import (
     BedCreate,
     CostCreate,
     CropOut,
+    CustomerCreate,
     HarvestCreate,
+    OrderCreate,
+    OrderStatusUpdate,
     PlantingCreate,
     RotationPreview,
     SaleCreate,
@@ -32,7 +47,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="0.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -577,8 +592,12 @@ def create_sale(payload: SaleCreate, db: Session = Depends(get_db)) -> dict:
     if harvest is None:
         raise HTTPException(status_code=404, detail="Žetev ne obstaja.")
     already_sold = sum(sale.quantity_kg for sale in harvest.sales)
-    if round(already_sold + payload.quantity_kg, 6) > round(harvest.quantity_kg, 6):
-        raise HTTPException(status_code=409, detail="Prodana količina presega razpoložljivo količino žetve.")
+    reserved = reserved_quantity(db, harvest.id)
+    if round(already_sold + reserved + payload.quantity_kg, 6) > round(harvest.quantity_kg, 6):
+        raise HTTPException(
+            status_code=409,
+            detail="Prodana količina posega v prodano ali rezervirano zalogo žetve.",
+        )
     sale = Sale(
         farm_id=DEFAULT_FARM_ID,
         harvest_id=harvest.id,
@@ -621,3 +640,278 @@ def economics_by_bed(db: Session = Depends(get_db)) -> list[dict]:
             }
         )
     return result
+
+
+def reserved_quantity(db: Session, harvest_id: int, exclude_order_id: int | None = None) -> float:
+    statement = (
+        select(func.coalesce(func.sum(OrderItem.quantity_kg), 0.0))
+        .join(Order, OrderItem.order_id == Order.id)
+        .where(OrderItem.harvest_id == harvest_id, Order.status == "confirmed")
+    )
+    if exclude_order_id is not None:
+        statement = statement.where(Order.id != exclude_order_id)
+    return float(db.scalar(statement) or 0)
+
+
+def sold_quantity(db: Session, harvest_id: int) -> float:
+    return float(
+        db.scalar(
+            select(func.coalesce(func.sum(Sale.quantity_kg), 0.0)).where(
+                Sale.harvest_id == harvest_id
+            )
+        )
+        or 0
+    )
+
+
+def serialize_customer(customer: Customer) -> dict:
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "email": customer.email,
+        "phone": customer.phone,
+        "address": customer.address,
+        "notes": customer.notes,
+    }
+
+
+def serialize_order(order: Order) -> dict:
+    return {
+        "id": order.id,
+        "number": f"GM-{order.order_date.year}-{order.id:04d}",
+        "customer_id": order.customer_id,
+        "customer": order.customer.name,
+        "order_date": order.order_date,
+        "delivery_date": order.delivery_date,
+        "status": order.status,
+        "notes": order.notes,
+        "total_eur": order.total_eur,
+        "items": [
+            {
+                "id": item.id,
+                "harvest_id": item.harvest_id,
+                "bed": item.harvest.bed.name,
+                "crop": item.harvest.planting.crop.name,
+                "variety": item.harvest.planting.variety.name,
+                "quality": item.harvest.quality,
+                "quantity_kg": item.quantity_kg,
+                "price_per_kg_eur": item.price_per_kg_eur,
+                "line_total_eur": item.line_total_eur,
+            }
+            for item in order.items
+        ],
+    }
+
+
+def order_load_options() -> tuple:
+    return (
+        selectinload(Order.customer),
+        selectinload(Order.items)
+        .selectinload(OrderItem.harvest)
+        .selectinload(Harvest.bed),
+        selectinload(Order.items)
+        .selectinload(OrderItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.crop),
+        selectinload(Order.items)
+        .selectinload(OrderItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.variety),
+    )
+
+
+@app.get("/api/inventory")
+def inventory(db: Session = Depends(get_db)) -> list[dict]:
+    harvests = db.scalars(
+        select(Harvest)
+        .where(Harvest.farm_id == DEFAULT_FARM_ID)
+        .options(
+            selectinload(Harvest.bed),
+            selectinload(Harvest.planting).selectinload(Planting.crop),
+            selectinload(Harvest.planting).selectinload(Planting.variety),
+        )
+        .order_by(Harvest.harvest_date.desc(), Harvest.id.desc())
+    ).all()
+    result = []
+    for harvest in harvests:
+        sold_kg = sold_quantity(db, harvest.id)
+        reserved_kg = reserved_quantity(db, harvest.id)
+        physical_kg = max(0.0, harvest.quantity_kg - sold_kg)
+        available_kg = 0.0 if harvest.quality == "waste" else max(0.0, physical_kg - reserved_kg)
+        result.append(
+            {
+                "harvest_id": harvest.id,
+                "bed": harvest.bed.name,
+                "crop": harvest.planting.crop.name,
+                "variety": harvest.planting.variety.name,
+                "harvest_date": harvest.harvest_date,
+                "quality": harvest.quality,
+                "harvested_kg": harvest.quantity_kg,
+                "sold_kg": round(sold_kg, 2),
+                "reserved_kg": round(reserved_kg, 2),
+                "available_kg": round(available_kg, 2),
+            }
+        )
+    return result
+
+
+@app.get("/api/customers")
+def list_customers(db: Session = Depends(get_db)) -> list[dict]:
+    customers = db.scalars(
+        select(Customer)
+        .where(Customer.farm_id == DEFAULT_FARM_ID)
+        .order_by(Customer.name)
+    ).all()
+    return [serialize_customer(customer) for customer in customers]
+
+
+@app.post("/api/customers", status_code=status.HTTP_201_CREATED)
+def create_customer(payload: CustomerCreate, db: Session = Depends(get_db)) -> dict:
+    name = payload.name.strip()
+    duplicate = db.scalar(
+        select(Customer).where(
+            Customer.farm_id == DEFAULT_FARM_ID,
+            func.lower(Customer.name) == name.lower(),
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="Kupec s tem imenom že obstaja.")
+    customer = Customer(
+        farm_id=DEFAULT_FARM_ID,
+        name=name,
+        email=payload.email.strip() if payload.email else None,
+        phone=payload.phone.strip() if payload.phone else None,
+        address=payload.address.strip() if payload.address else None,
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    return {"message": "Kupec je dodan.", **serialize_customer(customer)}
+
+
+@app.get("/api/orders")
+def list_orders(db: Session = Depends(get_db)) -> list[dict]:
+    orders = db.scalars(
+        select(Order)
+        .where(Order.farm_id == DEFAULT_FARM_ID)
+        .options(*order_load_options())
+        .order_by(Order.delivery_date.desc(), Order.id.desc())
+    ).all()
+    return [serialize_order(order) for order in orders]
+
+
+@app.post("/api/orders", status_code=status.HTTP_201_CREATED)
+def create_order(payload: OrderCreate, db: Session = Depends(get_db)) -> dict:
+    customer = db.get(Customer, payload.customer_id)
+    if customer is None or customer.farm_id != DEFAULT_FARM_ID:
+        raise HTTPException(status_code=404, detail="Kupec ne obstaja.")
+    if payload.delivery_date < payload.order_date:
+        raise HTTPException(status_code=422, detail="Datum dostave ne sme biti pred datumom naročila.")
+    harvest_ids = [item.harvest_id for item in payload.items]
+    if len(harvest_ids) != len(set(harvest_ids)):
+        raise HTTPException(status_code=422, detail="Ista žetev je lahko v naročilu navedena samo enkrat.")
+
+    harvests = {
+        harvest.id: harvest
+        for harvest in db.scalars(
+            select(Harvest)
+            .where(Harvest.id.in_(harvest_ids), Harvest.farm_id == DEFAULT_FARM_ID)
+            .options(selectinload(Harvest.bed))
+        ).all()
+    }
+    if len(harvests) != len(harvest_ids):
+        raise HTTPException(status_code=404, detail="Ena ali več izbranih žetev ne obstaja.")
+    for item in payload.items:
+        harvest = harvests[item.harvest_id]
+        if harvest.quality == "waste":
+            raise HTTPException(status_code=409, detail="Odpadne kakovosti ni mogoče rezervirati za prodajo.")
+        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
+        if item.quantity_kg > round(available, 6):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Na gredici {harvest.bed.name} je na voljo le {max(0, round(available, 2))} kg.",
+            )
+
+    order = Order(
+        farm_id=DEFAULT_FARM_ID,
+        customer_id=customer.id,
+        order_date=payload.order_date,
+        delivery_date=payload.delivery_date,
+        status="confirmed",
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    order.items = [
+        OrderItem(
+            harvest_id=item.harvest_id,
+            quantity_kg=item.quantity_kg,
+            price_per_kg_eur=item.price_per_kg_eur,
+        )
+        for item in payload.items
+    ]
+    db.add(order)
+    db.commit()
+    order = db.scalar(select(Order).where(Order.id == order.id).options(*order_load_options()))
+    return {"message": "Naročilo je potrjeno in količina rezervirana.", **serialize_order(order)}
+
+
+@app.post("/api/orders/{order_id}/status")
+def update_order_status(
+    order_id: int,
+    payload: OrderStatusUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    order = db.scalar(
+        select(Order)
+        .where(Order.id == order_id, Order.farm_id == DEFAULT_FARM_ID)
+        .options(*order_load_options())
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="Naročilo ne obstaja.")
+    if order.status != "confirmed":
+        raise HTTPException(status_code=409, detail="Zaključeno ali preklicano naročilo se ne more več spremeniti.")
+
+    if payload.status == "fulfilled":
+        for item in order.items:
+            available_physical = item.harvest.quantity_kg - sold_quantity(db, item.harvest_id)
+            if item.quantity_kg > round(available_physical, 6):
+                raise HTTPException(status_code=409, detail="Zaloga ne zadošča za zaključek naročila.")
+            db.add(
+                Sale(
+                    farm_id=DEFAULT_FARM_ID,
+                    harvest_id=item.harvest_id,
+                    sale_date=order.delivery_date,
+                    quantity_kg=item.quantity_kg,
+                    price_per_kg_eur=item.price_per_kg_eur,
+                    customer=order.customer.name,
+                )
+            )
+    order.status = payload.status
+    db.commit()
+    order = db.scalar(select(Order).where(Order.id == order.id).options(*order_load_options()))
+    message = "Naročilo je dostavljeno in prodaja zabeležena." if payload.status == "fulfilled" else "Naročilo je preklicano; zaloga je sproščena."
+    return {"message": message, **serialize_order(order)}
+
+
+@app.get("/api/orders/{order_id}/document")
+def order_document(
+    order_id: int,
+    document_type: str = Query(default="delivery_note", pattern="^(delivery_note|invoice)$"),
+    db: Session = Depends(get_db),
+) -> dict:
+    order = db.scalar(
+        select(Order)
+        .where(Order.id == order_id, Order.farm_id == DEFAULT_FARM_ID)
+        .options(*order_load_options())
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="Naročilo ne obstaja.")
+    if document_type == "invoice" and order.status != "fulfilled":
+        raise HTTPException(status_code=409, detail="Račun je na voljo po dostavi naročila.")
+    return {
+        "document_type": document_type,
+        "document_number": ("R" if document_type == "invoice" else "D") + f"-{order.order_date.year}-{order.id:04d}",
+        "order": serialize_order(order),
+        "customer": serialize_customer(order.customer),
+        "issued_on": date.today(),
+    }
