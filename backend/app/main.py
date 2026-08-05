@@ -14,11 +14,15 @@ from app.models import (
     Crop,
     CropPlan,
     Customer,
+    CustomerProfile,
     Harvest,
     Order,
     OrderItem,
     Planting,
+    RetailSale,
+    RetailSaleItem,
     Sale,
+    SalesSettings,
     Task,
     Variety,
 )
@@ -33,9 +37,11 @@ from app.schemas import (
     HarvestCreate,
     OrderCreate,
     OrderStatusUpdate,
+    RetailSaleCreate,
     PlantingCreate,
     RotationPreview,
     SaleCreate,
+    SalesSettingsUpdate,
     TaskComplete,
     TaskCreate,
 )
@@ -52,7 +58,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="0.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -670,6 +676,7 @@ def sold_quantity(db: Session, harvest_id: int) -> float:
 
 
 def serialize_customer(customer: Customer) -> dict:
+    profile = customer.profile
     return {
         "id": customer.id,
         "name": customer.name,
@@ -677,6 +684,8 @@ def serialize_customer(customer: Customer) -> dict:
         "phone": customer.phone,
         "address": customer.address,
         "notes": customer.notes,
+        "customer_type": profile.customer_type if profile else "consumer",
+        "tax_number": profile.tax_number if profile else None,
     }
 
 
@@ -686,6 +695,9 @@ def serialize_order(order: Order) -> dict:
         "number": f"GM-{order.order_date.year}-{order.id:04d}",
         "customer_id": order.customer_id,
         "customer": order.customer.name,
+        "customer_type": (
+            order.customer.profile.customer_type if order.customer.profile else "consumer"
+        ),
         "order_date": order.order_date,
         "delivery_date": order.delivery_date,
         "status": order.status,
@@ -710,7 +722,7 @@ def serialize_order(order: Order) -> dict:
 
 def order_load_options() -> tuple:
     return (
-        selectinload(Order.customer),
+        selectinload(Order.customer).selectinload(Customer.profile),
         selectinload(Order.items)
         .selectinload(OrderItem.harvest)
         .selectinload(Harvest.bed),
@@ -765,6 +777,7 @@ def list_customers(db: Session = Depends(get_db)) -> list[dict]:
     customers = db.scalars(
         select(Customer)
         .where(Customer.farm_id == DEFAULT_FARM_ID)
+        .options(selectinload(Customer.profile))
         .order_by(Customer.name)
     ).all()
     return [serialize_customer(customer) for customer in customers]
@@ -781,6 +794,11 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db)) -> d
     )
     if duplicate is not None:
         raise HTTPException(status_code=409, detail="Kupec s tem imenom že obstaja.")
+    if payload.customer_type == "business" and not payload.tax_number:
+        raise HTTPException(
+            status_code=422,
+            detail="Za poslovnega kupca vpišite davčno številko.",
+        )
     customer = Customer(
         farm_id=DEFAULT_FARM_ID,
         name=name,
@@ -788,6 +806,10 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db)) -> d
         phone=payload.phone.strip() if payload.phone else None,
         address=payload.address.strip() if payload.address else None,
         notes=payload.notes.strip() if payload.notes else None,
+    )
+    customer.profile = CustomerProfile(
+        customer_type=payload.customer_type,
+        tax_number=payload.tax_number.strip() if payload.tax_number else None,
     )
     db.add(customer)
     db.commit()
@@ -911,8 +933,18 @@ def order_document(
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Naročilo ne obstaja.")
-    if document_type == "invoice" and order.status != "fulfilled":
-        raise HTTPException(status_code=409, detail="Račun je na voljo po dostavi naročila.")
+    if document_type == "invoice":
+        if order.status != "fulfilled":
+            raise HTTPException(status_code=409, detail="Račun je na voljo po dostavi naročila.")
+        customer_type = (
+            order.customer.profile.customer_type if order.customer.profile else "consumer"
+        )
+        settings = get_sales_settings(db)
+        if customer_type == "consumer" and settings.basic_agriculture_invoice_exemption:
+            raise HTTPException(
+                status_code=409,
+                detail="Za končnega potrošnika ob vključeni izjemi 81.a račun ni predviden.",
+            )
     return {
         "document_type": document_type,
         "document_number": ("R" if document_type == "invoice" else "D") + f"-{order.order_date.year}-{order.id:04d}",
@@ -1266,4 +1298,243 @@ def planning_forecast(
             for row in rows
             if row["shortage"]
         ],
+    }
+
+
+def get_sales_settings(db: Session) -> SalesSettings:
+    settings = db.get(SalesSettings, DEFAULT_FARM_ID)
+    if settings is None:
+        settings = SalesSettings(
+            farm_id=DEFAULT_FARM_ID,
+            basic_agriculture_invoice_exemption=True,
+            seller_name="GrowMaster kmetija",
+        )
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+def retail_sale_options() -> tuple:
+    return (
+        selectinload(RetailSale.customer).selectinload(Customer.profile),
+        selectinload(RetailSale.items)
+        .selectinload(RetailSaleItem.harvest)
+        .selectinload(Harvest.bed),
+        selectinload(RetailSale.items)
+        .selectinload(RetailSaleItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.crop),
+        selectinload(RetailSale.items)
+        .selectinload(RetailSaleItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.variety),
+    )
+
+
+def retail_sale_requires_invoice(retail_sale: RetailSale, settings: SalesSettings) -> bool:
+    customer_type = (
+        retail_sale.customer.profile.customer_type
+        if retail_sale.customer and retail_sale.customer.profile
+        else "consumer"
+    )
+    return customer_type == "business" or not settings.basic_agriculture_invoice_exemption
+
+
+def serialize_retail_sale(retail_sale: RetailSale, settings: SalesSettings) -> dict:
+    customer_type = (
+        retail_sale.customer.profile.customer_type
+        if retail_sale.customer and retail_sale.customer.profile
+        else "consumer"
+    )
+    return {
+        "id": retail_sale.id,
+        "number": f"MP-{retail_sale.sale_date.year}-{retail_sale.id:04d}",
+        "sale_date": retail_sale.sale_date,
+        "payment_method": retail_sale.payment_method,
+        "customer_id": retail_sale.customer_id,
+        "customer": retail_sale.customer.name if retail_sale.customer else "Končni potrošnik",
+        "customer_type": customer_type,
+        "invoice_required": retail_sale_requires_invoice(retail_sale, settings),
+        "notes": retail_sale.notes,
+        "total_eur": retail_sale.total_eur,
+        "items": [
+            {
+                "id": item.id,
+                "harvest_id": item.harvest_id,
+                "crop": item.harvest.planting.crop.name,
+                "variety": item.harvest.planting.variety.name,
+                "bed": item.harvest.bed.name,
+                "quantity_kg": item.quantity_kg,
+                "price_per_kg_eur": item.price_per_kg_eur,
+                "line_total_eur": item.line_total_eur,
+            }
+            for item in retail_sale.items
+        ],
+    }
+
+
+@app.get("/api/sales-settings")
+def sales_settings(db: Session = Depends(get_db)) -> dict:
+    settings = get_sales_settings(db)
+    return {
+        "basic_agriculture_invoice_exemption": settings.basic_agriculture_invoice_exemption,
+        "seller_name": settings.seller_name,
+        "seller_tax_number": settings.seller_tax_number,
+        "legal_basis": "Izjema za neposredno prodajo lastnih pridelkov končnemu potrošniku po 81.a členu ZDDV-1.",
+    }
+
+
+@app.put("/api/sales-settings")
+def update_sales_settings(
+    payload: SalesSettingsUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    settings = get_sales_settings(db)
+    settings.basic_agriculture_invoice_exemption = (
+        payload.basic_agriculture_invoice_exemption
+    )
+    settings.seller_name = payload.seller_name.strip()
+    settings.seller_tax_number = (
+        payload.seller_tax_number.strip() if payload.seller_tax_number else None
+    )
+    db.commit()
+    return {"message": "Nastavitve prodaje so shranjene.", **sales_settings(db)}
+
+
+@app.get("/api/retail-sales")
+def list_retail_sales(db: Session = Depends(get_db)) -> list[dict]:
+    settings = get_sales_settings(db)
+    retail_sales = db.scalars(
+        select(RetailSale)
+        .where(RetailSale.farm_id == DEFAULT_FARM_ID)
+        .options(*retail_sale_options())
+        .order_by(RetailSale.sale_date.desc(), RetailSale.id.desc())
+    ).all()
+    return [serialize_retail_sale(retail_sale, settings) for retail_sale in retail_sales]
+
+
+@app.post("/api/retail-sales", status_code=status.HTTP_201_CREATED)
+def create_retail_sale(
+    payload: RetailSaleCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    customer = None
+    if payload.customer_id is not None:
+        customer = db.scalar(
+            select(Customer)
+            .where(
+                Customer.id == payload.customer_id,
+                Customer.farm_id == DEFAULT_FARM_ID,
+            )
+            .options(selectinload(Customer.profile))
+        )
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Kupec ne obstaja.")
+    harvest_ids = [item.harvest_id for item in payload.items]
+    if len(harvest_ids) != len(set(harvest_ids)):
+        raise HTTPException(status_code=422, detail="Ista žetev je lahko navedena samo enkrat.")
+    harvests = {
+        harvest.id: harvest
+        for harvest in db.scalars(
+            select(Harvest)
+            .where(Harvest.id.in_(harvest_ids), Harvest.farm_id == DEFAULT_FARM_ID)
+            .options(
+                selectinload(Harvest.bed),
+                selectinload(Harvest.planting).selectinload(Planting.crop),
+                selectinload(Harvest.planting).selectinload(Planting.variety),
+            )
+        ).all()
+    }
+    if len(harvests) != len(harvest_ids):
+        raise HTTPException(status_code=404, detail="Ena ali več izbranih žetev ne obstaja.")
+    for item in payload.items:
+        harvest = harvests[item.harvest_id]
+        if harvest.quality == "waste":
+            raise HTTPException(status_code=409, detail="Odpadne kakovosti ni mogoče prodati.")
+        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
+        if item.quantity_kg > round(available, 6):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Na gredici {harvest.bed.name} je na voljo le {max(0, round(available, 2))} kg.",
+            )
+    retail_sale = RetailSale(
+        farm_id=DEFAULT_FARM_ID,
+        customer_id=customer.id if customer else None,
+        sale_date=payload.sale_date,
+        payment_method=payload.payment_method,
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    retail_sale.items = [
+        RetailSaleItem(
+            harvest_id=item.harvest_id,
+            quantity_kg=item.quantity_kg,
+            price_per_kg_eur=item.price_per_kg_eur,
+        )
+        for item in payload.items
+    ]
+    db.add(retail_sale)
+    for item in payload.items:
+        db.add(
+            Sale(
+                farm_id=DEFAULT_FARM_ID,
+                harvest_id=item.harvest_id,
+                sale_date=payload.sale_date,
+                quantity_kg=item.quantity_kg,
+                price_per_kg_eur=item.price_per_kg_eur,
+                customer=customer.name if customer else "Končni potrošnik",
+            )
+        )
+    db.commit()
+    retail_sale = db.scalar(
+        select(RetailSale)
+        .where(RetailSale.id == retail_sale.id)
+        .options(*retail_sale_options())
+    )
+    settings = get_sales_settings(db)
+    return {
+        "message": "Hitra prodaja je zabeležena in zaloga posodobljena.",
+        **serialize_retail_sale(retail_sale, settings),
+    }
+
+
+@app.get("/api/retail-sales/{retail_sale_id}/document")
+def retail_sale_document(
+    retail_sale_id: int,
+    document_type: str = Query(default="receipt", pattern="^(receipt|invoice)$"),
+    db: Session = Depends(get_db),
+) -> dict:
+    retail_sale = db.scalar(
+        select(RetailSale)
+        .where(
+            RetailSale.id == retail_sale_id,
+            RetailSale.farm_id == DEFAULT_FARM_ID,
+        )
+        .options(*retail_sale_options())
+    )
+    if retail_sale is None:
+        raise HTTPException(status_code=404, detail="Prodaja ne obstaja.")
+    settings = get_sales_settings(db)
+    invoice_required = retail_sale_requires_invoice(retail_sale, settings)
+    if document_type == "invoice" and not invoice_required:
+        raise HTTPException(
+            status_code=409,
+            detail="Za to prodajo končnemu potrošniku račun ni predviden.",
+        )
+    return {
+        "document_type": document_type,
+        "document_number": (
+            ("R" if document_type == "invoice" else "P")
+            + f"-{retail_sale.sale_date.year}-{retail_sale.id:04d}"
+        ),
+        "seller": {
+            "name": settings.seller_name,
+            "tax_number": settings.seller_tax_number,
+        },
+        "sale": serialize_retail_sale(retail_sale, settings),
+        "fiscal_confirmation_required": (
+            document_type == "invoice"
+            and retail_sale.payment_method in {"cash", "card"}
+        ),
+        "issued_on": date.today(),
     }

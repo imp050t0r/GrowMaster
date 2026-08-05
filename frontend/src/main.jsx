@@ -46,6 +46,8 @@ function App() {
   const [plans, setPlans] = useState([]);
   const [planningCalendar, setPlanningCalendar] = useState([]);
   const [forecast, setForecast] = useState({ rows: [], warnings: [] });
+  const [retailSales, setRetailSales] = useState([]);
+  const [salesSettings, setSalesSettings] = useState(null);
   const [planStart, setPlanStart] = useState(today);
   const [planEnd, setPlanEnd] = useState(inDays(90));
   const [taskDate, setTaskDate] = useState(today);
@@ -78,9 +80,10 @@ function App() {
   const [harvestForm, setHarvestForm] = useState({ planting_id: "", harvest_date: today, quantity_kg: "", quality: "A", notes: "" });
   const [costForm, setCostForm] = useState({ bed_id: "", planting_id: "", cost_date: today, category: "labor", amount_eur: "", description: "" });
   const [saleForm, setSaleForm] = useState({ harvest_id: "", sale_date: today, quantity_kg: "", price_per_kg_eur: "", customer: "" });
-  const [customerForm, setCustomerForm] = useState({ name: "", email: "", phone: "", address: "" });
+  const [customerForm, setCustomerForm] = useState({ name: "", email: "", phone: "", address: "", customer_type: "consumer", tax_number: "" });
   const [orderForm, setOrderForm] = useState({ customer_id: "", harvest_id: "", order_date: today, delivery_date: today, quantity_kg: "", price_per_kg_eur: "", notes: "" });
   const [planForm, setPlanForm] = useState({ bed_id: "", crop_id: "", variety_id: "", sowing_date: today, transplant_date: "", expected_yield_kg: "", succession_count: "1", succession_interval_days: "14", notes: "" });
+  const [quickSaleForm, setQuickSaleForm] = useState({ customer_id: "", harvest_id: "", sale_date: today, payment_method: "cash", quantity_kg: "", price_per_kg_eur: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -92,7 +95,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -106,6 +109,8 @@ function App() {
       apiRequest("/api/plans"),
       apiRequest(`/api/planning/calendar?start=${planStart}&end=${planEnd}`),
       apiRequest(`/api/planning/forecast?start=${planStart}&end=${planEnd}`),
+      apiRequest("/api/retail-sales"),
+      apiRequest("/api/sales-settings"),
     ]);
     setCrops(cropData);
     setBeds(bedData);
@@ -120,6 +125,8 @@ function App() {
     setPlans(planData);
     setPlanningCalendar(calendarData.events);
     setForecast(forecastData);
+    setRetailSales(retailSaleData);
+    setSalesSettings(salesSettingsData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
     setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
     setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
@@ -128,6 +135,7 @@ function App() {
       customer_id: current.customer_id || customerData[0]?.id || "",
       harvest_id: current.harvest_id || inventoryData.find((item) => item.available_kg > 0)?.harvest_id || "",
     }));
+    setQuickSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || inventoryData.find((item) => item.available_kg > 0)?.harvest_id || "" }));
     setPlanForm((current) => {
       const cropId = current.crop_id || cropData[0]?.id || "";
       const crop = cropData.find((item) => String(item.id) === String(cropId));
@@ -303,7 +311,7 @@ function App() {
     event.preventDefault(); clearMessages();
     try {
       const data = await apiRequest("/api/customers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(customerForm) });
-      setCustomerForm({ name: "", email: "", phone: "", address: "" }); setNotice(data.message); await loadData();
+      setCustomerForm({ name: "", email: "", phone: "", address: "", customer_type: "consumer", tax_number: "" }); setNotice(data.message); await loadData();
     } catch (requestError) { setError(requestError.message); }
   }
 
@@ -327,6 +335,26 @@ function App() {
   async function openOrderDocument(orderId, type) {
     clearMessages();
     try { setDocument(await apiRequest(`/api/orders/${orderId}/document?document_type=${type}`)); }
+    catch (requestError) { setError(requestError.message); }
+  }
+
+  async function createQuickSale(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/retail-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer_id: quickSaleForm.customer_id ? Number(quickSaleForm.customer_id) : null, sale_date: quickSaleForm.sale_date, payment_method: quickSaleForm.payment_method, items: [{ harvest_id: Number(quickSaleForm.harvest_id), quantity_kg: Number(quickSaleForm.quantity_kg), price_per_kg_eur: Number(quickSaleForm.price_per_kg_eur) }] }) });
+      setQuickSaleForm({ ...quickSaleForm, quantity_kg: "", price_per_kg_eur: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function openRetailDocument(saleId, type) {
+    clearMessages();
+    try { setDocument(await apiRequest(`/api/retail-sales/${saleId}/document?document_type=${type}`)); }
+    catch (requestError) { setError(requestError.message); }
+  }
+
+  async function saveSalesSettings(event) {
+    event.preventDefault(); clearMessages();
+    try { const data = await apiRequest("/api/sales-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(salesSettings) }); setNotice(data.message); await loadData(); }
     catch (requestError) { setError(requestError.message); }
   }
 
@@ -382,7 +410,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 0.5</span>
+        <span className="status-pill">MVP 0.6</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -458,7 +486,9 @@ function App() {
           customerForm={customerForm} setCustomerForm={setCustomerForm} createCustomer={createCustomer}
           orderForm={orderForm} setOrderForm={setOrderForm} createOrder={createOrder}
           changeOrderStatus={changeOrderStatus} openOrderDocument={openOrderDocument}
-          document={document} setDocument={setDocument} />
+          document={document} setDocument={setDocument} retailSales={retailSales}
+          quickSaleForm={quickSaleForm} setQuickSaleForm={setQuickSaleForm} createQuickSale={createQuickSale} openRetailDocument={openRetailDocument}
+          salesSettings={salesSettings} setSalesSettings={setSalesSettings} saveSalesSettings={saveSalesSettings} />
       )}
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
@@ -636,18 +666,32 @@ function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setH
   </>;
 }
 
-function OrdersView({ inventory, customers, orders, customerForm, setCustomerForm, createCustomer, orderForm, setOrderForm, createOrder, changeOrderStatus, openOrderDocument, document, setDocument }) {
+function OrdersView({ inventory, customers, orders, customerForm, setCustomerForm, createCustomer, orderForm, setOrderForm, createOrder, changeOrderStatus, openOrderDocument, document, setDocument, retailSales, quickSaleForm, setQuickSaleForm, createQuickSale, openRetailDocument, salesSettings, setSalesSettings, saveSalesSettings }) {
   const available = inventory.filter((item) => item.available_kg > 0);
   return <>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prodajna zaloga</p><h2>Na voljo</h2></div><span>{available.reduce((sum, item) => sum + item.available_kg, 0).toFixed(1)} kg</span></div>
       <div className="inventory-grid">{inventory.map((item) => <article key={item.harvest_id}><strong>{item.crop} {item.variety}</strong><span>Gredica {item.bed} · kakovost {item.quality}</span><div><b>{item.available_kg} kg na voljo</b><small>{item.reserved_kg} kg rezervirano · {item.sold_kg} kg prodano</small></div></article>)}</div>
     </section>
+    <section className="quick-sale-grid">
+      <form className="panel quick-sale-form" onSubmit={createQuickSale}><div><p className="eyebrow">Tržnica in prodaja na domu</p><h2>Hitra prodaja</h2><span className="exemption-note">Končni potrošnik je privzet · račun ni predviden ob vključeni izjemi 81.a</span></div>
+        <label>Kupec<select value={quickSaleForm.customer_id} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, customer_id: e.target.value })}><option value="">Končni potrošnik (brez osebnih podatkov)</option>{customers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.customer_type === "business" ? "poslovni" : "končni"}</option>)}</select></label>
+        <label>Artikel<select value={quickSaleForm.harvest_id} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, harvest_id: e.target.value })} required>{available.map((item) => <option key={item.harvest_id} value={item.harvest_id}>{item.crop} {item.variety} · {item.available_kg} kg</option>)}</select></label>
+        <label>Količina (kg)<input type="number" min="0.01" step="0.01" value={quickSaleForm.quantity_kg} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, quantity_kg: e.target.value })} required /></label>
+        <label>Cena/kg (€)<input type="number" min="0.01" step="0.01" value={quickSaleForm.price_per_kg_eur} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, price_per_kg_eur: e.target.value })} required /></label>
+        <label>Plačilo<select value={quickSaleForm.payment_method} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, payment_method: e.target.value })}><option value="cash">Gotovina</option><option value="card">Kartica</option><option value="bank_transfer">Nakazilo</option></select></label>
+        <button className="primary-button">ZABELEŽI PRODAJO</button>
+      </form>
+      {salesSettings && <form className="panel compact-form" onSubmit={saveSalesSettings}><h2>Nastavitve prodaje</h2><label className="check-label"><input type="checkbox" checked={salesSettings.basic_agriculture_invoice_exemption} onChange={(e) => setSalesSettings({ ...salesSettings, basic_agriculture_invoice_exemption: e.target.checked })} /> Izjema osnovne kmetijske dejavnosti po 81.a</label><label>Naziv kmetije<input value={salesSettings.seller_name} onChange={(e) => setSalesSettings({ ...salesSettings, seller_name: e.target.value })} required /></label><label>Davčna številka<input value={salesSettings.seller_tax_number || ""} onChange={(e) => setSalesSettings({ ...salesSettings, seller_tax_number: e.target.value || null })} /></label><button className="secondary-button">SHRANI NASTAVITVE</button></form>}
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Neposredna prodaja</p><h2>Zadnje hitre prodaje</h2></div><span>{retailSales.length} zapisov</span></div><div className="retail-sales-list">{retailSales.map((sale) => <article key={sale.id}><div><strong>{sale.number} · {sale.customer}</strong><span>{sale.sale_date} · {sale.total_eur.toFixed(2)} € · {sale.payment_method === "cash" ? "gotovina" : sale.payment_method === "card" ? "kartica" : "nakazilo"}</span></div><div className="order-actions"><button className="text-button" onClick={() => openRetailDocument(sale.id, "receipt")}>POTRDILO</button>{sale.invoice_required && <button className="secondary-button" onClick={() => openRetailDocument(sale.id, "invoice")}>RAČUN</button>}</div></article>)}</div></section>
     <section className="order-entry-grid">
       <form className="panel compact-form" onSubmit={createCustomer}><h2>Nov kupec</h2>
+        <label>Vrsta<select value={customerForm.customer_type} onChange={(e) => setCustomerForm({ ...customerForm, customer_type: e.target.value })}><option value="consumer">Končni potrošnik</option><option value="business">Poslovni kupec</option></select></label>
         <label>Naziv<input value={customerForm.name} onChange={(e) => setCustomerForm({ ...customerForm, name: e.target.value })} required /></label>
         <label>E-pošta<input type="email" value={customerForm.email} onChange={(e) => setCustomerForm({ ...customerForm, email: e.target.value })} /></label>
         <label>Telefon<input value={customerForm.phone} onChange={(e) => setCustomerForm({ ...customerForm, phone: e.target.value })} /></label>
         <label>Naslov<input value={customerForm.address} onChange={(e) => setCustomerForm({ ...customerForm, address: e.target.value })} /></label>
+        {customerForm.customer_type === "business" && <label>Davčna številka<input value={customerForm.tax_number} onChange={(e) => setCustomerForm({ ...customerForm, tax_number: e.target.value })} required /></label>}
         <button className="primary-button">DODAJ KUPCA</button>
       </form>
       <form className="panel order-form" onSubmit={createOrder}><h2>Novo naročilo</h2>
@@ -663,10 +707,10 @@ function OrdersView({ inventory, customers, orders, customerForm, setCustomerFor
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prodajni tok</p><h2>Naročila</h2></div><span>{orders.length} skupaj</span></div>
       <div className="orders-list">{orders.map((order) => <article key={order.id}><div className="order-head"><div><strong>{order.number} · {order.customer}</strong><span>Dostava {order.delivery_date} · {order.total_eur.toFixed(2)} €</span></div><span className={`order-status ${order.status}`}>{order.status === "confirmed" ? "Potrjeno" : order.status === "fulfilled" ? "Dostavljeno" : "Preklicano"}</span></div>
         <div className="order-lines">{order.items.map((item) => <span key={item.id}>{item.crop} {item.variety} · {item.quantity_kg} kg × {item.price_per_kg_eur.toFixed(2)} €</span>)}</div>
-        <div className="order-actions"><button className="text-button" onClick={() => openOrderDocument(order.id, "delivery_note")}>DOBAVNICA</button>{order.status === "fulfilled" && <button className="text-button" onClick={() => openOrderDocument(order.id, "invoice")}>RAČUN</button>}{order.status === "confirmed" && <><button className="secondary-button" onClick={() => changeOrderStatus(order.id, "fulfilled")}>DOSTAVLJENO</button><button className="text-button danger-text" onClick={() => changeOrderStatus(order.id, "cancelled")}>PREKLIČI</button></>}</div>
+        <div className="order-actions"><button className="text-button" onClick={() => openOrderDocument(order.id, "delivery_note")}>DOBAVNICA</button>{order.status === "fulfilled" && order.customer_type === "business" && <button className="text-button" onClick={() => openOrderDocument(order.id, "invoice")}>RAČUN</button>}{order.status === "confirmed" && <><button className="secondary-button" onClick={() => changeOrderStatus(order.id, "fulfilled")}>DOSTAVLJENO</button><button className="text-button danger-text" onClick={() => changeOrderStatus(order.id, "cancelled")}>PREKLIČI</button></>}</div>
       </article>)}</div>
     </section>
-    {document && <section className="panel printable-document"><div className="section-heading"><div><p className="eyebrow">{document.document_type === "invoice" ? "Račun" : "Dobavnica"}</p><h2>{document.document_number}</h2></div><div className="order-actions"><button className="secondary-button" onClick={() => window.print()}>NATISNI</button><button className="icon-button" onClick={() => setDocument(null)}>✕</button></div></div><p><strong>Kupec:</strong> {document.customer.name}<br />{document.customer.address}</p><div className="document-lines">{document.order.items.map((item) => <div key={item.id}><span>{item.crop} {item.variety} · {item.quantity_kg} kg</span><strong>{item.line_total_eur.toFixed(2)} €</strong></div>)}</div><div className="document-total">Skupaj <strong>{document.order.total_eur.toFixed(2)} €</strong></div></section>}
+    {document && (() => { const record = document.order || document.sale; const customer = document.customer || { name: record.customer, address: "" }; return <section className="panel printable-document"><div className="section-heading"><div><p className="eyebrow">{document.document_type === "invoice" ? "Račun" : document.document_type === "delivery_note" ? "Dobavnica" : "Interno potrdilo prodaje"}</p><h2>{document.document_number}</h2></div><div className="order-actions"><button className="secondary-button" onClick={() => window.print()}>NATISNI</button><button className="icon-button" onClick={() => setDocument(null)}>✕</button></div></div>{document.seller && <p><strong>{document.seller.name}</strong><br />{document.seller.tax_number || ""}</p>}<p><strong>Kupec:</strong> {customer.name}<br />{customer.address || ""}</p><div className="document-lines">{record.items.map((item) => <div key={item.id}><span>{item.crop} {item.variety} · {item.quantity_kg} kg</span><strong>{item.line_total_eur.toFixed(2)} €</strong></div>)}</div><div className="document-total">Skupaj <strong>{record.total_eur.toFixed(2)} €</strong></div>{document.fiscal_confirmation_required && <p className="forecast-warning">Ta račun je treba pred uporabo vključiti v ustrezen postopek davčnega potrjevanja.</p>}</section>; })()}
   </>;
 }
 

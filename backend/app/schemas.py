@@ -91,6 +91,8 @@ class CustomerCreate(BaseModel):
     phone: str | None = Field(default=None, max_length=60)
     address: str | None = Field(default=None, max_length=1000)
     notes: str | None = Field(default=None, max_length=2000)
+    customer_type: Literal["consumer", "business"] = "consumer"
+    tax_number: str | None = Field(default=None, max_length=30)
 
 
 class OrderItemCreate(BaseModel):
@@ -129,3 +131,23 @@ class CropPlanActivate(BaseModel):
 
 class CropPlanStatusUpdate(BaseModel):
     status: Literal["cancelled"]
+
+
+class RetailSaleItemCreate(BaseModel):
+    harvest_id: int
+    quantity_kg: float = Field(gt=0, le=100000)
+    price_per_kg_eur: float = Field(gt=0, le=100000)
+
+
+class RetailSaleCreate(BaseModel):
+    customer_id: int | None = None
+    sale_date: date
+    payment_method: Literal["cash", "card", "bank_transfer"] = "cash"
+    notes: str | None = Field(default=None, max_length=2000)
+    items: list[RetailSaleItemCreate] = Field(min_length=1, max_length=100)
+
+
+class SalesSettingsUpdate(BaseModel):
+    basic_agriculture_invoice_exemption: bool = True
+    seller_name: str = Field(min_length=1, max_length=160)
+    seller_tax_number: str | None = Field(default=None, max_length=30)
