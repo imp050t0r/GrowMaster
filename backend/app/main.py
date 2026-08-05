@@ -20,6 +20,7 @@ from app.models import (
     Customer,
     CustomerProfile,
     CreditNote,
+    DayClose,
     DocumentSequence,
     Farm,
     Harvest,
@@ -48,6 +49,7 @@ from app.schemas import (
     CropOut,
     CustomerCreate,
     CreditNoteCreate,
+    DayCloseCreate,
     FiscalConfirmationCreate,
     HarvestCreate,
     InvoiceCreate,
@@ -79,7 +81,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.2.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -2060,6 +2062,7 @@ def record_refund(
     )
     if credit_note is None:
         raise HTTPException(status_code=404, detail="Dobropis ne obstaja.")
+    ensure_business_day_open(db, payload.refund_date)
     if credit_note.fiscal_confirmation_required and not credit_note.eor:
         raise HTTPException(
             status_code=409,
@@ -2105,6 +2108,23 @@ def record_refund(
     }
 
 
+def ensure_business_day_open(db: Session, business_date: date) -> None:
+    closed = db.scalar(
+        select(DayClose.id).where(
+            DayClose.farm_id == DEFAULT_FARM_ID,
+            DayClose.business_date == business_date,
+        )
+    )
+    if closed is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Dan {business_date.isoformat()} je že zaključen. "
+                "Novega denarnega vnosa za ta datum ni mogoče dodati."
+            ),
+        )
+
+
 @app.get("/api/retail-sales")
 def list_retail_sales(db: Session = Depends(get_db)) -> list[dict]:
     settings = get_sales_settings(db)
@@ -2122,6 +2142,7 @@ def create_retail_sale(
     payload: RetailSaleCreate,
     db: Session = Depends(get_db),
 ) -> dict:
+    ensure_business_day_open(db, payload.sale_date)
     customer = None
     if payload.customer_id is not None:
         customer = db.scalar(
@@ -2579,6 +2600,7 @@ def record_order_payment(
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Naročilo ne obstaja.")
+    ensure_business_day_open(db, payload.payment_date)
     if order.status != "fulfilled":
         raise HTTPException(
             status_code=409,
@@ -2871,3 +2893,189 @@ def export_cash_flow(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def build_day_close_preview(
+    db: Session,
+    business_date: date,
+    opening_cash_eur: float,
+) -> dict:
+    retail_sales = db.scalars(
+        select(RetailSale)
+        .where(
+            RetailSale.farm_id == DEFAULT_FARM_ID,
+            RetailSale.sale_date == business_date,
+        )
+        .options(selectinload(RetailSale.items))
+    ).all()
+    payments = db.scalars(
+        select(OrderPayment).where(
+            OrderPayment.farm_id == DEFAULT_FARM_ID,
+            OrderPayment.payment_date == business_date,
+        )
+    ).all()
+    refunds = db.scalars(
+        select(Refund).where(
+            Refund.farm_id == DEFAULT_FARM_ID,
+            Refund.refund_date == business_date,
+        )
+    ).all()
+    methods = ("cash", "card", "bank_transfer")
+    inflow_by_method = {
+        method: round(
+            sum(
+                sale.total_eur
+                for sale in retail_sales
+                if sale.payment_method == method
+            )
+            + sum(
+                payment.amount_eur
+                for payment in payments
+                if payment.payment_method == method
+            ),
+            2,
+        )
+        for method in methods
+    }
+    refund_by_method = {
+        method: round(
+            sum(
+                refund.amount_eur
+                for refund in refunds
+                if refund.payment_method == method
+            ),
+            2,
+        )
+        for method in methods
+    }
+    total_inflow_eur = round(sum(inflow_by_method.values()), 2)
+    total_refund_eur = round(sum(refund_by_method.values()), 2)
+    opening_cash_eur = round(opening_cash_eur, 2)
+    return {
+        "business_date": business_date,
+        "opening_cash_eur": opening_cash_eur,
+        "cash_in_eur": inflow_by_method["cash"],
+        "cash_refund_eur": refund_by_method["cash"],
+        "card_in_eur": inflow_by_method["card"],
+        "card_refund_eur": refund_by_method["card"],
+        "bank_transfer_in_eur": inflow_by_method["bank_transfer"],
+        "bank_transfer_refund_eur": refund_by_method["bank_transfer"],
+        "total_inflow_eur": total_inflow_eur,
+        "total_refund_eur": total_refund_eur,
+        "net_receipts_eur": round(total_inflow_eur - total_refund_eur, 2),
+        "expected_cash_eur": round(
+            opening_cash_eur
+            + inflow_by_method["cash"]
+            - refund_by_method["cash"],
+            2,
+        ),
+        "retail_sale_count": len(retail_sales),
+        "payment_count": len(payments),
+        "refund_count": len(refunds),
+    }
+
+
+def serialize_day_close(day_close: DayClose) -> dict:
+    return {
+        "id": day_close.id,
+        "business_date": day_close.business_date,
+        "opening_cash_eur": day_close.opening_cash_eur,
+        "cash_in_eur": day_close.cash_in_eur,
+        "cash_refund_eur": day_close.cash_refund_eur,
+        "card_in_eur": day_close.card_in_eur,
+        "card_refund_eur": day_close.card_refund_eur,
+        "bank_transfer_in_eur": day_close.bank_transfer_in_eur,
+        "bank_transfer_refund_eur": day_close.bank_transfer_refund_eur,
+        "total_inflow_eur": day_close.total_inflow_eur,
+        "total_refund_eur": day_close.total_refund_eur,
+        "net_receipts_eur": round(
+            day_close.total_inflow_eur - day_close.total_refund_eur, 2
+        ),
+        "expected_cash_eur": day_close.expected_cash_eur,
+        "counted_cash_eur": day_close.counted_cash_eur,
+        "difference_eur": day_close.difference_eur,
+        "retail_sale_count": day_close.retail_sale_count,
+        "payment_count": day_close.payment_count,
+        "refund_count": day_close.refund_count,
+        "notes": day_close.notes,
+        "closed_at": day_close.closed_at,
+    }
+
+
+@app.get("/api/day-closes")
+def list_day_closes(db: Session = Depends(get_db)) -> list[dict]:
+    closes = db.scalars(
+        select(DayClose)
+        .where(DayClose.farm_id == DEFAULT_FARM_ID)
+        .order_by(DayClose.business_date.desc(), DayClose.id.desc())
+    ).all()
+    return [serialize_day_close(day_close) for day_close in closes]
+
+
+@app.get("/api/day-closes/preview")
+def day_close_preview(
+    business_date: date,
+    opening_cash_eur: float = Query(default=0, ge=0, le=1000000),
+    db: Session = Depends(get_db),
+) -> dict:
+    existing = db.scalar(
+        select(DayClose).where(
+            DayClose.farm_id == DEFAULT_FARM_ID,
+            DayClose.business_date == business_date,
+        )
+    )
+    if existing:
+        return {"closed": True, **serialize_day_close(existing)}
+    return {
+        "closed": False,
+        **build_day_close_preview(db, business_date, opening_cash_eur),
+    }
+
+
+@app.post("/api/day-closes", status_code=status.HTTP_201_CREATED)
+def close_business_day(
+    payload: DayCloseCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    existing = db.scalar(
+        select(DayClose)
+        .where(
+            DayClose.farm_id == DEFAULT_FARM_ID,
+            DayClose.business_date == payload.business_date,
+        )
+        .with_for_update()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Ta poslovni dan je že zaključen.")
+    preview = build_day_close_preview(
+        db, payload.business_date, payload.opening_cash_eur
+    )
+    day_close = DayClose(
+        farm_id=DEFAULT_FARM_ID,
+        business_date=payload.business_date,
+        opening_cash_eur=preview["opening_cash_eur"],
+        cash_in_eur=preview["cash_in_eur"],
+        cash_refund_eur=preview["cash_refund_eur"],
+        card_in_eur=preview["card_in_eur"],
+        card_refund_eur=preview["card_refund_eur"],
+        bank_transfer_in_eur=preview["bank_transfer_in_eur"],
+        bank_transfer_refund_eur=preview["bank_transfer_refund_eur"],
+        total_inflow_eur=preview["total_inflow_eur"],
+        total_refund_eur=preview["total_refund_eur"],
+        expected_cash_eur=preview["expected_cash_eur"],
+        counted_cash_eur=round(payload.counted_cash_eur, 2),
+        difference_eur=round(
+            payload.counted_cash_eur - preview["expected_cash_eur"], 2
+        ),
+        retail_sale_count=preview["retail_sale_count"],
+        payment_count=preview["payment_count"],
+        refund_count=preview["refund_count"],
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    db.add(day_close)
+    db.commit()
+    db.refresh(day_close)
+    return {
+        "message": "Poslovni dan je zaključen in denarni vnosi za ta datum so zaklenjeni.",
+        **serialize_day_close(day_close),
+    }

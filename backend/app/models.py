@@ -40,6 +40,7 @@ class Farm(Base):
     credit_notes: Mapped[list["CreditNote"]] = relationship(back_populates="farm")
     refunds: Mapped[list["Refund"]] = relationship(back_populates="farm")
     product_prices: Mapped[list["ProductPrice"]] = relationship(back_populates="farm")
+    day_closes: Mapped[list["DayClose"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -318,6 +319,38 @@ class ProductPrice(Base):
 
     farm: Mapped[Farm] = relationship(back_populates="product_prices")
     crop: Mapped[Crop] = relationship(back_populates="product_prices")
+
+
+class DayClose(Base):
+    __tablename__ = "day_closes"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "business_date", name="uq_day_close"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    business_date: Mapped[date] = mapped_column(Date, index=True)
+    opening_cash_eur: Mapped[float] = mapped_column(Float)
+    cash_in_eur: Mapped[float] = mapped_column(Float)
+    cash_refund_eur: Mapped[float] = mapped_column(Float)
+    card_in_eur: Mapped[float] = mapped_column(Float)
+    card_refund_eur: Mapped[float] = mapped_column(Float)
+    bank_transfer_in_eur: Mapped[float] = mapped_column(Float)
+    bank_transfer_refund_eur: Mapped[float] = mapped_column(Float)
+    total_inflow_eur: Mapped[float] = mapped_column(Float)
+    total_refund_eur: Mapped[float] = mapped_column(Float)
+    expected_cash_eur: Mapped[float] = mapped_column(Float)
+    counted_cash_eur: Mapped[float] = mapped_column(Float)
+    difference_eur: Mapped[float] = mapped_column(Float)
+    retail_sale_count: Mapped[int] = mapped_column(Integer)
+    payment_count: Mapped[int] = mapped_column(Integer)
+    refund_count: Mapped[int] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="day_closes")
 
 
 class SalesSettings(Base):

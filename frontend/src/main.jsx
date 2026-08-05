@@ -53,6 +53,8 @@ function App() {
   const [salesReport, setSalesReport] = useState({ summary: {}, daily: [], entries: [], note: "" });
   const [receivables, setReceivables] = useState({ summary: {}, items: [], note: "" });
   const [cashFlow, setCashFlow] = useState({ summary: {}, daily: [], entries: [], note: "" });
+  const [dayCloses, setDayCloses] = useState([]);
+  const [dayClosePreview, setDayClosePreview] = useState(null);
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [reportStart, setReportStart] = useState(today);
@@ -101,6 +103,7 @@ function App() {
   const [quickSaleCart, setQuickSaleCart] = useState([]);
   const [priceForm, setPriceForm] = useState({ crop_id: "", quality: "A", price_per_kg_eur: "" });
   const [paymentForm, setPaymentForm] = useState({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" });
+  const [dayCloseForm, setDayCloseForm] = useState({ business_date: today, opening_cash_eur: "0", counted_cash_eur: "", notes: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -112,7 +115,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -132,6 +135,7 @@ function App() {
       apiRequest(`/api/sales-report?start=${reportStart}&end=${reportEnd}`),
       apiRequest(`/api/receivables?as_of=${receivablesAsOf}&include_paid=${includePaidReceivables}`),
       apiRequest(`/api/cash-flow?start=${cashFlowStart}&end=${cashFlowEnd}`),
+      apiRequest("/api/day-closes"),
       apiRequest("/api/invoices"),
       apiRequest("/api/invoice-profile"),
     ]);
@@ -154,6 +158,7 @@ function App() {
     setSalesReport(salesReportData);
     setReceivables(receivablesData);
     setCashFlow(cashFlowData);
+    setDayCloses(dayCloseData);
     setInvoices(invoiceData);
     setInvoiceProfile(invoiceProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
@@ -190,6 +195,14 @@ function App() {
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
   }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd]);
+
+  useEffect(() => {
+    const openingCash = Number(dayCloseForm.opening_cash_eur);
+    if (!dayCloseForm.business_date || !Number.isFinite(openingCash) || openingCash < 0) return;
+    apiRequest(`/api/day-closes/preview?business_date=${dayCloseForm.business_date}&opening_cash_eur=${openingCash}`)
+      .then(setDayClosePreview)
+      .catch((loadError) => setError(loadError.message));
+  }, [dayCloseForm.business_date, dayCloseForm.opening_cash_eur]);
 
   function clearMessages() {
     setNotice("");
@@ -538,6 +551,31 @@ function App() {
     setPaymentForm({ payment_date: today < item.delivery_date ? item.delivery_date : today, amount_eur: item.outstanding_eur.toFixed(2), payment_method: "bank_transfer", notes: "" });
   }
 
+  async function closeBusinessDay(event) {
+    event.preventDefault(); clearMessages();
+    const openingCash = Number(dayCloseForm.opening_cash_eur);
+    const countedCash = Number(dayCloseForm.counted_cash_eur);
+    if (!Number.isFinite(openingCash) || openingCash < 0 || !Number.isFinite(countedCash) || countedCash < 0) {
+      setError("Vnesite veljavno začetno in prešteto gotovino."); return;
+    }
+    if (!window.confirm(`Zaključim poslovni dan ${dayCloseForm.business_date}? Poznejši denarni vnosi za ta datum ne bodo več mogoči.`)) return;
+    try {
+      const data = await apiRequest("/api/day-closes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          business_date: dayCloseForm.business_date,
+          opening_cash_eur: openingCash,
+          counted_cash_eur: countedCash,
+          notes: dayCloseForm.notes || null,
+        }),
+      });
+      setDayClosePreview({ closed: true, ...data });
+      setDayCloseForm({ ...dayCloseForm, counted_cash_eur: "", notes: "" });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   function changePlanCrop(event) {
     const cropId = event.target.value;
     const crop = crops.find((item) => String(item.id) === String(cropId));
@@ -583,6 +621,7 @@ function App() {
     ["reports", "Prodaja", "Σ"],
     ["receivables", "Terjatve", "↔"],
     ["cashflow", "Denar", "◒"],
+    ["closing", "Zaključek", "✓"],
     ["planning", "Plan", "◫"],
   ];
 
@@ -594,7 +633,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.2</span>
+        <span className="status-pill">MVP 1.3</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -692,6 +731,9 @@ function App() {
       )}
       {view === "cashflow" && (
         <CashFlowView data={cashFlow} start={cashFlowStart} setStart={setCashFlowStart} end={cashFlowEnd} setEnd={setCashFlowEnd} />
+      )}
+      {view === "closing" && (
+        <DayCloseView closes={dayCloses} preview={dayClosePreview} form={dayCloseForm} setForm={setDayCloseForm} closeDay={closeBusinessDay} />
       )}
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
@@ -1009,6 +1051,48 @@ function CashFlowView({ data, start, setStart, end, setEnd }) {
       <div className="panel"><div className="section-heading"><div><p className="eyebrow">Odlivi</p><h2>Stroški po vrsti</h2></div></div>{Object.keys(summary.costs_by_category || {}).length === 0 ? <p className="empty-state">V obdobju ni evidentiranih stroškov.</p> : <div className="cost-category-list">{Object.entries(summary.costs_by_category).map(([category, amount]) => <article key={category}><span>{categoryLabels[category] || category}</span><strong>{amount.toFixed(2)} €</strong></article>)}</div>}</div>
     </section>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Premiki</p><h2>Denarni dnevnik</h2></div><span>{data.entries.length} zapisov</span></div><div className="cashflow-table"><b>Datum</b><b>Referenca</b><b>Opis</b><b>Način / vrsta</b><b>Priliv</b><b>Odliv</b>{data.entries.map((entry) => <React.Fragment key={entry.key}><span>{entry.date}</span><span>{entry.reference}<small>{sourceLabel(entry.source)}</small></span><span>{entry.description}<small>{entry.party}</small></span><span>{methodLabels[entry.method] || categoryLabels[entry.category] || entry.category}</span><strong className="positive">{entry.direction === "inflow" ? `${entry.amount_eur.toFixed(2)} €` : "—"}</strong><strong className="negative">{entry.direction === "outflow" ? `${entry.amount_eur.toFixed(2)} €` : "—"}</strong></React.Fragment>)}</div></section>
+  </>;
+}
+
+function DayCloseView({ closes, preview, form, setForm, closeDay }) {
+  const value = preview || {};
+  const countedCash = Number(form.counted_cash_eur);
+  const liveDifference = Number.isFinite(countedCash) && form.counted_cash_eur !== ""
+    ? countedCash - (value.expected_cash_eur || 0)
+    : null;
+  const money = (amount) => `${(amount || 0).toFixed(2)} €`;
+  return <>
+    <section className="panel day-close-heading">
+      <div><p className="eyebrow">Konec prodajnega dne</p><h2>Dnevni zaključek</h2><p className="muted">Seštevek hitrih prodaj, prejetih plačil računov in vračil kupcem. Zaključek shrani nespremenljiv posnetek in zaklene nove denarne vnose za izbrani datum.</p></div>
+      {value.closed && <span className="closed-day-badge">✓ DAN ZAKLJUČEN</span>}
+    </section>
+    <section className="metric-grid day-close-metrics">
+      <article className="metric-card"><span>Prilivi</span><strong className="positive">{money(value.total_inflow_eur)}</strong><small>{value.retail_sale_count || 0} hitrih prodaj · {value.payment_count || 0} plačil računov</small></article>
+      <article className="metric-card"><span>Vračila</span><strong className="negative">{money(value.total_refund_eur)}</strong><small>{value.refund_count || 0} vračil kupcem</small></article>
+      <article className="metric-card"><span>Pričakovana gotovina</span><strong>{money(value.expected_cash_eur)}</strong><small>začetna + gotovinski prilivi − vračila</small></article>
+      <article className="metric-card"><span>Razlika v blagajni</span><strong className={(value.closed ? value.difference_eur : liveDifference) < 0 ? "negative" : "positive"}>{value.closed ? money(value.difference_eur) : liveDifference === null ? "—" : money(liveDifference)}</strong><small>prešteto minus pričakovano</small></article>
+    </section>
+    <section className="day-close-grid">
+      <form className="panel day-close-form" onSubmit={closeDay}>
+        <div className="section-heading"><div><p className="eyebrow">Blagajna</p><h2>{value.closed ? "Shranjeni zaključek" : "Preštej in zaključi"}</h2></div></div>
+        <label>Poslovni datum<input type="date" value={form.business_date} onChange={(e) => setForm({ ...form, business_date: e.target.value, counted_cash_eur: "", notes: "" })} required /></label>
+        <label>Začetna gotovina (€)<input type="number" min="0" step="0.01" value={value.closed ? value.opening_cash_eur : form.opening_cash_eur} onChange={(e) => setForm({ ...form, opening_cash_eur: e.target.value })} disabled={value.closed} required /></label>
+        <label>Prešteta gotovina (€)<input type="number" min="0" step="0.01" value={value.closed ? value.counted_cash_eur : form.counted_cash_eur} onChange={(e) => setForm({ ...form, counted_cash_eur: e.target.value })} disabled={value.closed} required /></label>
+        <label>Opomba<textarea value={value.closed ? value.notes || "" : form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} disabled={value.closed} placeholder="Npr. razlog za razliko" /></label>
+        {value.closed ? <p className="locked-note">Zaključeno {value.closed_at ? new Date(value.closed_at).toLocaleString("sl-SI") : ""}. Posnetka ni mogoče spreminjati.</p> : <button className="primary-button">ZAKLJUČI POSLOVNI DAN</button>}
+      </form>
+      <section className="panel payment-breakdown">
+        <div className="section-heading"><div><p className="eyebrow">Po načinu plačila</p><h2>Kontrolni seštevek</h2></div></div>
+        <article><span>Gotovina</span><strong>+{money(value.cash_in_eur)} / −{money(value.cash_refund_eur)}</strong></article>
+        <article><span>Kartice</span><strong>+{money(value.card_in_eur)} / −{money(value.card_refund_eur)}</strong></article>
+        <article><span>Nakazila</span><strong>+{money(value.bank_transfer_in_eur)} / −{money(value.bank_transfer_refund_eur)}</strong></article>
+        <p className="day-close-note">Operativni stroški niso vključeni v zaključek blagajne, ker pri njih način plačila še ni zabeležen. Ostanejo vidni v denarnem toku.</p>
+      </section>
+    </section>
+    <section className="panel">
+      <div className="section-heading"><div><p className="eyebrow">Nespremenljiva zgodovina</p><h2>Pretekli zaključki</h2></div><span>{closes.length} zapisov</span></div>
+      {closes.length === 0 ? <p className="empty-state">Zaključen ni še noben poslovni dan.</p> : <div className="day-close-history">{closes.map((item) => <article key={item.id}><div><time>{item.business_date}</time><span>{item.retail_sale_count} hitrih prodaj · {item.payment_count} plačil · {item.refund_count} vračil</span></div><div><span>Pričakovano {money(item.expected_cash_eur)}</span><strong className={item.difference_eur < 0 ? "negative" : "positive"}>{item.difference_eur >= 0 ? "+" : ""}{money(item.difference_eur)}</strong></div></article>)}</div>}
+    </section>
   </>;
 }
 
