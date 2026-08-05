@@ -251,3 +251,80 @@ def test_bed_planting_and_task_workflow() -> None:
         assert final_stock["sold_kg"] == 17
         assert final_stock["reserved_kg"] == 0
         assert final_stock["available_kg"] == 1.5
+
+        future_order = client.post(
+            "/api/orders",
+            json={
+                "customer_id": customer.json()["id"],
+                "order_date": "2026-09-15",
+                "delivery_date": "2026-09-25",
+                "items": [
+                    {
+                        "harvest_id": harvest.json()["id"],
+                        "quantity_kg": 1,
+                        "price_per_kg_eur": 7,
+                    }
+                ],
+            },
+        )
+        assert future_order.status_code == 201
+
+        plan_series = client.post(
+            "/api/plans",
+            json={
+                "bed_id": bed["id"],
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-09-20",
+                "transplant_date": "2026-09-27",
+                "expected_yield_kg": 8,
+                "succession_count": 2,
+                "succession_interval_days": 14,
+                "notes": "Jesenska zaporedna setev",
+            },
+        )
+        assert plan_series.status_code == 201
+        assert len(plan_series.json()["plans"]) == 2
+        assert plan_series.json()["warnings"]
+
+        calendar = client.get(
+            "/api/planning/calendar?start=2026-09-20&end=2026-11-30"
+        )
+        assert calendar.status_code == 200
+        event_types = {event["type"] for event in calendar.json()["events"]}
+        assert {"sowing", "transplant", "planned_harvest", "delivery"} <= event_types
+
+        forecast = client.get(
+            "/api/planning/forecast?start=2026-09-20&end=2026-11-30"
+        )
+        assert forecast.status_code == 200
+        crop_forecast = next(
+            item for item in forecast.json()["rows"] if item["crop_id"] == crop["id"]
+        )
+        assert crop_forecast["current_stock_kg"] == 1.5
+        assert crop_forecast["planned_yield_kg"] == 16
+        assert crop_forecast["confirmed_demand_kg"] == 1
+        assert crop_forecast["projected_balance_kg"] == 16.5
+
+        first_plan, second_plan = plan_series.json()["plans"]
+        rotation_blocked = client.post(
+            f"/api/plans/{first_plan['id']}/activate",
+            json={"override_rotation": False},
+        )
+        assert rotation_blocked.status_code == 409
+        activated = client.post(
+            f"/api/plans/{first_plan['id']}/activate",
+            json={"override_rotation": True},
+        )
+        assert activated.status_code == 200
+        assert activated.json()["plan"]["status"] == "activated"
+        assert activated.json()["planting_id"]
+
+        cancelled_plan = client.post(
+            f"/api/plans/{second_plan['id']}/status",
+            json={"status": "cancelled"},
+        )
+        assert cancelled_plan.status_code == 200
+        visible_plans = client.get("/api/plans").json()
+        assert len(visible_plans) == 1
+        assert visible_plans[0]["status"] == "activated"
