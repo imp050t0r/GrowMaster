@@ -44,12 +44,13 @@ CROP_DATA = [
         "varieties": [("Rosette", 45)],
     },
 ]
+DEMO_FARM_NAME = "GrowMaster Demo Farm"
 
 
 def seed_database(db: Session) -> None:
     farm = db.scalar(select(Farm).limit(1))
     if farm is None:
-        farm = Farm(name="GrowMaster Demo Farm")
+        farm = Farm(name=DEMO_FARM_NAME)
         db.add(farm)
         db.flush()
 
@@ -85,7 +86,7 @@ def seed_database(db: Session) -> None:
             db.add(crop)
         db.flush()
 
-    if db.scalar(select(Task).limit(1)) is None:
+    if db.scalar(select(Task).limit(1)) is None and farm.name == DEMO_FARM_NAME:
         beds = {bed.name: bed for bed in db.scalars(select(Bed)).all()}
         today = date.today()
         db.add_all(

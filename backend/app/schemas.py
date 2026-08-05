@@ -296,6 +296,8 @@ class RefundCreate(BaseModel):
 
 class AuthSetup(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
+    farm_name: str = Field(min_length=1, max_length=120)
+    keep_demo_data: bool = False
     password: str = Field(min_length=12, max_length=256)
 
 
@@ -311,3 +313,16 @@ class AccountUpdate(BaseModel):
 class PasswordChange(BaseModel):
     current_password: str = Field(min_length=1, max_length=256)
     new_password: str = Field(min_length=12, max_length=256)
+
+
+class FarmProfileUpdate(BaseModel):
+    farm_name: str = Field(min_length=1, max_length=120)
+    basic_agriculture_invoice_exemption: bool = True
+    seller_tax_number: str | None = Field(default=None, max_length=30)
+    seller_address: str = Field(default="", max_length=1000)
+    seller_iban: str | None = Field(default=None, max_length=50)
+    seller_registration_number: str | None = Field(default=None, max_length=50)
+    vat_note: str | None = Field(default=None, max_length=240)
+    business_premise_code: str = Field(default="GM", min_length=1, max_length=20)
+    device_code: str = Field(default="01", min_length=1, max_length=20)
+    default_due_days: int = Field(default=14, ge=0, le=365)

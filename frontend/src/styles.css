@@ -43,6 +43,7 @@ button { cursor: pointer; }
 .auth-card .primary-button { width: 100%; }
 .auth-card .message { margin-top: 0; }
 .auth-hint { margin: 0; color: #6f8179; font-size: 0.8rem; line-height: 1.5; }
+.setup-demo-choice { padding: 11px 12px; background: #f3f7f4; border-radius: 11px; }
 
 .main-nav {
   position: sticky;
@@ -458,6 +459,12 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .settings-form { display: grid; align-content: start; gap: 16px; }
 .settings-form .danger-button { width: 100%; }
 .security-note { margin: 18px 0 0; padding: 14px 16px; color: #684b18; background: #fff7df; border: 1px solid #ead69b; border-radius: 12px; font-size: 0.84rem; line-height: 1.5; }
+.farm-profile-form { display: grid; gap: 18px; }
+.farm-profile-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.farm-profile-fields .wide { grid-column: span 3; }
+.profile-readiness { flex: 0 0 auto; padding: 7px 10px; border-radius: 999px; font-size: 0.7rem; font-weight: 900; }
+.profile-readiness.ready { color: #17603f; background: #dff3e7; }
+.profile-readiness.incomplete { color: #8a5b0b; background: #fff1c9; }
 
 @media (max-width: 900px) {
   .auth-shell { grid-template-columns: 1fr; gap: 8px; }
@@ -480,6 +487,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .farm-expense-grid { grid-template-columns: 1fr; }
   .data-safety-grid { grid-template-columns: 1fr; }
   .settings-grid { grid-template-columns: 1fr; }
+  .farm-profile-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .farm-profile-fields .wide { grid-column: span 2; }
   .day-close-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .day-close-grid { grid-template-columns: 1fr; }
   .purchase-order-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -500,7 +509,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .main-nav { position: fixed; top: auto; right: 8px; bottom: 8px; left: 8px; margin: 0; }
   .main-nav button { display: grid; gap: 1px; min-height: 54px; font-size: 0.72rem; }
   .main-nav button span { font-size: 1.1rem; }
-  .planting-form, .task-form, .inline-form, .bed-grid, .metric-grid, .detail-columns, .completion-form, .inventory-grid, .order-form, .quick-sale-form, .planning-form, .plan-grid, .invoice-profile-form, .day-close-form, .purchasing-setup-grid, .purchasing-setup-grid .compact-form, .purchase-order-details, .purchase-line-form, .supply-stock-grid, .supply-usage-form, .labor-entry-form, .labor-breakdown-grid, .farm-expense-fields { grid-template-columns: 1fr; }
+  .planting-form, .task-form, .inline-form, .bed-grid, .metric-grid, .detail-columns, .completion-form, .inventory-grid, .order-form, .quick-sale-form, .planning-form, .plan-grid, .invoice-profile-form, .day-close-form, .purchasing-setup-grid, .purchasing-setup-grid .compact-form, .purchase-order-details, .purchase-line-form, .supply-stock-grid, .supply-usage-form, .labor-entry-form, .labor-breakdown-grid, .farm-expense-fields, .farm-profile-fields { grid-template-columns: 1fr; }
+  .farm-profile-fields .wide { grid-column: 1; }
   .farm-expense-fields .wide { grid-column: 1; }
   .farm-expense-list article { align-items: flex-start; }
   .day-close-heading, .day-close-history article { align-items: stretch; flex-direction: column; }

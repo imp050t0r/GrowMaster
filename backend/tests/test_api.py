@@ -12,13 +12,29 @@ os.environ["BACKUP_DIR"] = str(TEST_BACKUP_DIRECTORY)
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
 
-from app.database import engine  # noqa: E402
-from app.main import app  # noqa: E402
+from app.database import SessionLocal, engine  # noqa: E402
+from app.main import app, demo_data_available, prepare_farm_on_first_setup  # noqa: E402
 from app.migrations import run_migrations, schema_migrations  # noqa: E402
+from app.models import Bed, Task  # noqa: E402
 
 
 def test_bed_planting_and_task_workflow() -> None:
     with TestClient(app) as client:
+        with SessionLocal() as db:
+            assert demo_data_available(db) is True
+            assert prepare_farm_on_first_setup(
+                db, "Prazna testna kmetija", keep_demo_data=False
+            ) is True
+            assert db.scalar(select(func.count()).select_from(Bed)) == 0
+            assert db.scalar(select(func.count()).select_from(Task)) == 0
+            db.rollback()
+        with SessionLocal() as db:
+            first_bed = db.scalar(select(Bed).where(Bed.name == "A1"))
+            first_bed.length_m = 16
+            db.flush()
+            assert demo_data_available(db) is False
+            db.rollback()
+
         auth_status = client.get("/api/auth/status")
         assert auth_status.status_code == 200
         assert auth_status.json() == {
@@ -26,6 +42,7 @@ def test_bed_planting_and_task_workflow() -> None:
             "authenticated": False,
             "display_name": None,
             "session_days": 30,
+            "demo_data_available": True,
         }
         protected = client.get(
             "/api/beds", headers={"Origin": "http://localhost:3000"}
@@ -36,16 +53,26 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert client.post(
             "/api/auth/setup",
-            json={"display_name": "Nosilec kmetije", "password": "prekratko"},
+            json={
+                "display_name": "Nosilec kmetije",
+                "farm_name": "Testna kmetija",
+                "password": "prekratko",
+            },
         ).status_code == 422
         assert client.post(
             "/api/auth/setup",
-            json={"display_name": "   ", "password": "Zelo varno geslo 2026!"},
+            json={
+                "display_name": "   ",
+                "farm_name": "Testna kmetija",
+                "password": "Zelo varno geslo 2026!",
+            },
         ).status_code == 422
         setup = client.post(
             "/api/auth/setup",
             json={
                 "display_name": "Nosilec kmetije",
+                "farm_name": "Testna kmetija",
+                "keep_demo_data": True,
                 "password": "Zelo varno geslo 2026!",
             },
         )
@@ -60,6 +87,7 @@ def test_bed_planting_and_task_workflow() -> None:
             "/api/auth/setup",
             json={
                 "display_name": "Drugi uporabnik",
+                "farm_name": "Druga kmetija",
                 "password": "Drugo varno geslo 2026!",
             },
         ).status_code == 409
@@ -70,6 +98,10 @@ def test_bed_planting_and_task_workflow() -> None:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
             ) == 2
+        initial_profile = client.get("/api/farm-profile")
+        assert initial_profile.status_code == 200
+        assert initial_profile.json()["farm_name"] == "Testna kmetija"
+        assert initial_profile.json()["business_documents_ready"] is False
         beds = client.get("/api/beds").json()
         crops = client.get("/api/crops").json()
         assert len(beds) == 6
@@ -398,18 +430,12 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert invoice.status_code == 410
 
-        sales_identity = client.put(
-            "/api/sales-settings",
+        farm_profile = client.put(
+            "/api/farm-profile",
             json={
                 "basic_agriculture_invoice_exemption": True,
-                "seller_name": "Kmetija Zeleni Gaj",
+                "farm_name": "Kmetija Zeleni Gaj",
                 "seller_tax_number": "SI87654321",
-            },
-        )
-        assert sales_identity.status_code == 200
-        invoice_profile = client.put(
-            "/api/invoice-profile",
-            json={
                 "seller_address": "Poljska pot 5, 1000 Ljubljana",
                 "seller_iban": "SI56191000000123456",
                 "seller_registration_number": "1234567000",
@@ -419,7 +445,14 @@ def test_bed_planting_and_task_workflow() -> None:
                 "default_due_days": 14,
             },
         )
-        assert invoice_profile.status_code == 200
+        assert farm_profile.status_code == 200
+        assert farm_profile.json()["business_documents_ready"] is True
+        assert client.get("/api/sales-settings").json()["seller_name"] == (
+            "Kmetija Zeleni Gaj"
+        )
+        assert client.get("/api/invoice-profile").json()["seller_address"] == (
+            "Poljska pot 5, 1000 Ljubljana"
+        )
         archived_invoice = client.post(
             "/api/invoices",
             json={

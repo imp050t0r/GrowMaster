@@ -1,6 +1,6 @@
 # Local authentication
 
-GrowMaster requires one local administrator account. On the first visit, the application asks for a display name and password. Every business-data API, including exports, invoices and backups, is unavailable until authentication succeeds.
+GrowMaster requires one local administrator account. On the first visit, the application asks for the farm name, a display name and password. An untouched new installation removes its sample beds and tasks by default; the user can explicitly retain them for evaluation. Every business-data API, including exports, invoices and backups, is unavailable until authentication succeeds.
 
 ## Password storage
 
