@@ -515,3 +515,47 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert len(paid_receivables.json()["items"]) == 1
         assert paid_receivables.json()["items"][0]["status"] == "paid"
+
+        cash_flow = client.get(
+            "/api/cash-flow?start=2026-09-09&end=2026-09-21"
+        )
+        assert cash_flow.status_code == 200
+        flow = cash_flow.json()
+        assert flow["summary"] == {
+            "inflow_eur": 17.5,
+            "outflow_eur": 42.5,
+            "net_eur": -25,
+            "inflow_count": 4,
+            "outflow_count": 1,
+            "cash_eur": 2.8,
+            "card_eur": 0.7,
+            "bank_transfer_eur": 14,
+            "costs_by_category": {"labor": 42.5},
+        }
+        assert len(flow["entries"]) == 5
+        assert {entry["source"] for entry in flow["entries"]} == {
+            "retail_sale",
+            "order_payment",
+            "cost",
+        }
+        assert [day["date"] for day in flow["daily"]] == [
+            "2026-09-21",
+            "2026-09-20",
+            "2026-09-09",
+        ]
+        assert flow["daily"][0]["net_eur"] == 10
+        assert flow["daily"][1]["inflow_eur"] == 7.5
+        assert flow["daily"][2]["net_eur"] == -42.5
+
+        cash_flow_csv = client.get(
+            "/api/cash-flow/export.csv?start=2026-09-09&end=2026-09-21"
+        )
+        assert cash_flow_csv.status_code == 200
+        assert cash_flow_csv.headers["content-type"].startswith("text/csv")
+        assert "Plačilo računa" in cash_flow_csv.text
+        assert "Pobiranje in pakiranje" in cash_flow_csv.text
+
+        invalid_cash_flow = client.get(
+            "/api/cash-flow?start=2026-09-22&end=2026-09-21"
+        )
+        assert invalid_cash_flow.status_code == 422
