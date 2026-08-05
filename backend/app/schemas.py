@@ -166,6 +166,41 @@ class DayCloseCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
 
 
+class SupplierCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    tax_number: str | None = Field(default=None, max_length=30)
+    email: str | None = Field(default=None, max_length=160)
+    phone: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class SupplyItemCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    category: Literal["seed", "fertilizer", "packaging", "tools", "fuel", "other"]
+    unit: str = Field(min_length=1, max_length=20)
+    opening_stock: float = Field(default=0, ge=0, le=1000000)
+    reorder_level: float = Field(default=0, ge=0, le=1000000)
+
+
+class PurchaseOrderItemCreate(BaseModel):
+    supply_item_id: int
+    quantity: float = Field(gt=0, le=1000000)
+    unit_price_eur: float = Field(gt=0, le=1000000)
+
+
+class PurchaseOrderCreate(BaseModel):
+    supplier_id: int
+    order_date: date
+    expected_date: date | None = None
+    payment_method: Literal["cash", "card", "bank_transfer"] = "bank_transfer"
+    notes: str | None = Field(default=None, max_length=2000)
+    items: list[PurchaseOrderItemCreate] = Field(min_length=1, max_length=100)
+
+
+class PurchaseOrderReceive(BaseModel):
+    received_on: date
+
+
 class SalesSettingsUpdate(BaseModel):
     basic_agriculture_invoice_exemption: bool = True
     seller_name: str = Field(min_length=1, max_length=160)
