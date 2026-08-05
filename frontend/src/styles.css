@@ -439,6 +439,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .data-safety-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .data-safety-heading h2 { margin: 3px 0 8px; }
 .data-safe-badge { flex: 0 0 auto; padding: 8px 11px; color: #17603f; background: #dff3e7; border-radius: 999px; font-size: 0.72rem; font-weight: 900; }
+.data-safety-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .data-safety-metrics .metric-card:first-child strong { font-size: 1.35rem; }
 .data-safety-grid { display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 14px; }
 .backup-export-card, .restore-form { display: grid; align-content: start; gap: 16px; }

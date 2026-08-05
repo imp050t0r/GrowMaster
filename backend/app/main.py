@@ -1,8 +1,10 @@
+import asyncio
 import csv
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 import hashlib
 import io
+import logging
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -30,13 +32,18 @@ from app.auth import (
     verify_password,
 )
 from app.backups import (
+    DAILY_BACKUP_RETENTION,
     BackupRestoreError,
     BackupValidationError,
     automatic_backup_path,
     create_backup_bytes,
+    daily_backup_path,
     database_summary,
+    ensure_daily_backup,
     list_automatic_backups,
+    list_daily_backups,
     parse_backup,
+    refresh_daily_backup,
     restore_parsed_backup,
     write_automatic_backup,
 )
@@ -126,6 +133,8 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
+DAILY_BACKUP_CHECK_SECONDS = 60 * 60
+logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
 DEMO_TASK_TITLES = {
     "Jutranji pregled vseh gredic",
@@ -212,15 +221,40 @@ def prepare_farm_on_first_setup(
     return removed_demo
 
 
+def create_daily_backup_safely() -> None:
+    try:
+        with SessionLocal() as db:
+            ensure_daily_backup(db)
+    except Exception:
+        logger.exception("Scheduled GrowMaster backup could not be created.")
+
+
+async def daily_backup_worker(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=DAILY_BACKUP_CHECK_SECONDS
+            )
+        except TimeoutError:
+            await asyncio.to_thread(create_daily_backup_safely)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     run_migrations()
     with SessionLocal() as db:
         seed_database(db)
-    yield
+    create_daily_backup_safely()
+    stop_event = asyncio.Event()
+    backup_task = asyncio.create_task(daily_backup_worker(stop_event))
+    try:
+        yield
+    finally:
+        stop_event.set()
+        await backup_task
 
 
-app = FastAPI(title="GrowMaster API", version="1.12.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.13.0", lifespan=lifespan)
 PUBLIC_API_PATHS = {
     "/api/health",
     "/api/auth/status",
@@ -356,6 +390,10 @@ def setup_authentication(
             status_code=status.HTTP_409_CONFLICT,
             detail="GrowMaster je že zaščiten z geslom.",
         ) from error
+    try:
+        refresh_daily_backup(db)
+    except Exception:
+        logger.exception("Daily backup could not be refreshed after first setup.")
     set_auth_cookie(response, token)
     return {
         "configured": True,
@@ -518,6 +556,8 @@ def change_password(
 def data_safety_status(db: Session = Depends(get_db)) -> dict:
     return {
         **database_summary(db),
+        "daily_backups": list_daily_backups(),
+        "daily_backup_retention": DAILY_BACKUP_RETENTION,
         "automatic_backups": list_automatic_backups(),
     }
 
@@ -543,6 +583,21 @@ def export_backup(db: Session = Depends(get_db)) -> Response:
 @app.get("/api/system/backups/automatic/{filename}")
 def download_automatic_backup(filename: str) -> Response:
     path = automatic_backup_path(filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Varnostna kopija ne obstaja.")
+    return Response(
+        content=path.read_bytes(),
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{path.name}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/system/backups/daily/{filename}")
+def download_daily_backup(filename: str) -> Response:
+    path = daily_backup_path(filename)
     if path is None:
         raise HTTPException(status_code=404, detail="Varnostna kopija ne obstaja.")
     return Response(

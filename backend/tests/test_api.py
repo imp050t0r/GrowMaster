@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import shutil
@@ -12,6 +13,11 @@ os.environ["BACKUP_DIR"] = str(TEST_BACKUP_DIRECTORY)
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
 
+from app.backups import (  # noqa: E402
+    ensure_daily_backup,
+    list_daily_backups,
+    refresh_daily_backup,
+)
 from app.database import SessionLocal, engine  # noqa: E402
 from app.main import app, demo_data_available, prepare_farm_on_first_setup  # noqa: E402
 from app.migrations import run_migrations, schema_migrations  # noqa: E402
@@ -1720,7 +1726,26 @@ def test_bed_planting_and_task_workflow() -> None:
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["table_count"] == 37
         assert data_safety_summary["record_count"] > 0
+        assert data_safety_summary["daily_backup_retention"] == 14
+        assert len(data_safety_summary["daily_backups"]) == 1
         assert data_safety_summary["automatic_backups"] == []
+
+        daily_filename = data_safety_summary["daily_backups"][0]["filename"]
+        assert daily_filename.startswith("growmaster-daily-")
+        with SessionLocal() as db:
+            assert ensure_daily_backup(db) == daily_filename
+        assert len(list_daily_backups()) == 1
+        daily_backup = client.get(
+            f"/api/system/backups/daily/{daily_filename}"
+        )
+        assert daily_backup.status_code == 200
+        daily_document = daily_backup.json()
+        daily_farms = daily_document["payload"]["tables"]["farms"]
+        assert daily_farms[0]["name"] == "Testna kmetija"
+        assert "admin_credentials" not in daily_document["payload"]["tables"]
+        assert client.get(
+            "/api/system/backups/daily/not-a-backup.json"
+        ).status_code == 404
 
         portable_backup = client.get("/api/system/backups/export")
         assert portable_backup.status_code == 200
@@ -1873,3 +1898,14 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert new_login.status_code == 200
         assert new_login.json()["display_name"] == "Vodja kmetije"
+
+        with SessionLocal() as db:
+            for day in range(1, 16):
+                refresh_daily_backup(
+                    db,
+                    datetime(2099, 1, day, tzinfo=timezone.utc),
+                )
+        retained_daily = list_daily_backups()
+        assert len(retained_daily) == 14
+        assert retained_daily[0]["backup_date"] == "2099-01-15"
+        assert retained_daily[-1]["backup_date"] == "2099-01-02"
