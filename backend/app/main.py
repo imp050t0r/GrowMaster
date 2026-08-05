@@ -30,6 +30,7 @@ from app.models import (
     OrderItem,
     OrderPayment,
     Planting,
+    ProductPrice,
     RetailSale,
     RetailSaleItem,
     Refund,
@@ -54,6 +55,7 @@ from app.schemas import (
     OrderCreate,
     OrderPaymentCreate,
     OrderStatusUpdate,
+    ProductPriceUpdate,
     RetailSaleCreate,
     RefundCreate,
     PlantingCreate,
@@ -77,7 +79,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -797,6 +799,67 @@ def order_load_options() -> tuple:
     )
 
 
+def serialize_product_price(price: ProductPrice) -> dict:
+    return {
+        "id": price.id,
+        "crop_id": price.crop_id,
+        "crop": price.crop.name,
+        "quality": price.quality,
+        "price_per_kg_eur": price.price_per_kg_eur,
+        "updated_at": price.updated_at,
+    }
+
+
+@app.get("/api/price-list")
+def price_list(db: Session = Depends(get_db)) -> list[dict]:
+    prices = db.scalars(
+        select(ProductPrice)
+        .where(ProductPrice.farm_id == DEFAULT_FARM_ID)
+        .join(ProductPrice.crop)
+        .options(selectinload(ProductPrice.crop))
+        .order_by(Crop.name, ProductPrice.quality)
+    ).all()
+    return [serialize_product_price(price) for price in prices]
+
+
+@app.put("/api/price-list/{crop_id}")
+def update_product_price(
+    crop_id: int,
+    payload: ProductPriceUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    crop = db.get(Crop, crop_id)
+    if crop is None:
+        raise HTTPException(status_code=404, detail="Kultura ne obstaja.")
+    price = db.scalar(
+        select(ProductPrice)
+        .where(
+            ProductPrice.farm_id == DEFAULT_FARM_ID,
+            ProductPrice.crop_id == crop.id,
+            ProductPrice.quality == payload.quality,
+        )
+        .options(selectinload(ProductPrice.crop))
+        .with_for_update()
+    )
+    if price is None:
+        price = ProductPrice(
+            farm_id=DEFAULT_FARM_ID,
+            crop_id=crop.id,
+            quality=payload.quality,
+            price_per_kg_eur=round(payload.price_per_kg_eur, 2),
+        )
+        price.crop = crop
+        db.add(price)
+    else:
+        price.price_per_kg_eur = round(payload.price_per_kg_eur, 2)
+    db.commit()
+    db.refresh(price)
+    return {
+        "message": "Prodajna cena je shranjena.",
+        **serialize_product_price(price),
+    }
+
+
 @app.get("/api/inventory")
 def inventory(db: Session = Depends(get_db)) -> list[dict]:
     harvests = db.scalars(
@@ -809,6 +872,12 @@ def inventory(db: Session = Depends(get_db)) -> list[dict]:
         )
         .order_by(Harvest.harvest_date.desc(), Harvest.id.desc())
     ).all()
+    prices = {
+        (price.crop_id, price.quality): price.price_per_kg_eur
+        for price in db.scalars(
+            select(ProductPrice).where(ProductPrice.farm_id == DEFAULT_FARM_ID)
+        ).all()
+    }
     result = []
     for harvest in harvests:
         sold_kg = sold_quantity(db, harvest.id)
@@ -818,6 +887,7 @@ def inventory(db: Session = Depends(get_db)) -> list[dict]:
         result.append(
             {
                 "harvest_id": harvest.id,
+                "crop_id": harvest.planting.crop_id,
                 "bed": harvest.bed.name,
                 "crop": harvest.planting.crop.name,
                 "variety": harvest.planting.variety.name,
@@ -827,6 +897,9 @@ def inventory(db: Session = Depends(get_db)) -> list[dict]:
                 "sold_kg": round(sold_kg, 2),
                 "reserved_kg": round(reserved_kg, 2),
                 "available_kg": round(available_kg, 2),
+                "suggested_price_per_kg_eur": prices.get(
+                    (harvest.planting.crop_id, harvest.quality)
+                ),
             }
         )
     return result

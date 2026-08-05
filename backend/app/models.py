@@ -39,6 +39,7 @@ class Farm(Base):
     invoices: Mapped[list["Invoice"]] = relationship(back_populates="farm")
     credit_notes: Mapped[list["CreditNote"]] = relationship(back_populates="farm")
     refunds: Mapped[list["Refund"]] = relationship(back_populates="farm")
+    product_prices: Mapped[list["ProductPrice"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -52,6 +53,7 @@ class Crop(Base):
     varieties: Mapped[list["Variety"]] = relationship(
         back_populates="crop", cascade="all, delete-orphan"
     )
+    product_prices: Mapped[list["ProductPrice"]] = relationship(back_populates="crop")
 
 
 class Variety(Base):
@@ -290,6 +292,32 @@ class CropPlan(Base):
     crop: Mapped[Crop] = relationship()
     variety: Mapped[Variety] = relationship()
     planting: Mapped[Planting | None] = relationship()
+
+
+class ProductPrice(Base):
+    __tablename__ = "product_prices"
+    __table_args__ = (
+        UniqueConstraint(
+            "farm_id", "crop_id", "quality", name="uq_product_price"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    crop_id: Mapped[int] = mapped_column(
+        ForeignKey("crops.id", ondelete="RESTRICT"), index=True
+    )
+    quality: Mapped[str] = mapped_column(String(20))
+    price_per_kg_eur: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    farm: Mapped[Farm] = relationship(back_populates="product_prices")
+    crop: Mapped[Crop] = relationship(back_populates="product_prices")
 
 
 class SalesSettings(Base):
