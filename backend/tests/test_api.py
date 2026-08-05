@@ -1448,6 +1448,7 @@ def test_bed_planting_and_task_workflow() -> None:
             "credit_notes_eur": 16,
             "net_revenue_eur": 48,
             "direct_costs_eur": 15,
+            "overhead_costs_eur": 0,
             "material_costs_eur": 2.25,
             "labor_costs_eur": 12,
             "costs_eur": 29.25,
@@ -1461,6 +1462,7 @@ def test_bed_planting_and_task_workflow() -> None:
             "unallocated_direct_costs_eur": 5,
             "unallocated_material_costs_eur": 0,
             "unallocated_labor_costs_eur": 0,
+            "unallocated_overhead_costs_eur": 0,
             "unallocated_costs_eur": 5,
             "unallocated_credit_notes_eur": 0,
         }
@@ -1493,3 +1495,129 @@ def test_bed_planting_and_task_workflow() -> None:
         assert client.get(
             "/api/profitability-report?start=2027-03-01&end=2027-02-28"
         ).status_code == 422
+
+        fuel_expense = client.post(
+            "/api/farm-expenses",
+            json={
+                "expense_date": "2027-03-01",
+                "category": "fuel",
+                "amount_eur": 30,
+                "payment_method": "cash",
+                "supplier": "Bencinski servis",
+                "reference": "RAC-2027-15",
+                "description": "Gorivo za dostavo",
+            },
+        )
+        assert fuel_expense.status_code == 201
+        assert fuel_expense.json()["amount_eur"] == 30
+        assert fuel_expense.json()["category"] == "fuel"
+
+        utilities_expense = client.post(
+            "/api/farm-expenses",
+            json={
+                "expense_date": "2027-03-01",
+                "category": "utilities",
+                "amount_eur": 20,
+                "payment_method": "card",
+                "supplier": "Elektro",
+                "description": "Elektrika rastlinjaka",
+            },
+        )
+        assert utilities_expense.status_code == 201
+
+        expenses = client.get(
+            "/api/farm-expenses?start=2027-03-01&end=2027-03-31"
+        )
+        assert expenses.status_code == 200
+        assert len(expenses.json()) == 2
+        assert sum(item["amount_eur"] for item in expenses.json()) == 50
+        assert client.post(
+            "/api/farm-expenses",
+            json={
+                "expense_date": "2027-03-02",
+                "category": "other",
+                "amount_eur": 1,
+                "payment_method": "cash",
+                "description": "   ",
+            },
+        ).status_code == 422
+
+        farm_profitability = client.get(
+            "/api/profitability-report?start=2027-03-01&end=2027-03-31"
+        )
+        assert farm_profitability.status_code == 200
+        farm_summary = farm_profitability.json()["summary"]
+        assert farm_summary["overhead_costs_eur"] == 50
+        assert farm_summary["costs_eur"] == 50
+        assert farm_summary["profit_eur"] == -50
+        assert farm_summary["unallocated_overhead_costs_eur"] == 50
+        assert farm_summary["unallocated_costs_eur"] == 50
+        assert farm_profitability.json()["by_bed"] == []
+        assert farm_profitability.json()["by_crop"] == []
+
+        farm_cash_flow = client.get(
+            "/api/cash-flow?start=2027-03-01&end=2027-03-31"
+        )
+        assert farm_cash_flow.status_code == 200
+        farm_cash_flow_data = farm_cash_flow.json()
+        assert farm_cash_flow_data["summary"]["outflow_eur"] == 50
+        assert farm_cash_flow_data["summary"]["net_eur"] == -50
+        assert farm_cash_flow_data["summary"]["outflow_count"] == 2
+        assert farm_cash_flow_data["summary"]["costs_by_category"] == {
+            "fuel": 30,
+            "utilities": 20,
+        }
+        assert {entry["source"] for entry in farm_cash_flow_data["entries"]} == {
+            "farm_expense"
+        }
+
+        farm_day_preview = client.get(
+            "/api/day-closes/preview?business_date=2027-03-01&opening_cash_eur=100"
+        )
+        assert farm_day_preview.status_code == 200
+        farm_day_preview_data = farm_day_preview.json()
+        assert farm_day_preview_data["cash_farm_expense_eur"] == 30
+        assert farm_day_preview_data["card_farm_expense_eur"] == 20
+        assert farm_day_preview_data["total_farm_expense_eur"] == 50
+        assert farm_day_preview_data["farm_expense_count"] == 2
+        assert farm_day_preview_data["total_outflow_eur"] == 50
+        assert farm_day_preview_data["net_receipts_eur"] == -50
+        assert farm_day_preview_data["expected_cash_eur"] == 70
+
+        farm_day_close = client.post(
+            "/api/day-closes",
+            json={
+                "business_date": "2027-03-01",
+                "opening_cash_eur": 100,
+                "counted_cash_eur": 70,
+                "note": "Splošni stroški preverjeni",
+            },
+        )
+        assert farm_day_close.status_code == 201
+        farm_day_close_data = farm_day_close.json()
+        assert farm_day_close_data["cash_farm_expense_eur"] == 30
+        assert farm_day_close_data["total_farm_expense_eur"] == 50
+        assert farm_day_close_data["difference_eur"] == 0
+        assert client.post(
+            "/api/farm-expenses",
+            json={
+                "expense_date": "2027-03-01",
+                "category": "other",
+                "amount_eur": 5,
+                "payment_method": "cash",
+                "description": "Prepozen vnos",
+            },
+        ).status_code == 409
+
+        farm_cash_flow_csv = client.get(
+            "/api/cash-flow/export.csv?start=2027-03-01&end=2027-03-31"
+        )
+        assert farm_cash_flow_csv.status_code == 200
+        assert "Gorivo za dostavo" in farm_cash_flow_csv.text
+        assert "Bencinski servis" in farm_cash_flow_csv.text
+        farm_profitability_csv = client.get(
+            "/api/profitability-report/export.csv?start=2027-03-01&end=2027-03-31"
+        )
+        assert farm_profitability_csv.status_code == 200
+        assert "Splošni stroški EUR" in farm_profitability_csv.text
+        assert "Skupaj;Kmetija" in farm_profitability_csv.text

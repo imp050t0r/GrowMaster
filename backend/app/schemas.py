@@ -235,6 +235,24 @@ class LaborEntryCreate(BaseModel):
     description: str = Field(min_length=1, max_length=200)
 
 
+class FarmExpenseCreate(BaseModel):
+    expense_date: date
+    category: Literal[
+        "fuel",
+        "utilities",
+        "rent",
+        "insurance",
+        "maintenance",
+        "administration",
+        "other",
+    ]
+    amount_eur: float = Field(gt=0, le=1000000)
+    payment_method: Literal["cash", "card", "bank_transfer"]
+    supplier: str | None = Field(default=None, max_length=160)
+    reference: str | None = Field(default=None, max_length=120)
+    description: str = Field(min_length=1, max_length=200)
+
+
 class SalesSettingsUpdate(BaseModel):
     basic_agriculture_invoice_exemption: bool = True
     seller_name: str = Field(min_length=1, max_length=160)
