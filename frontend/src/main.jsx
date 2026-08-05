@@ -58,6 +58,7 @@ function App() {
   const [suppliers, setSuppliers] = useState([]);
   const [supplyItems, setSupplyItems] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [supplyUsages, setSupplyUsages] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [reportStart, setReportStart] = useState(today);
@@ -111,6 +112,9 @@ function App() {
   const [supplyItemForm, setSupplyItemForm] = useState({ name: "", category: "seed", unit: "kos", opening_stock: "0", reorder_level: "0" });
   const [purchaseForm, setPurchaseForm] = useState({ supplier_id: "", supply_item_id: "", order_date: today, expected_date: "", payment_method: "bank_transfer", quantity: "", unit_price_eur: "", notes: "" });
   const [purchaseCart, setPurchaseCart] = useState([]);
+  const [supplyUsageForm, setSupplyUsageForm] = useState({ supply_item_id: "", bed_id: "", planting_id: "", usage_date: today, quantity: "", unit_cost_eur: "", notes: "" });
+  const [supplierPaymentOrderId, setSupplierPaymentOrderId] = useState(null);
+  const [supplierPaymentForm, setSupplierPaymentForm] = useState({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -122,7 +126,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -146,6 +150,7 @@ function App() {
       apiRequest("/api/suppliers"),
       apiRequest("/api/supply-items"),
       apiRequest("/api/purchase-orders"),
+      apiRequest("/api/supply-usages"),
       apiRequest("/api/invoices"),
       apiRequest("/api/invoice-profile"),
     ]);
@@ -172,6 +177,7 @@ function App() {
     setSuppliers(supplierData);
     setSupplyItems(supplyItemData);
     setPurchaseOrders(purchaseOrderData);
+    setSupplyUsages(supplyUsageData);
     setInvoices(invoiceData);
     setInvoiceProfile(invoiceProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
@@ -192,6 +198,11 @@ function App() {
       ...current,
       supplier_id: current.supplier_id || supplierData[0]?.id || "",
       supply_item_id: current.supply_item_id || supplyItemData[0]?.id || "",
+    }));
+    setSupplyUsageForm((current) => ({
+      ...current,
+      supply_item_id: current.supply_item_id || supplyItemData[0]?.id || "",
+      bed_id: current.bed_id || bedData[0]?.id || "",
     }));
     setPlanForm((current) => {
       const cropId = current.crop_id || cropData[0]?.id || "";
@@ -656,6 +667,27 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
+  async function createSupplyUsage(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/supply-usages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supply_item_id: Number(supplyUsageForm.supply_item_id), bed_id: Number(supplyUsageForm.bed_id), planting_id: supplyUsageForm.planting_id ? Number(supplyUsageForm.planting_id) : null, usage_date: supplyUsageForm.usage_date, quantity: Number(supplyUsageForm.quantity), unit_cost_eur: supplyUsageForm.unit_cost_eur ? Number(supplyUsageForm.unit_cost_eur) : null, notes: supplyUsageForm.notes || null }) });
+      setSupplyUsageForm({ ...supplyUsageForm, quantity: "", unit_cost_eur: "", notes: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  function beginSupplierPayment(order) {
+    clearMessages(); setSupplierPaymentOrderId(order.id);
+    setSupplierPaymentForm({ payment_date: today < order.order_date ? order.order_date : today, amount_eur: order.outstanding_eur.toFixed(2), payment_method: order.payment_method, notes: "" });
+  }
+
+  async function recordSupplierPayment(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest(`/api/purchase-orders/${supplierPaymentOrderId}/payments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...supplierPaymentForm, amount_eur: Number(supplierPaymentForm.amount_eur) }) });
+      setSupplierPaymentOrderId(null); setSupplierPaymentForm({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   function changePlanCrop(event) {
     const cropId = event.target.value;
     const crop = crops.find((item) => String(item.id) === String(cropId));
@@ -714,7 +746,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.4</span>
+        <span className="status-pill">MVP 1.5</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -817,12 +849,15 @@ function App() {
         <DayCloseView closes={dayCloses} preview={dayClosePreview} form={dayCloseForm} setForm={setDayCloseForm} closeDay={closeBusinessDay} />
       )}
       {view === "purchasing" && (
-        <PurchasingView suppliers={suppliers} supplyItems={supplyItems} purchaseOrders={purchaseOrders}
+        <PurchasingView suppliers={suppliers} supplyItems={supplyItems} purchaseOrders={purchaseOrders} supplyUsages={supplyUsages} beds={beds} plantings={plantings}
           supplierForm={supplierForm} setSupplierForm={setSupplierForm} createSupplier={createSupplier}
           supplyItemForm={supplyItemForm} setSupplyItemForm={setSupplyItemForm} createSupplyItem={createSupplyItem}
           purchaseForm={purchaseForm} setPurchaseForm={setPurchaseForm} purchaseCart={purchaseCart}
           addPurchaseItem={addPurchaseItem} removePurchaseItem={(itemId) => setPurchaseCart(purchaseCart.filter((item) => item.supply_item_id !== itemId))}
-          createPurchaseOrder={createPurchaseOrder} receivePurchaseOrder={receivePurchaseOrder} cancelPurchaseOrder={cancelPurchaseOrder} />
+          createPurchaseOrder={createPurchaseOrder} receivePurchaseOrder={receivePurchaseOrder} cancelPurchaseOrder={cancelPurchaseOrder}
+          supplyUsageForm={supplyUsageForm} setSupplyUsageForm={setSupplyUsageForm} createSupplyUsage={createSupplyUsage}
+          supplierPaymentOrderId={supplierPaymentOrderId} beginSupplierPayment={beginSupplierPayment} cancelSupplierPayment={() => setSupplierPaymentOrderId(null)}
+          supplierPaymentForm={supplierPaymentForm} setSupplierPaymentForm={setSupplierPaymentForm} recordSupplierPayment={recordSupplierPayment} />
       )}
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
@@ -996,7 +1031,7 @@ function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setH
         <button className="primary-button">SHRANI PRODAJO</button>
       </form>
     </section>
-    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Rezultat na površino</p><h2>Dobiček po gredicah</h2></div></div><div className="economics-table"><strong>Gredica</strong><strong>Žetev</strong><strong>Stroški</strong><strong>Prihodki</strong><strong>Dobiček</strong>{economics.map((item) => <React.Fragment key={item.bed_id}><span>{item.bed}</span><span>{item.harvested_kg} kg</span><span>{item.costs_eur.toFixed(2)} €</span><span>{item.revenue_eur.toFixed(2)} €</span><strong className={item.profit_eur >= 0 ? "positive" : "negative"}>{item.profit_eur.toFixed(2)} €</strong></React.Fragment>)}</div></section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Rezultat na površino</p><h2>Dobiček po gredicah</h2></div></div><div className="economics-table"><strong>Gredica</strong><strong>Žetev</strong><strong>Stroški</strong><strong>Prihodki</strong><strong>Dobiček</strong>{economics.map((item) => <React.Fragment key={item.bed_id}><span>{item.bed}</span><span>{item.harvested_kg} kg</span><span className="economics-cost">{item.costs_eur.toFixed(2)} €<small>{item.material_costs_eur.toFixed(2)} € material</small></span><span>{item.revenue_eur.toFixed(2)} €</span><strong className={item.profit_eur >= 0 ? "positive" : "negative"}>{item.profit_eur.toFixed(2)} €</strong></React.Fragment>)}</div></section>
   </>;
 }
 
@@ -1124,14 +1159,14 @@ function ReceivablesView({ data, asOf, setAsOf, includePaid, setIncludePaid, pay
 
 function CashFlowView({ data, start, setStart, end, setEnd }) {
   const summary = data.summary || {};
-  const categoryLabels = { seed: "Seme", labor: "Delo", fertilizer: "Gnojila", water: "Voda", packaging: "Embalaža", other: "Drugo" };
+  const categoryLabels = { seed: "Seme", labor: "Delo", fertilizer: "Gnojila", water: "Voda", packaging: "Embalaža", purchasing: "Plačila dobaviteljem", other: "Drugo" };
   const methodLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
-  const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek", refund: "vračilo kupcu" }[source] || source);
+  const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek", refund: "vračilo kupcu", supplier_payment: "plačilo dobavitelju" }[source] || source);
   return <>
     <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/cash-flow/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div></section>
     <section className="metric-grid cashflow-metrics">
       <article className="metric-card"><span>Prilivi</span><strong className="positive">{(summary.inflow_eur || 0).toFixed(2)} €</strong><small>{summary.inflow_count || 0} prejemkov</small></article>
-      <article className="metric-card"><span>Odlivi</span><strong className="negative">{(summary.outflow_eur || 0).toFixed(2)} €</strong><small>{summary.outflow_count || 0} odlivov · vračila {(summary.refund_eur || 0).toFixed(2)} €</small></article>
+      <article className="metric-card"><span>Odlivi</span><strong className="negative">{(summary.outflow_eur || 0).toFixed(2)} €</strong><small>{summary.outflow_count || 0} odlivov · vračila {(summary.refund_eur || 0).toFixed(2)} € · dobavitelji {(summary.supplier_payments_eur || 0).toFixed(2)} €</small></article>
       <article className="metric-card"><span>Neto tok</span><strong className={(summary.net_eur || 0) < 0 ? "negative" : "positive"}>{(summary.net_eur || 0).toFixed(2)} €</strong><small>prilivi minus odlivi</small></article>
       <article className="metric-card"><span>Načini priliva</span><strong>{(summary.bank_transfer_eur || 0).toFixed(2)} €</strong><small>nakazila · gotovina {(summary.cash_eur || 0).toFixed(2)} € · kartice {(summary.card_eur || 0).toFixed(2)} €</small></article>
     </section>
@@ -1157,8 +1192,8 @@ function DayCloseView({ closes, preview, form, setForm, closeDay }) {
     </section>
     <section className="metric-grid day-close-metrics">
       <article className="metric-card"><span>Prilivi</span><strong className="positive">{money(value.total_inflow_eur)}</strong><small>{value.retail_sale_count || 0} hitrih prodaj · {value.payment_count || 0} plačil računov</small></article>
-      <article className="metric-card"><span>Vračila</span><strong className="negative">{money(value.total_refund_eur)}</strong><small>{value.refund_count || 0} vračil kupcem</small></article>
-      <article className="metric-card"><span>Pričakovana gotovina</span><strong>{money(value.expected_cash_eur)}</strong><small>začetna + gotovinski prilivi − vračila</small></article>
+      <article className="metric-card"><span>Odlivi</span><strong className="negative">{money(value.total_outflow_eur)}</strong><small>{value.refund_count || 0} vračil · {value.supplier_payment_count || 0} plačil dobaviteljem</small></article>
+      <article className="metric-card"><span>Pričakovana gotovina</span><strong>{money(value.expected_cash_eur)}</strong><small>začetna + prilivi − vračila − dobavitelji</small></article>
       <article className="metric-card"><span>Razlika v blagajni</span><strong className={(value.closed ? value.difference_eur : liveDifference) < 0 ? "negative" : "positive"}>{value.closed ? money(value.difference_eur) : liveDifference === null ? "—" : money(liveDifference)}</strong><small>prešteto minus pričakovano</small></article>
     </section>
     <section className="day-close-grid">
@@ -1172,26 +1207,30 @@ function DayCloseView({ closes, preview, form, setForm, closeDay }) {
       </form>
       <section className="panel payment-breakdown">
         <div className="section-heading"><div><p className="eyebrow">Po načinu plačila</p><h2>Kontrolni seštevek</h2></div></div>
-        <article><span>Gotovina</span><strong>+{money(value.cash_in_eur)} / −{money(value.cash_refund_eur)}</strong></article>
-        <article><span>Kartice</span><strong>+{money(value.card_in_eur)} / −{money(value.card_refund_eur)}</strong></article>
-        <article><span>Nakazila</span><strong>+{money(value.bank_transfer_in_eur)} / −{money(value.bank_transfer_refund_eur)}</strong></article>
-        <p className="day-close-note">Operativni stroški niso vključeni v zaključek blagajne, ker pri njih način plačila še ni zabeležen. Ostanejo vidni v denarnem toku.</p>
+        <article><span>Gotovina</span><strong>+{money(value.cash_in_eur)} / −{money((value.cash_refund_eur || 0) + (value.cash_supplier_payment_eur || 0))}</strong></article>
+        <article><span>Kartice</span><strong>+{money(value.card_in_eur)} / −{money((value.card_refund_eur || 0) + (value.card_supplier_payment_eur || 0))}</strong></article>
+        <article><span>Nakazila</span><strong>+{money(value.bank_transfer_in_eur)} / −{money((value.bank_transfer_refund_eur || 0) + (value.bank_transfer_supplier_payment_eur || 0))}</strong></article>
+        <p className="day-close-note">Odlivi vključujejo vračila kupcem in dejanska plačila dobaviteljem. Stare ročno vnesene stroške brez načina plačila še vedno prikazuje samo denarni tok.</p>
       </section>
     </section>
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Nespremenljiva zgodovina</p><h2>Pretekli zaključki</h2></div><span>{closes.length} zapisov</span></div>
-      {closes.length === 0 ? <p className="empty-state">Zaključen ni še noben poslovni dan.</p> : <div className="day-close-history">{closes.map((item) => <article key={item.id}><div><time>{item.business_date}</time><span>{item.retail_sale_count} hitrih prodaj · {item.payment_count} plačil · {item.refund_count} vračil</span></div><div><span>Pričakovano {money(item.expected_cash_eur)}</span><strong className={item.difference_eur < 0 ? "negative" : "positive"}>{item.difference_eur >= 0 ? "+" : ""}{money(item.difference_eur)}</strong></div></article>)}</div>}
+      {closes.length === 0 ? <p className="empty-state">Zaključen ni še noben poslovni dan.</p> : <div className="day-close-history">{closes.map((item) => <article key={item.id}><div><time>{item.business_date}</time><span>{item.retail_sale_count} hitrih prodaj · {item.payment_count} prejetih plačil · {item.refund_count} vračil · {item.supplier_payment_count || 0} plačil dobaviteljem</span></div><div><span>Pričakovano {money(item.expected_cash_eur)}</span><strong className={item.difference_eur < 0 ? "negative" : "positive"}>{item.difference_eur >= 0 ? "+" : ""}{money(item.difference_eur)}</strong></div></article>)}</div>}
     </section>
   </>;
 }
 
-function PurchasingView({ suppliers, supplyItems, purchaseOrders, supplierForm, setSupplierForm, createSupplier, supplyItemForm, setSupplyItemForm, createSupplyItem, purchaseForm, setPurchaseForm, purchaseCart, addPurchaseItem, removePurchaseItem, createPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder }) {
+function PurchasingView({ suppliers, supplyItems, purchaseOrders, supplyUsages, beds, plantings, supplierForm, setSupplierForm, createSupplier, supplyItemForm, setSupplyItemForm, createSupplyItem, purchaseForm, setPurchaseForm, purchaseCart, addPurchaseItem, removePurchaseItem, createPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder, supplyUsageForm, setSupplyUsageForm, createSupplyUsage, supplierPaymentOrderId, beginSupplierPayment, cancelSupplierPayment, supplierPaymentForm, setSupplierPaymentForm, recordSupplierPayment }) {
   const categoryLabels = { seed: "Seme", fertilizer: "Gnojilo", packaging: "Embalaža", tools: "Orodje", fuel: "Gorivo", other: "Drugo" };
   const paymentLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
   const statusLabels = { ordered: "Naročeno", received: "Prevzeto", cancelled: "Preklicano" };
+  const paymentStatusLabels = { unpaid: "Neplačano", partial: "Delno plačano", paid: "Plačano" };
   const cartTotal = purchaseCart.reduce((sum, item) => sum + item.line_total_eur, 0);
   const openOrders = purchaseOrders.filter((item) => item.status === "ordered");
   const lowStock = supplyItems.filter((item) => item.low_stock);
+  const selectedUsageBed = beds.find((item) => String(item.id) === String(supplyUsageForm.bed_id));
+  const matchingPlantings = plantings.filter((item) => !selectedUsageBed || item.bed === selectedUsageBed.name);
+  const plantingLabels = new Map(plantings.map((item) => [item.id, `${item.crop} ${item.variety}`]));
   return <>
     <section className="metric-grid purchasing-metrics">
       <article className="metric-card"><span>Odprta naročila</span><strong>{openOrders.length}</strong><small>{openOrders.reduce((sum, item) => sum + item.total_eur, 0).toFixed(2)} € naročene vrednosti</small></article>
@@ -1218,7 +1257,7 @@ function PurchasingView({ suppliers, supplyItems, purchaseOrders, supplierForm, 
       </form>
     </section>
     <section className="panel purchase-entry">
-      <div className="section-heading"><div><p className="eyebrow">Večpostavkovno naročilo</p><h2>Novo nabavno naročilo</h2><p className="muted">Vrednost predstavlja strošek nabave. Razporeditev materiala na posamezne gredice in dejansko plačilo ostaneta ločena koraka.</p></div></div>
+      <div className="section-heading"><div><p className="eyebrow">Večpostavkovno naročilo</p><h2>Novo nabavno naročilo</h2><p className="muted">Prevzem poveča zalogo. Porabo na gredicah in dejanska delna ali celotna plačila evidentiraš ločeno spodaj.</p></div></div>
       <div className="purchase-order-details">
         <label>Dobavitelj<select value={purchaseForm.supplier_id} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplier_id: e.target.value })} required><option value="">Izberi</option>{suppliers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label>Datum naročila<input type="date" value={purchaseForm.order_date} onChange={(e) => setPurchaseForm({ ...purchaseForm, order_date: e.target.value })} required /></label>
@@ -1238,8 +1277,26 @@ function PurchasingView({ suppliers, supplyItems, purchaseOrders, supplierForm, 
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Material za delo</p><h2>Zaloga potrebščin</h2></div><span>{lowStock.length} pod minimumom</span></div>
       {supplyItems.length === 0 ? <p className="empty-state">Katalog materiala je prazen.</p> : <div className="supply-stock-grid">{supplyItems.map((item) => <article key={item.id} className={item.low_stock ? "low" : ""}><span>{categoryLabels[item.category] || item.category}</span><strong>{item.name}</strong><b>{item.stock_quantity} {item.unit}</b><small>Opozorilo pri {item.reorder_level} {item.unit}</small></article>)}</div>}
     </section>
+    <section className="supply-usage-grid">
+      <form className="panel supply-usage-form" onSubmit={createSupplyUsage}>
+        <div className="section-heading"><div><p className="eyebrow">Dejanska poraba</p><h2>Knjiži material na gredico</h2><p className="muted">Količina se odšteje iz zaloge, njena vrednost pa se prišteje stroškom izbrane gredice.</p></div></div>
+        <label>Material<select value={supplyUsageForm.supply_item_id} onChange={(e) => setSupplyUsageForm({ ...supplyUsageForm, supply_item_id: e.target.value })} required><option value="">Izberi</option>{supplyItems.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.stock_quantity} {item.unit} na zalogi</option>)}</select></label>
+        <label>Gredica<select value={supplyUsageForm.bed_id} onChange={(e) => setSupplyUsageForm({ ...supplyUsageForm, bed_id: e.target.value, planting_id: "" })} required><option value="">Izberi</option>{beds.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Setev (neobvezno)<select value={supplyUsageForm.planting_id} onChange={(e) => setSupplyUsageForm({ ...supplyUsageForm, planting_id: e.target.value })}><option value="">Samo gredica</option>{matchingPlantings.map((item) => <option key={item.id} value={item.id}>{item.crop} {item.variety} · {item.status === "active" ? "aktivna" : "zaključena"}</option>)}</select></label>
+        <label>Datum porabe<input type="date" value={supplyUsageForm.usage_date} onChange={(e) => setSupplyUsageForm({ ...supplyUsageForm, usage_date: e.target.value })} required /></label>
+        <label>Količina<input type="number" min="0.001" step="0.001" value={supplyUsageForm.quantity} onChange={(e) => setSupplyUsageForm({ ...supplyUsageForm, quantity: e.target.value })} required /></label>
+        <label>Strošek/enoto (€)<input type="number" min="0.0001" step="0.0001" value={supplyUsageForm.unit_cost_eur} onChange={(e) => setSupplyUsageForm({ ...supplyUsageForm, unit_cost_eur: e.target.value })} placeholder="Samodejno iz prevzemov" /></label>
+        <label className="wide">Opomba<input value={supplyUsageForm.notes} onChange={(e) => setSupplyUsageForm({ ...supplyUsageForm, notes: e.target.value })} placeholder="Npr. dognojevanje po presajanju" /></label>
+        <p className="usage-cost-note">Če ceno pustiš prazno, se uporabi tehtano povprečje vseh prevzetih nabav. Pri začetni zalogi brez prevzema ceno vnesi ročno.</p>
+        <button className="primary-button">KNJIŽI PORABO</button>
+      </form>
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Razporeditev stroškov</p><h2>Zadnja poraba</h2></div><span>{supplyUsages.length} zapisov</span></div>
+        {supplyUsages.length === 0 ? <p className="empty-state">Poraba materiala še ni evidentirana.</p> : <div className="supply-usage-history">{supplyUsages.slice(0, 12).map((usage) => <article key={usage.id}><div><time>{usage.usage_date}</time><strong>{usage.supply_item}</strong><span>Gredica {usage.bed}{usage.planting_id ? ` · ${plantingLabels.get(usage.planting_id) || "setev"}` : ""}</span>{usage.notes && <small>{usage.notes}</small>}</div><div><strong>{usage.quantity} {usage.unit}</strong><span>{usage.total_cost_eur.toFixed(2)} €</span><small>{usage.unit_cost_eur.toFixed(4)} €/enoto</small></div></article>)}</div>}
+      </section>
+    </section>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Nabavna zgodovina</p><h2>Naročila dobaviteljem</h2></div><span>{purchaseOrders.length} zapisov</span></div>
-      {purchaseOrders.length === 0 ? <p className="empty-state">Nabavno naročilo še ni ustvarjeno.</p> : <div className="purchase-order-list">{purchaseOrders.map((order) => <article key={order.id} className={order.status}><div className="purchase-order-head"><div><span className={`purchase-state ${order.status}`}>{statusLabels[order.status]}</span><strong>{order.number} · {order.supplier.name}</strong><span>Naročeno {order.order_date}{order.expected_date ? ` · pričakovano ${order.expected_date}` : ""}{order.received_on ? ` · prevzeto ${order.received_on}` : ""}</span></div><div><strong>{order.total_eur.toFixed(2)} €</strong><span>{paymentLabels[order.payment_method]}</span></div></div><div className="purchase-order-lines">{order.items.map((item) => <span key={item.id}>{item.name} · {item.quantity} {item.unit} × {item.unit_price_eur.toFixed(4)} €</span>)}</div>{order.status === "ordered" && <div className="order-actions"><button className="primary-button" onClick={() => receivePurchaseOrder(order)}>PREVZEM</button><button className="text-button danger-text" onClick={() => cancelPurchaseOrder(order)}>PREKLIČI</button></div>}</article>)}</div>}
+      {purchaseOrders.length === 0 ? <p className="empty-state">Nabavno naročilo še ni ustvarjeno.</p> : <div className="purchase-order-list">{purchaseOrders.map((order) => <article key={order.id} className={order.status}><div className="purchase-order-head"><div><div className="purchase-states"><span className={`purchase-state ${order.status}`}>{statusLabels[order.status]}</span><span className={`purchase-state payment-${order.payment_status}`}>{paymentStatusLabels[order.payment_status]}</span></div><strong>{order.number} · {order.supplier.name}</strong><span>Naročeno {order.order_date}{order.expected_date ? ` · pričakovano ${order.expected_date}` : ""}{order.received_on ? ` · prevzeto ${order.received_on}` : ""}</span></div><div><strong>{order.total_eur.toFixed(2)} €</strong><span>{order.paid_eur.toFixed(2)} € plačano · {order.outstanding_eur.toFixed(2)} € odprto</span></div></div><div className="purchase-order-lines">{order.items.map((item) => <span key={item.id}>{item.name} · {item.quantity} {item.unit} × {item.unit_price_eur.toFixed(4)} €</span>)}</div>{order.payments.length > 0 && <div className="payment-history supplier-payment-history">{order.payments.map((payment) => <span key={payment.id}>{payment.payment_date} · {payment.amount_eur.toFixed(2)} € · {paymentLabels[payment.payment_method]}{payment.notes ? ` · ${payment.notes}` : ""}</span>)}</div>}{supplierPaymentOrderId === order.id ? <form className="payment-form supplier-payment-form" onSubmit={recordSupplierPayment}><label>Datum<input type="date" min={order.order_date} value={supplierPaymentForm.payment_date} onChange={(e) => setSupplierPaymentForm({ ...supplierPaymentForm, payment_date: e.target.value })} required /></label><label>Znesek (€)<input type="number" min="0.01" max={order.outstanding_eur} step="0.01" value={supplierPaymentForm.amount_eur} onChange={(e) => setSupplierPaymentForm({ ...supplierPaymentForm, amount_eur: e.target.value })} required /></label><label>Način<select value={supplierPaymentForm.payment_method} onChange={(e) => setSupplierPaymentForm({ ...supplierPaymentForm, payment_method: e.target.value })}>{Object.entries(paymentLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Opomba<input value={supplierPaymentForm.notes} onChange={(e) => setSupplierPaymentForm({ ...supplierPaymentForm, notes: e.target.value })} /></label><div className="supplier-payment-actions"><button type="button" className="text-button" onClick={cancelSupplierPayment}>PREKLIČI</button><button className="primary-button">SHRANI PLAČILO</button></div></form> : <div className="order-actions">{order.status === "ordered" && <><button className="secondary-button" onClick={() => receivePurchaseOrder(order)}>PREVZEM</button><button className="text-button danger-text" onClick={() => cancelPurchaseOrder(order)}>PREKLIČI</button></>}{order.status !== "cancelled" && order.outstanding_eur > 0 && <button className="primary-button" onClick={() => beginSupplierPayment(order)}>EVIDENTIRAJ PLAČILO</button>}</div>}</article>)}</div>}
     </section>
   </>;
 }

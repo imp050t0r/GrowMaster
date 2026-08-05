@@ -201,6 +201,23 @@ class PurchaseOrderReceive(BaseModel):
     received_on: date
 
 
+class SupplyUsageCreate(BaseModel):
+    supply_item_id: int
+    bed_id: int
+    planting_id: int | None = None
+    usage_date: date
+    quantity: float = Field(gt=0, le=1000000)
+    unit_cost_eur: float | None = Field(default=None, gt=0, le=1000000)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class SupplierPaymentCreate(BaseModel):
+    payment_date: date
+    amount_eur: float = Field(gt=0, le=1000000)
+    payment_method: Literal["cash", "card", "bank_transfer"]
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class SalesSettingsUpdate(BaseModel):
     basic_agriculture_invoice_exemption: bool = True
     seller_name: str = Field(min_length=1, max_length=160)

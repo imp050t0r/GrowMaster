@@ -21,6 +21,7 @@ from app.models import (
     CustomerProfile,
     CreditNote,
     DayClose,
+    DayCloseSupplierPaymentSnapshot,
     DocumentSequence,
     Farm,
     Harvest,
@@ -40,7 +41,9 @@ from app.models import (
     Sale,
     SalesSettings,
     Supplier,
+    SupplierPayment,
     SupplyItem,
+    SupplyUsage,
     Task,
     Variety,
 )
@@ -71,7 +74,9 @@ from app.schemas import (
     SaleCreate,
     SalesSettingsUpdate,
     SupplierCreate,
+    SupplierPaymentCreate,
     SupplyItemCreate,
+    SupplyUsageCreate,
     TaskComplete,
     TaskCreate,
 )
@@ -89,7 +94,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.4.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -662,9 +667,18 @@ def economics_by_bed(db: Session = Depends(get_db)) -> list[dict]:
         harvested_kg = db.scalar(
             select(func.coalesce(func.sum(Harvest.quantity_kg), 0.0)).where(Harvest.bed_id == bed.id)
         )
-        costs_eur = db.scalar(
+        direct_costs_eur = db.scalar(
             select(func.coalesce(func.sum(Cost.amount_eur), 0.0)).where(Cost.bed_id == bed.id)
         )
+        material_costs_eur = db.scalar(
+            select(
+                func.coalesce(
+                    func.sum(SupplyUsage.quantity * SupplyUsage.unit_cost_eur),
+                    0.0,
+                )
+            ).where(SupplyUsage.bed_id == bed.id)
+        )
+        costs_eur = float(direct_costs_eur or 0) + float(material_costs_eur or 0)
         revenue_eur = db.scalar(
             select(func.coalesce(func.sum(Sale.quantity_kg * Sale.price_per_kg_eur), 0.0))
             .join(Harvest, Sale.harvest_id == Harvest.id)
@@ -676,9 +690,11 @@ def economics_by_bed(db: Session = Depends(get_db)) -> list[dict]:
                 "bed": bed.name,
                 "area_m2": bed.area_m2,
                 "harvested_kg": round(float(harvested_kg or 0), 2),
-                "costs_eur": round(float(costs_eur or 0), 2),
+                "direct_costs_eur": round(float(direct_costs_eur or 0), 2),
+                "material_costs_eur": round(float(material_costs_eur or 0), 2),
+                "costs_eur": round(costs_eur, 2),
                 "revenue_eur": round(float(revenue_eur or 0), 2),
-                "profit_eur": round(float(revenue_eur or 0) - float(costs_eur or 0), 2),
+                "profit_eur": round(float(revenue_eur or 0) - costs_eur, 2),
             }
         )
     return result
@@ -2704,6 +2720,19 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
             selectinload(Refund.credit_note).selectinload(CreditNote.invoice)
         )
     ).all()
+    supplier_payments = db.scalars(
+        select(SupplierPayment)
+        .where(
+            SupplierPayment.farm_id == DEFAULT_FARM_ID,
+            SupplierPayment.payment_date >= range_start,
+            SupplierPayment.payment_date <= range_end,
+        )
+        .options(
+            selectinload(SupplierPayment.purchase_order).selectinload(
+                PurchaseOrder.supplier
+            )
+        )
+    ).all()
 
     entries = []
     for retail_sale in retail_sales:
@@ -2766,6 +2795,24 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
                 "amount_eur": round(refund.amount_eur, 2),
             }
         )
+    for payment in supplier_payments:
+        entries.append(
+            {
+                "key": f"supplier-payment-{payment.id}",
+                "date": payment.payment_date,
+                "direction": "outflow",
+                "source": "supplier_payment",
+                "reference": (
+                    f"NB-{payment.purchase_order.order_date.year}-"
+                    f"{payment.purchase_order.id:04d}"
+                ),
+                "party": payment.purchase_order.supplier.name,
+                "description": "Plačilo dobavitelju",
+                "method": payment.payment_method,
+                "category": "purchasing",
+                "amount_eur": round(payment.amount_eur, 2),
+            }
+        )
     entries.sort(key=lambda entry: (entry["date"], entry["key"]), reverse=True)
 
     inflows = [entry for entry in entries if entry["direction"] == "inflow"]
@@ -2773,6 +2820,9 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
     inflow_eur = round(sum(entry["amount_eur"] for entry in inflows), 2)
     outflow_eur = round(sum(entry["amount_eur"] for entry in outflows), 2)
     refund_entries = [entry for entry in entries if entry["source"] == "refund"]
+    supplier_payment_entries = [
+        entry for entry in entries if entry["source"] == "supplier_payment"
+    ]
     methods = ("cash", "card", "bank_transfer")
     categories = sorted({entry["category"] for entry in outflows if entry["category"]})
     daily = []
@@ -2815,6 +2865,10 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
                 sum(entry["amount_eur"] for entry in refund_entries), 2
             ),
             "refund_count": len(refund_entries),
+            "supplier_payments_eur": round(
+                sum(entry["amount_eur"] for entry in supplier_payment_entries), 2
+            ),
+            "supplier_payment_count": len(supplier_payment_entries),
             **{
                 f"{method}_eur": round(
                     sum(
@@ -2842,7 +2896,8 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
         "entries": entries,
         "note": (
             "Denarni tok vključuje poravnane hitre prodaje, dejansko evidentirana "
-            "plačila računov, dejanska vračila po dobropisih in stroške. Vračilo "
+            "plačila računov, dejanska vračila po dobropisih, plačila dobaviteljem "
+            "in neposredne stroške. Vračilo "
             "je odliv na datum vračila, vendar ni poslovni strošek gredice. "
             "Izdani računi brez plačila ter stare ročne prodaje brez načina plačila "
             "niso vključeni."
@@ -2928,6 +2983,12 @@ def build_day_close_preview(
             Refund.refund_date == business_date,
         )
     ).all()
+    supplier_payments = db.scalars(
+        select(SupplierPayment).where(
+            SupplierPayment.farm_id == DEFAULT_FARM_ID,
+            SupplierPayment.payment_date == business_date,
+        )
+    ).all()
     methods = ("cash", "card", "bank_transfer")
     inflow_by_method = {
         method: round(
@@ -2956,8 +3017,20 @@ def build_day_close_preview(
         )
         for method in methods
     }
+    supplier_out_by_method = {
+        method: round(
+            sum(
+                payment.amount_eur
+                for payment in supplier_payments
+                if payment.payment_method == method
+            ),
+            2,
+        )
+        for method in methods
+    }
     total_inflow_eur = round(sum(inflow_by_method.values()), 2)
     total_refund_eur = round(sum(refund_by_method.values()), 2)
+    total_supplier_payment_eur = round(sum(supplier_out_by_method.values()), 2)
     opening_cash_eur = round(opening_cash_eur, 2)
     return {
         "business_date": business_date,
@@ -2968,22 +3041,46 @@ def build_day_close_preview(
         "card_refund_eur": refund_by_method["card"],
         "bank_transfer_in_eur": inflow_by_method["bank_transfer"],
         "bank_transfer_refund_eur": refund_by_method["bank_transfer"],
+        "cash_supplier_payment_eur": supplier_out_by_method["cash"],
+        "card_supplier_payment_eur": supplier_out_by_method["card"],
+        "bank_transfer_supplier_payment_eur": supplier_out_by_method[
+            "bank_transfer"
+        ],
         "total_inflow_eur": total_inflow_eur,
         "total_refund_eur": total_refund_eur,
-        "net_receipts_eur": round(total_inflow_eur - total_refund_eur, 2),
+        "total_supplier_payment_eur": total_supplier_payment_eur,
+        "total_outflow_eur": round(
+            total_refund_eur + total_supplier_payment_eur, 2
+        ),
+        "net_receipts_eur": round(
+            total_inflow_eur - total_refund_eur - total_supplier_payment_eur,
+            2,
+        ),
         "expected_cash_eur": round(
             opening_cash_eur
             + inflow_by_method["cash"]
-            - refund_by_method["cash"],
+            - refund_by_method["cash"]
+            - supplier_out_by_method["cash"],
             2,
         ),
         "retail_sale_count": len(retail_sales),
         "payment_count": len(payments),
         "refund_count": len(refunds),
+        "supplier_payment_count": len(supplier_payments),
     }
 
 
 def serialize_day_close(day_close: DayClose) -> dict:
+    snapshot = day_close.supplier_payment_snapshot
+    cash_supplier_payment_eur = snapshot.cash_out_eur if snapshot else 0
+    card_supplier_payment_eur = snapshot.card_out_eur if snapshot else 0
+    bank_supplier_payment_eur = snapshot.bank_transfer_out_eur if snapshot else 0
+    total_supplier_payment_eur = round(
+        cash_supplier_payment_eur
+        + card_supplier_payment_eur
+        + bank_supplier_payment_eur,
+        2,
+    )
     return {
         "id": day_close.id,
         "business_date": day_close.business_date,
@@ -2994,10 +3091,20 @@ def serialize_day_close(day_close: DayClose) -> dict:
         "card_refund_eur": day_close.card_refund_eur,
         "bank_transfer_in_eur": day_close.bank_transfer_in_eur,
         "bank_transfer_refund_eur": day_close.bank_transfer_refund_eur,
+        "cash_supplier_payment_eur": cash_supplier_payment_eur,
+        "card_supplier_payment_eur": card_supplier_payment_eur,
+        "bank_transfer_supplier_payment_eur": bank_supplier_payment_eur,
         "total_inflow_eur": day_close.total_inflow_eur,
         "total_refund_eur": day_close.total_refund_eur,
+        "total_supplier_payment_eur": total_supplier_payment_eur,
+        "total_outflow_eur": round(
+            day_close.total_refund_eur + total_supplier_payment_eur, 2
+        ),
         "net_receipts_eur": round(
-            day_close.total_inflow_eur - day_close.total_refund_eur, 2
+            day_close.total_inflow_eur
+            - day_close.total_refund_eur
+            - total_supplier_payment_eur,
+            2,
         ),
         "expected_cash_eur": day_close.expected_cash_eur,
         "counted_cash_eur": day_close.counted_cash_eur,
@@ -3005,6 +3112,7 @@ def serialize_day_close(day_close: DayClose) -> dict:
         "retail_sale_count": day_close.retail_sale_count,
         "payment_count": day_close.payment_count,
         "refund_count": day_close.refund_count,
+        "supplier_payment_count": snapshot.payment_count if snapshot else 0,
         "notes": day_close.notes,
         "closed_at": day_close.closed_at,
     }
@@ -3015,6 +3123,7 @@ def list_day_closes(db: Session = Depends(get_db)) -> list[dict]:
     closes = db.scalars(
         select(DayClose)
         .where(DayClose.farm_id == DEFAULT_FARM_ID)
+        .options(selectinload(DayClose.supplier_payment_snapshot))
         .order_by(DayClose.business_date.desc(), DayClose.id.desc())
     ).all()
     return [serialize_day_close(day_close) for day_close in closes]
@@ -3027,10 +3136,12 @@ def day_close_preview(
     db: Session = Depends(get_db),
 ) -> dict:
     existing = db.scalar(
-        select(DayClose).where(
+        select(DayClose)
+        .where(
             DayClose.farm_id == DEFAULT_FARM_ID,
             DayClose.business_date == business_date,
         )
+        .options(selectinload(DayClose.supplier_payment_snapshot))
     )
     if existing:
         return {"closed": True, **serialize_day_close(existing)}
@@ -3079,6 +3190,14 @@ def close_business_day(
         payment_count=preview["payment_count"],
         refund_count=preview["refund_count"],
         notes=payload.notes.strip() if payload.notes else None,
+        supplier_payment_snapshot=DayCloseSupplierPaymentSnapshot(
+            cash_out_eur=preview["cash_supplier_payment_eur"],
+            card_out_eur=preview["card_supplier_payment_eur"],
+            bank_transfer_out_eur=preview[
+                "bank_transfer_supplier_payment_eur"
+            ],
+            payment_count=preview["supplier_payment_count"],
+        ),
     )
     db.add(day_close)
     db.commit()
@@ -3121,10 +3240,16 @@ def purchase_order_load_options() -> tuple:
         selectinload(PurchaseOrder.items).selectinload(
             PurchaseOrderItem.supply_item
         ),
+        selectinload(PurchaseOrder.payments),
     )
 
 
 def serialize_purchase_order(purchase_order: PurchaseOrder) -> dict:
+    paid_eur = round(sum(payment.amount_eur for payment in purchase_order.payments), 2)
+    outstanding_eur = round(max(purchase_order.total_eur - paid_eur, 0), 2)
+    payment_status = (
+        "paid" if outstanding_eur <= 0 else "partial" if paid_eur > 0 else "unpaid"
+    )
     return {
         "id": purchase_order.id,
         "number": f"NB-{purchase_order.order_date.year}-{purchase_order.id:04d}",
@@ -3136,6 +3261,22 @@ def serialize_purchase_order(purchase_order: PurchaseOrder) -> dict:
         "payment_method": purchase_order.payment_method,
         "notes": purchase_order.notes,
         "total_eur": purchase_order.total_eur,
+        "paid_eur": paid_eur,
+        "outstanding_eur": outstanding_eur,
+        "payment_status": payment_status,
+        "payments": [
+            {
+                "id": payment.id,
+                "payment_date": payment.payment_date,
+                "amount_eur": payment.amount_eur,
+                "payment_method": payment.payment_method,
+                "notes": payment.notes,
+            }
+            for payment in sorted(
+                purchase_order.payments,
+                key=lambda item: (item.payment_date, item.id),
+            )
+        ],
         "items": [
             {
                 "id": item.id,
@@ -3364,9 +3505,215 @@ def cancel_purchase_order(
             status_code=409,
             detail="Preklicati je mogoče samo odprto nabavno naročilo.",
         )
+    if purchase_order.payments:
+        raise HTTPException(
+            status_code=409,
+            detail="Naročila z evidentiranim plačilom ni mogoče preklicati.",
+        )
     purchase_order.status = "cancelled"
     db.commit()
     return {
         "message": "Nabavno naročilo je preklicano.",
         **serialize_purchase_order(purchase_order),
     }
+
+
+def serialize_supply_usage(usage: SupplyUsage) -> dict:
+    return {
+        "id": usage.id,
+        "usage_date": usage.usage_date,
+        "supply_item_id": usage.supply_item_id,
+        "supply_item": usage.supply_item.name,
+        "category": usage.supply_item.category,
+        "unit": usage.supply_item.unit,
+        "bed_id": usage.bed_id,
+        "bed": usage.bed.name,
+        "planting_id": usage.planting_id,
+        "quantity": usage.quantity,
+        "unit_cost_eur": usage.unit_cost_eur,
+        "total_cost_eur": usage.total_cost_eur,
+        "notes": usage.notes,
+    }
+
+
+def average_received_unit_cost(db: Session, supply_item_id: int) -> float | None:
+    received_items = db.scalars(
+        select(PurchaseOrderItem)
+        .join(
+            PurchaseOrder,
+            PurchaseOrderItem.purchase_order_id == PurchaseOrder.id,
+        )
+        .where(
+            PurchaseOrder.farm_id == DEFAULT_FARM_ID,
+            PurchaseOrder.status == "received",
+            PurchaseOrderItem.supply_item_id == supply_item_id,
+        )
+    ).all()
+    received_quantity = sum(item.quantity for item in received_items)
+    if received_quantity <= 0:
+        return None
+    return round(
+        sum(item.quantity * item.unit_price_eur for item in received_items)
+        / received_quantity,
+        4,
+    )
+
+
+@app.get("/api/supply-usages")
+def list_supply_usages(db: Session = Depends(get_db)) -> list[dict]:
+    usages = db.scalars(
+        select(SupplyUsage)
+        .where(SupplyUsage.farm_id == DEFAULT_FARM_ID)
+        .options(
+            selectinload(SupplyUsage.supply_item),
+            selectinload(SupplyUsage.bed),
+        )
+        .order_by(SupplyUsage.usage_date.desc(), SupplyUsage.id.desc())
+    ).all()
+    return [serialize_supply_usage(usage) for usage in usages]
+
+
+@app.post("/api/supply-usages", status_code=status.HTTP_201_CREATED)
+def create_supply_usage(
+    payload: SupplyUsageCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    supply_item = db.scalar(
+        select(SupplyItem)
+        .where(
+            SupplyItem.id == payload.supply_item_id,
+            SupplyItem.farm_id == DEFAULT_FARM_ID,
+        )
+        .with_for_update()
+    )
+    if supply_item is None:
+        raise HTTPException(status_code=404, detail="Material ne obstaja.")
+    bed = db.scalar(
+        select(Bed).where(
+            Bed.id == payload.bed_id,
+            Bed.farm_id == DEFAULT_FARM_ID,
+        )
+    )
+    if bed is None:
+        raise HTTPException(status_code=404, detail="Gredica ne obstaja.")
+    if payload.planting_id is not None:
+        planting = db.scalar(
+            select(Planting).where(
+                Planting.id == payload.planting_id,
+                Planting.farm_id == DEFAULT_FARM_ID,
+            )
+        )
+        if planting is None:
+            raise HTTPException(status_code=404, detail="Setev ne obstaja.")
+        if planting.bed_id != bed.id:
+            raise HTTPException(
+                status_code=422,
+                detail="Setev ne pripada izbrani gredici.",
+            )
+    if payload.quantity > supply_item.stock_quantity + 0.0005:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Na zalogi je samo {supply_item.stock_quantity:.3f} "
+                f"{supply_item.unit}."
+            ),
+        )
+    unit_cost_eur = payload.unit_cost_eur or average_received_unit_cost(
+        db, supply_item.id
+    )
+    if unit_cost_eur is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Za material brez prevzete nabave vnesite strošek na enoto.",
+        )
+    usage = SupplyUsage(
+        farm_id=DEFAULT_FARM_ID,
+        supply_item_id=supply_item.id,
+        bed_id=bed.id,
+        planting_id=payload.planting_id,
+        usage_date=payload.usage_date,
+        quantity=round(payload.quantity, 3),
+        unit_cost_eur=round(unit_cost_eur, 4),
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    supply_item.stock_quantity = round(
+        supply_item.stock_quantity - payload.quantity, 3
+    )
+    db.add(usage)
+    db.commit()
+    usage = db.scalar(
+        select(SupplyUsage)
+        .where(SupplyUsage.id == usage.id)
+        .options(
+            selectinload(SupplyUsage.supply_item),
+            selectinload(SupplyUsage.bed),
+        )
+    )
+    return {
+        "message": "Poraba materiala je knjižena na gredico in odšteta iz zaloge.",
+        **serialize_supply_usage(usage),
+    }
+
+
+@app.post(
+    "/api/purchase-orders/{purchase_order_id}/payments",
+    status_code=status.HTTP_201_CREATED,
+)
+def record_supplier_payment(
+    purchase_order_id: int,
+    payload: SupplierPaymentCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    purchase_order = db.scalar(
+        select(PurchaseOrder)
+        .where(
+            PurchaseOrder.id == purchase_order_id,
+            PurchaseOrder.farm_id == DEFAULT_FARM_ID,
+        )
+        .options(*purchase_order_load_options())
+        .with_for_update()
+    )
+    if purchase_order is None:
+        raise HTTPException(status_code=404, detail="Nabavno naročilo ne obstaja.")
+    ensure_business_day_open(db, payload.payment_date)
+    if purchase_order.status == "cancelled":
+        raise HTTPException(
+            status_code=409,
+            detail="Plačila preklicanega naročila ni mogoče evidentirati.",
+        )
+    if payload.payment_date < purchase_order.order_date:
+        raise HTTPException(
+            status_code=422,
+            detail="Datum plačila ne sme biti pred datumom naročila.",
+        )
+    current = serialize_purchase_order(purchase_order)
+    outstanding_eur = current["outstanding_eur"]
+    if outstanding_eur <= 0:
+        raise HTTPException(status_code=409, detail="Naročilo je že v celoti plačano.")
+    if payload.amount_eur > outstanding_eur + 0.005:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Največji še plačljivi znesek je {outstanding_eur:.2f} €.",
+        )
+    purchase_order.payments.append(
+        SupplierPayment(
+            farm_id=DEFAULT_FARM_ID,
+            payment_date=payload.payment_date,
+            amount_eur=round(payload.amount_eur, 2),
+            payment_method=payload.payment_method,
+            notes=payload.notes.strip() if payload.notes else None,
+        )
+    )
+    db.commit()
+    purchase_order = db.scalar(
+        select(PurchaseOrder)
+        .where(PurchaseOrder.id == purchase_order.id)
+        .options(*purchase_order_load_options())
+    )
+    data = serialize_purchase_order(purchase_order)
+    message = (
+        "Nabavno naročilo je v celoti plačano."
+        if data["payment_status"] == "paid"
+        else "Delno plačilo dobavitelju je evidentirano."
+    )
+    return {"message": message, **data}

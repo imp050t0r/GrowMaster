@@ -664,6 +664,8 @@ def test_bed_planting_and_task_workflow() -> None:
             "outflow_count": 1,
             "refund_eur": 0,
             "refund_count": 0,
+            "supplier_payments_eur": 0,
+            "supplier_payment_count": 0,
             "cash_eur": 3.8,
             "card_eur": 0.7,
             "bank_transfer_eur": 14,
@@ -793,6 +795,8 @@ def test_bed_planting_and_task_workflow() -> None:
             "outflow_count": 2,
             "refund_eur": 0.7,
             "refund_count": 2,
+            "supplier_payments_eur": 0,
+            "supplier_payment_count": 0,
             "cash_eur": 0,
             "card_eur": 0,
             "bank_transfer_eur": 0,
@@ -1087,3 +1091,150 @@ def test_bed_planting_and_task_workflow() -> None:
         ).status_code == 409
         assert len(client.get("/api/purchase-orders").json()) == 2
         assert len(client.get("/api/suppliers").json()) == 1
+
+        supply_usage = client.post(
+            "/api/supply-usages",
+            json={
+                "supply_item_id": seed_supply.json()["id"],
+                "bed_id": bed["id"],
+                "planting_id": planting.json()["id"],
+                "usage_date": "2026-10-02",
+                "quantity": 1.5,
+                "notes": "Jesenska setev.",
+            },
+        )
+        assert supply_usage.status_code == 201
+        usage_data = supply_usage.json()
+        assert usage_data["unit_cost_eur"] == 4.5
+        assert usage_data["total_cost_eur"] == 6.75
+        assert usage_data["bed"] == bed["name"]
+        assert client.post(
+            "/api/supply-usages",
+            json={
+                "supply_item_id": seed_supply.json()["id"],
+                "bed_id": bed["id"],
+                "usage_date": "2026-10-02",
+                "quantity": 99,
+            },
+        ).status_code == 409
+        usage_stock = next(
+            item for item in client.get("/api/supply-items").json()
+            if item["id"] == seed_supply.json()["id"]
+        )
+        assert usage_stock["stock_quantity"] == 2.5
+        assert len(client.get("/api/supply-usages").json()) == 1
+
+        economics_after_usage = next(
+            item for item in client.get("/api/economics/by-bed").json()
+            if item["bed_id"] == bed["id"]
+        )
+        assert economics_after_usage["direct_costs_eur"] == 42.5
+        assert economics_after_usage["material_costs_eur"] == 6.75
+        assert economics_after_usage["costs_eur"] == 49.25
+        assert economics_after_usage["profit_eur"] == 59.25
+
+        supplier_partial_payment = client.post(
+            f"/api/purchase-orders/{purchase_data['id']}/payments",
+            json={
+                "payment_date": "2026-10-02",
+                "amount_eur": 10,
+                "payment_method": "cash",
+                "notes": "Delno plačilo ob prevzemu.",
+            },
+        )
+        assert supplier_partial_payment.status_code == 201
+        assert supplier_partial_payment.json()["payment_status"] == "partial"
+        assert supplier_partial_payment.json()["paid_eur"] == 10
+        assert supplier_partial_payment.json()["outstanding_eur"] == 15.5
+        assert len(supplier_partial_payment.json()["payments"]) == 1
+        assert client.post(
+            f"/api/purchase-orders/{purchase_data['id']}/payments",
+            json={
+                "payment_date": "2026-10-03",
+                "amount_eur": 16,
+                "payment_method": "bank_transfer",
+            },
+        ).status_code == 409
+
+        supplier_close_preview = client.get(
+            "/api/day-closes/preview?business_date=2026-10-02&opening_cash_eur=100"
+        )
+        assert supplier_close_preview.status_code == 200
+        supplier_preview = supplier_close_preview.json()
+        assert supplier_preview["cash_supplier_payment_eur"] == 10
+        assert supplier_preview["total_supplier_payment_eur"] == 10
+        assert supplier_preview["total_outflow_eur"] == 10
+        assert supplier_preview["net_receipts_eur"] == -10
+        assert supplier_preview["expected_cash_eur"] == 90
+        assert supplier_preview["supplier_payment_count"] == 1
+
+        supplier_day_close = client.post(
+            "/api/day-closes",
+            json={
+                "business_date": "2026-10-02",
+                "opening_cash_eur": 100,
+                "counted_cash_eur": 90,
+            },
+        )
+        assert supplier_day_close.status_code == 201
+        assert supplier_day_close.json()["difference_eur"] == 0
+        assert supplier_day_close.json()["cash_supplier_payment_eur"] == 10
+        assert client.post(
+            f"/api/purchase-orders/{purchase_data['id']}/payments",
+            json={
+                "payment_date": "2026-10-02",
+                "amount_eur": 1,
+                "payment_method": "cash",
+            },
+        ).status_code == 409
+
+        supplier_final_payment = client.post(
+            f"/api/purchase-orders/{purchase_data['id']}/payments",
+            json={
+                "payment_date": "2026-10-03",
+                "amount_eur": 15.5,
+                "payment_method": "bank_transfer",
+            },
+        )
+        assert supplier_final_payment.status_code == 201
+        assert supplier_final_payment.json()["payment_status"] == "paid"
+        assert supplier_final_payment.json()["paid_eur"] == 25.5
+        assert supplier_final_payment.json()["outstanding_eur"] == 0
+        assert len(supplier_final_payment.json()["payments"]) == 2
+        assert client.post(
+            f"/api/purchase-orders/{cancelled_purchase.json()['id']}/payments",
+            json={
+                "payment_date": "2026-10-03",
+                "amount_eur": 1,
+                "payment_method": "card",
+            },
+        ).status_code == 409
+
+        supplier_cash_flow = client.get(
+            "/api/cash-flow?start=2026-10-02&end=2026-10-03"
+        )
+        assert supplier_cash_flow.status_code == 200
+        supplier_flow = supplier_cash_flow.json()
+        assert supplier_flow["summary"]["inflow_eur"] == 0
+        assert supplier_flow["summary"]["outflow_eur"] == 25.5
+        assert supplier_flow["summary"]["net_eur"] == -25.5
+        assert supplier_flow["summary"]["supplier_payments_eur"] == 25.5
+        assert supplier_flow["summary"]["supplier_payment_count"] == 2
+        assert supplier_flow["summary"]["costs_by_category"] == {
+            "purchasing": 25.5
+        }
+        assert len(supplier_flow["entries"]) == 2
+        assert {entry["source"] for entry in supplier_flow["entries"]} == {
+            "supplier_payment"
+        }
+        assert {entry["method"] for entry in supplier_flow["entries"]} == {
+            "cash",
+            "bank_transfer",
+        }
+        supplier_cash_flow_csv = client.get(
+            "/api/cash-flow/export.csv?start=2026-10-02&end=2026-10-03"
+        )
+        assert supplier_cash_flow_csv.status_code == 200
+        assert "Plačilo dobavitelju" in supplier_cash_flow_csv.text
+        assert "Agro oskrba" in supplier_cash_flow_csv.text
+        assert len(client.get("/api/day-closes").json()) == 3

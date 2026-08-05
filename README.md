@@ -46,6 +46,11 @@ GrowMaster is a local-first farm management application for professional market 
 - multi-item purchase orders with expected delivery, payment method and total cost
 - full-order receipt that updates supply stock and prevents duplicate receipt
 - cancellation of purchase orders that have not yet been received
+- material usage by bed and optional planting with automatic stock reduction
+- weighted-average material valuation from received purchases or a manual opening-stock cost
+- separate direct and material costs in the automatic profit calculation per bed
+- partial and final supplier payments with payment history and overpayment safeguards
+- supplier-payment outflows in cash flow and immutable daily sales closing
 - seasonal crop plans with succession sowings and activation into field work
 - calendar for sowing, transplanting, harvest, tasks and deliveries
 - crop forecast comparing current stock, planned yield and confirmed demand
@@ -70,6 +75,6 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete farm-to-season-plan, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing and supplier-purchasing API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete farm-to-season-plan, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing, supplier-purchasing, material-usage and supplier-payment API workflow test and builds the production frontend.
 
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).
