@@ -27,6 +27,9 @@ GrowMaster is a local-first farm management application for professional market 
 - open and overdue receivables for invoiced orders with a 14-day due date
 - partial and final payment records with cash, card or bank-transfer method
 - payment history and outstanding balance per business invoice
+- actual cash-flow view combining paid direct sales and received invoice payments
+- cost outflows, daily net movement and payment-method breakdown
+- date-filtered UTF-8 CSV cash-flow export
 - seasonal crop plans with succession sowings and activation into field work
 - calendar for sowing, transplanting, harvest, tasks and deliveries
 - crop forecast comparing current stock, planned yield and confirmed demand
@@ -51,4 +54,4 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete farm-to-season-plan, direct-sale, sales-report and receivables API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete farm-to-season-plan, direct-sale, sales-report, receivables and cash-flow API workflow test and builds the production frontend.

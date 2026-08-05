@@ -37,7 +37,7 @@ button { cursor: pointer; }
   top: 10px;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(9, 1fr);
+  grid-template-columns: repeat(10, 1fr);
   gap: 8px;
   margin-top: 14px;
   padding: 8px;
@@ -241,6 +241,20 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
 .payment-history span { padding: 6px 9px; color: #53685e; background: #e6ece8; border-radius: 8px; font-size: 0.78rem; }
 .payment-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding-top: 12px; border-top: 1px solid #dce7df; }
 .payment-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+.cashflow-metrics .positive, .cashflow-daily-list .positive, .cashflow-table .positive { color: #17603f; }
+.cashflow-metrics .negative, .cashflow-daily-list .negative, .cashflow-table .negative { color: #a1372b; }
+.cashflow-summary-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 14px; }
+.cashflow-daily-list { display: grid; gap: 7px; }
+.cashflow-daily-list article { display: grid; grid-template-columns: 1fr repeat(3, auto); align-items: center; gap: 14px; padding: 11px; background: #f8fbf9; border-radius: 10px; }
+.cashflow-daily-list time { color: #4f685d; font-weight: 850; }
+.cost-category-list { display: grid; gap: 8px; }
+.cost-category-list article { display: flex; justify-content: space-between; gap: 12px; padding: 11px; background: #f8fbf9; border-radius: 10px; }
+.cost-category-list article span { color: #597267; }
+.cashflow-table { display: grid; grid-template-columns: 0.8fr 1fr 1.5fr 1fr 0.8fr 0.8fr; overflow-x: auto; }
+.cashflow-table > * { min-width: 105px; padding: 11px 9px; border-bottom: 1px solid #e5ece7; }
+.cashflow-table > :nth-child(6n + 5), .cashflow-table > :nth-child(6n) { text-align: right; }
+.cashflow-table span { display: grid; align-content: center; gap: 2px; }
+.cashflow-table small { color: #6f8179; font-size: 0.74rem; }
 .planning-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .planning-summary-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 14px; }
 .range-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
@@ -281,6 +295,7 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
   .report-heading { align-items: stretch; flex-direction: column; }
   .report-controls { min-width: 0; }
   .receivables-heading { align-items: stretch; flex-direction: column; }
+  .cashflow-summary-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {
@@ -303,6 +318,7 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
   .receivable-main > div:last-child { text-align: left; }
   .payment-form { grid-template-columns: 1fr; }
   .payment-actions { grid-column: 1; flex-direction: column-reverse; }
+  .cashflow-daily-list article { grid-template-columns: 1fr auto; }
   .order-form h2 { grid-column: 1; }
   .task-form .wide, .completion-form .wide, .completion-actions { grid-column: span 1; }
   .primary-button { width: 100%; }
@@ -311,7 +327,7 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
   .task-main { grid-template-columns: auto 1fr; }
   .task-state { grid-column: 2; justify-self: start; }
   .completion-actions { flex-direction: column-reverse; }
-  .main-nav { overflow-x: auto; grid-template-columns: repeat(9, minmax(68px, 1fr)); }
+  .main-nav { overflow-x: auto; grid-template-columns: repeat(10, minmax(68px, 1fr)); }
   .calendar-list article { grid-template-columns: 82px 1fr; }
   .event-type { grid-column: 2; justify-self: start; }
 }

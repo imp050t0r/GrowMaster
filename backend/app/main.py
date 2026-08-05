@@ -63,7 +63,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.8.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="0.9.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -1717,6 +1717,11 @@ def sales_report(
     return build_sales_report(db, start, end)
 
 
+def spreadsheet_cell(value: object) -> str:
+    text = str(value)
+    return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
+
+
 @app.get("/api/sales-report/export.csv")
 def export_sales_report(
     start: date | None = None,
@@ -1724,11 +1729,6 @@ def export_sales_report(
     db: Session = Depends(get_db),
 ) -> Response:
     report = build_sales_report(db, start, end)
-
-    def spreadsheet_cell(value: object) -> str:
-        text = str(value)
-        return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
-
     output = io.StringIO()
     writer = csv.writer(output, delimiter=";")
     writer.writerow(
@@ -1932,3 +1932,215 @@ def record_order_payment(
         else "Delno plačilo je evidentirano."
     )
     return {"message": message, **receivable}
+
+
+def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
+    range_start, range_end = sales_report_range(start, end)
+    retail_sales = db.scalars(
+        select(RetailSale)
+        .where(
+            RetailSale.farm_id == DEFAULT_FARM_ID,
+            RetailSale.sale_date >= range_start,
+            RetailSale.sale_date <= range_end,
+        )
+        .options(
+            selectinload(RetailSale.customer),
+            selectinload(RetailSale.items),
+        )
+    ).all()
+    order_payments = db.scalars(
+        select(OrderPayment)
+        .where(
+            OrderPayment.farm_id == DEFAULT_FARM_ID,
+            OrderPayment.payment_date >= range_start,
+            OrderPayment.payment_date <= range_end,
+        )
+        .options(
+            selectinload(OrderPayment.order).selectinload(Order.customer)
+        )
+    ).all()
+    costs = db.scalars(
+        select(Cost)
+        .where(
+            Cost.farm_id == DEFAULT_FARM_ID,
+            Cost.cost_date >= range_start,
+            Cost.cost_date <= range_end,
+        )
+        .options(selectinload(Cost.bed))
+    ).all()
+
+    entries = []
+    for retail_sale in retail_sales:
+        entries.append(
+            {
+                "key": f"retail-{retail_sale.id}",
+                "date": retail_sale.sale_date,
+                "direction": "inflow",
+                "source": "retail_sale",
+                "reference": f"MP-{retail_sale.sale_date.year}-{retail_sale.id:04d}",
+                "party": retail_sale.customer.name if retail_sale.customer else "Končni potrošnik",
+                "description": "Hitra prodaja",
+                "method": retail_sale.payment_method,
+                "category": None,
+                "amount_eur": retail_sale.total_eur,
+            }
+        )
+    for payment in order_payments:
+        entries.append(
+            {
+                "key": f"payment-{payment.id}",
+                "date": payment.payment_date,
+                "direction": "inflow",
+                "source": "order_payment",
+                "reference": f"R-{payment.order.order_date.year}-{payment.order.id:04d}",
+                "party": payment.order.customer.name,
+                "description": "Plačilo računa",
+                "method": payment.payment_method,
+                "category": None,
+                "amount_eur": round(payment.amount_eur, 2),
+            }
+        )
+    for cost in costs:
+        entries.append(
+            {
+                "key": f"cost-{cost.id}",
+                "date": cost.cost_date,
+                "direction": "outflow",
+                "source": "cost",
+                "reference": f"ST-{cost.cost_date.year}-{cost.id:04d}",
+                "party": f"Gredica {cost.bed.name}",
+                "description": cost.description,
+                "method": None,
+                "category": cost.category,
+                "amount_eur": round(cost.amount_eur, 2),
+            }
+        )
+    entries.sort(key=lambda entry: (entry["date"], entry["key"]), reverse=True)
+
+    inflows = [entry for entry in entries if entry["direction"] == "inflow"]
+    outflows = [entry for entry in entries if entry["direction"] == "outflow"]
+    inflow_eur = round(sum(entry["amount_eur"] for entry in inflows), 2)
+    outflow_eur = round(sum(entry["amount_eur"] for entry in outflows), 2)
+    methods = ("cash", "card", "bank_transfer")
+    categories = sorted({entry["category"] for entry in outflows if entry["category"]})
+    daily = []
+    for report_date in sorted({entry["date"] for entry in entries}, reverse=True):
+        day_entries = [entry for entry in entries if entry["date"] == report_date]
+        day_inflow = round(
+            sum(
+                entry["amount_eur"]
+                for entry in day_entries
+                if entry["direction"] == "inflow"
+            ),
+            2,
+        )
+        day_outflow = round(
+            sum(
+                entry["amount_eur"]
+                for entry in day_entries
+                if entry["direction"] == "outflow"
+            ),
+            2,
+        )
+        daily.append(
+            {
+                "date": report_date,
+                "inflow_eur": day_inflow,
+                "outflow_eur": day_outflow,
+                "net_eur": round(day_inflow - day_outflow, 2),
+            }
+        )
+    return {
+        "start": range_start,
+        "end": range_end,
+        "summary": {
+            "inflow_eur": inflow_eur,
+            "outflow_eur": outflow_eur,
+            "net_eur": round(inflow_eur - outflow_eur, 2),
+            "inflow_count": len(inflows),
+            "outflow_count": len(outflows),
+            **{
+                f"{method}_eur": round(
+                    sum(
+                        entry["amount_eur"]
+                        for entry in inflows
+                        if entry["method"] == method
+                    ),
+                    2,
+                )
+                for method in methods
+            },
+            "costs_by_category": {
+                category: round(
+                    sum(
+                        entry["amount_eur"]
+                        for entry in outflows
+                        if entry["category"] == category
+                    ),
+                    2,
+                )
+                for category in categories
+            },
+        },
+        "daily": daily,
+        "entries": entries,
+        "note": (
+            "Denarni tok vključuje poravnane hitre prodaje, dejansko evidentirana "
+            "plačila računov in stroške, ki se štejejo kot odliv na datum stroška. "
+            "Izdani računi brez plačila ter stare ročne prodaje brez načina plačila "
+            "niso vključeni."
+        ),
+    }
+
+
+@app.get("/api/cash-flow")
+def cash_flow(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    return build_cash_flow(db, start, end)
+
+
+@app.get("/api/cash-flow/export.csv")
+def export_cash_flow(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> Response:
+    report = build_cash_flow(db, start, end)
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        [
+            "Datum",
+            "Smer",
+            "Vir",
+            "Referenca",
+            "Stranka ali gredica",
+            "Opis",
+            "Način",
+            "Kategorija",
+            "Znesek EUR",
+        ]
+    )
+    for entry in report["entries"]:
+        writer.writerow(
+            [
+                entry["date"].isoformat(),
+                entry["direction"],
+                entry["source"],
+                spreadsheet_cell(entry["reference"]),
+                spreadsheet_cell(entry["party"]),
+                spreadsheet_cell(entry["description"]),
+                spreadsheet_cell(entry["method"] or ""),
+                spreadsheet_cell(entry["category"] or ""),
+                f'{entry["amount_eur"]:.2f}',
+            ]
+        )
+    filename = f'growmaster-denarni-tok-{report["start"]}-{report["end"]}.csv'
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
