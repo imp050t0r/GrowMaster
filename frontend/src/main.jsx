@@ -5,6 +5,7 @@ import "./styles.css";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const now = new Date();
 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+const monthStart = `${today.slice(0, 7)}-01`;
 const inDays = (days) => {
   const value = new Date(now); value.setDate(value.getDate() + days);
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
@@ -50,10 +51,13 @@ function App() {
   const [salesSettings, setSalesSettings] = useState(null);
   const [salesReport, setSalesReport] = useState({ summary: {}, daily: [], entries: [], note: "" });
   const [receivables, setReceivables] = useState({ summary: {}, items: [], note: "" });
+  const [cashFlow, setCashFlow] = useState({ summary: {}, daily: [], entries: [], note: "" });
   const [reportStart, setReportStart] = useState(today);
   const [reportEnd, setReportEnd] = useState(today);
   const [receivablesAsOf, setReceivablesAsOf] = useState(today);
   const [includePaidReceivables, setIncludePaidReceivables] = useState(false);
+  const [cashFlowStart, setCashFlowStart] = useState(monthStart);
+  const [cashFlowEnd, setCashFlowEnd] = useState(today);
   const [paymentOrderId, setPaymentOrderId] = useState(null);
   const [planStart, setPlanStart] = useState(today);
   const [planEnd, setPlanEnd] = useState(inDays(90));
@@ -103,7 +107,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -121,6 +125,7 @@ function App() {
       apiRequest("/api/sales-settings"),
       apiRequest(`/api/sales-report?start=${reportStart}&end=${reportEnd}`),
       apiRequest(`/api/receivables?as_of=${receivablesAsOf}&include_paid=${includePaidReceivables}`),
+      apiRequest(`/api/cash-flow?start=${cashFlowStart}&end=${cashFlowEnd}`),
     ]);
     setCrops(cropData);
     setBeds(bedData);
@@ -139,6 +144,7 @@ function App() {
     setSalesSettings(salesSettingsData);
     setSalesReport(salesReportData);
     setReceivables(receivablesData);
+    setCashFlow(cashFlowData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
     setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
     setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
@@ -167,7 +173,7 @@ function App() {
 
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
-  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables]);
+  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd]);
 
   function clearMessages() {
     setNotice("");
@@ -427,6 +433,7 @@ function App() {
     ["orders", "Naročila", "▤"],
     ["reports", "Prodaja", "Σ"],
     ["receivables", "Terjatve", "↔"],
+    ["cashflow", "Denar", "◒"],
     ["planning", "Plan", "◫"],
   ];
 
@@ -438,7 +445,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 0.8</span>
+        <span className="status-pill">MVP 0.9</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -523,6 +530,9 @@ function App() {
       )}
       {view === "receivables" && (
         <ReceivablesView data={receivables} asOf={receivablesAsOf} setAsOf={setReceivablesAsOf} includePaid={includePaidReceivables} setIncludePaid={setIncludePaidReceivables} paymentOrderId={paymentOrderId} beginPayment={beginPayment} cancelPayment={() => setPaymentOrderId(null)} paymentForm={paymentForm} setPaymentForm={setPaymentForm} recordPayment={recordPayment} />
+      )}
+      {view === "cashflow" && (
+        <CashFlowView data={cashFlow} start={cashFlowStart} setStart={setCashFlowStart} end={cashFlowEnd} setEnd={setCashFlowEnd} />
       )}
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
@@ -787,6 +797,27 @@ function ReceivablesView({ data, asOf, setAsOf, includePaid, setIncludePaid, pay
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Pregled računov</p><h2>Odprte postavke</h2></div><span>{data.items.length} zapisov</span></div>
       {data.items.length === 0 ? <p className="empty-state">Ni odprtih terjatev.</p> : <div className="receivables-list">{data.items.map((item) => <article key={item.order_id} className={item.status}><div className="receivable-main"><div><span className={`receivable-state ${item.status}`}>{statusLabel(item.status)}</span><strong>{item.invoice_number} · {item.customer}</strong><span>Rok {item.due_date}{item.days_overdue > 0 ? ` · ${item.days_overdue} dni zamude` : ""}</span></div><div><strong>{item.outstanding_eur.toFixed(2)} € odprto</strong><span>{item.paid_eur.toFixed(2)} € od {item.total_eur.toFixed(2)} € plačano</span></div></div>{item.payments.length > 0 && <div className="payment-history">{item.payments.map((payment) => <span key={payment.id}>{payment.payment_date} · {payment.amount_eur.toFixed(2)} € · {methodLabel(payment.payment_method)}</span>)}</div>}{item.status !== "paid" && paymentOrderId !== item.order_id && <button className="secondary-button" onClick={() => beginPayment(item)}>EVIDENTIRAJ PLAČILO</button>}{paymentOrderId === item.order_id && <form className="payment-form" onSubmit={recordPayment}><label>Datum<input type="date" value={paymentForm.payment_date} onChange={(e) => setPaymentForm({ ...paymentForm, payment_date: e.target.value })} required /></label><label>Znesek (€)<input type="number" min="0.01" max={item.outstanding_eur} step="0.01" value={paymentForm.amount_eur} onChange={(e) => setPaymentForm({ ...paymentForm, amount_eur: e.target.value })} required /></label><label>Način<select value={paymentForm.payment_method} onChange={(e) => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}><option value="bank_transfer">Nakazilo</option><option value="cash">Gotovina</option><option value="card">Kartica</option></select></label><label>Opomba<input value={paymentForm.notes} onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })} /></label><div className="payment-actions"><button type="button" className="text-button" onClick={cancelPayment}>PREKLIČI</button><button className="primary-button">SHRANI PLAČILO</button></div></form>}</article>)}</div>}
     </section>
+  </>;
+}
+
+function CashFlowView({ data, start, setStart, end, setEnd }) {
+  const summary = data.summary || {};
+  const categoryLabels = { seed: "Seme", labor: "Delo", fertilizer: "Gnojila", water: "Voda", packaging: "Embalaža", other: "Drugo" };
+  const methodLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
+  const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek" }[source] || source);
+  return <>
+    <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/cash-flow/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div></section>
+    <section className="metric-grid cashflow-metrics">
+      <article className="metric-card"><span>Prilivi</span><strong className="positive">{(summary.inflow_eur || 0).toFixed(2)} €</strong><small>{summary.inflow_count || 0} prejemkov</small></article>
+      <article className="metric-card"><span>Odlivi</span><strong className="negative">{(summary.outflow_eur || 0).toFixed(2)} €</strong><small>{summary.outflow_count || 0} stroškov</small></article>
+      <article className="metric-card"><span>Neto tok</span><strong className={(summary.net_eur || 0) < 0 ? "negative" : "positive"}>{(summary.net_eur || 0).toFixed(2)} €</strong><small>prilivi minus odlivi</small></article>
+      <article className="metric-card"><span>Načini priliva</span><strong>{(summary.bank_transfer_eur || 0).toFixed(2)} €</strong><small>nakazila · gotovina {(summary.cash_eur || 0).toFixed(2)} € · kartice {(summary.card_eur || 0).toFixed(2)} €</small></article>
+    </section>
+    <section className="cashflow-summary-grid">
+      <div className="panel"><div className="section-heading"><div><p className="eyebrow">Po dnevih</p><h2>Dnevni tok</h2></div><span>{data.daily.length} dni</span></div>{data.daily.length === 0 ? <p className="empty-state">V obdobju ni evidentiranih denarnih premikov.</p> : <div className="cashflow-daily-list">{data.daily.map((day) => <article key={day.date}><time>{day.date}</time><span className="positive">+{day.inflow_eur.toFixed(2)} €</span><span className="negative">−{day.outflow_eur.toFixed(2)} €</span><strong className={day.net_eur < 0 ? "negative" : "positive"}>{day.net_eur.toFixed(2)} €</strong></article>)}</div>}</div>
+      <div className="panel"><div className="section-heading"><div><p className="eyebrow">Odlivi</p><h2>Stroški po vrsti</h2></div></div>{Object.keys(summary.costs_by_category || {}).length === 0 ? <p className="empty-state">V obdobju ni evidentiranih stroškov.</p> : <div className="cost-category-list">{Object.entries(summary.costs_by_category).map(([category, amount]) => <article key={category}><span>{categoryLabels[category] || category}</span><strong>{amount.toFixed(2)} €</strong></article>)}</div>}</div>
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Premiki</p><h2>Denarni dnevnik</h2></div><span>{data.entries.length} zapisov</span></div><div className="cashflow-table"><b>Datum</b><b>Referenca</b><b>Opis</b><b>Način / vrsta</b><b>Priliv</b><b>Odliv</b>{data.entries.map((entry) => <React.Fragment key={entry.key}><span>{entry.date}</span><span>{entry.reference}<small>{sourceLabel(entry.source)}</small></span><span>{entry.description}<small>{entry.party}</small></span><span>{methodLabels[entry.method] || categoryLabels[entry.category] || entry.category}</span><strong className="positive">{entry.direction === "inflow" ? `${entry.amount_eur.toFixed(2)} €` : "—"}</strong><strong className="negative">{entry.direction === "outflow" ? `${entry.amount_eur.toFixed(2)} €` : "—"}</strong></React.Fragment>)}</div></section>
   </>;
 }
 
