@@ -41,6 +41,9 @@ class Farm(Base):
     refunds: Mapped[list["Refund"]] = relationship(back_populates="farm")
     product_prices: Mapped[list["ProductPrice"]] = relationship(back_populates="farm")
     day_closes: Mapped[list["DayClose"]] = relationship(back_populates="farm")
+    suppliers: Mapped[list["Supplier"]] = relationship(back_populates="farm")
+    supply_items: Mapped[list["SupplyItem"]] = relationship(back_populates="farm")
+    purchase_orders: Mapped[list["PurchaseOrder"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -293,6 +296,104 @@ class CropPlan(Base):
     crop: Mapped[Crop] = relationship()
     variety: Mapped[Variety] = relationship()
     planting: Mapped[Planting | None] = relationship()
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "name", name="uq_supplier_farm_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    tax_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="suppliers")
+    purchase_orders: Mapped[list["PurchaseOrder"]] = relationship(
+        back_populates="supplier"
+    )
+
+
+class SupplyItem(Base):
+    __tablename__ = "supply_items"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "name", name="uq_supply_item_farm_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    unit: Mapped[str] = mapped_column(String(20))
+    stock_quantity: Mapped[float] = mapped_column(Float, default=0)
+    reorder_level: Mapped[float] = mapped_column(Float, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="supply_items")
+    purchase_order_items: Mapped[list["PurchaseOrderItem"]] = relationship(
+        back_populates="supply_item"
+    )
+
+
+class PurchaseOrder(Base):
+    __tablename__ = "purchase_orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    supplier_id: Mapped[int] = mapped_column(
+        ForeignKey("suppliers.id", ondelete="RESTRICT"), index=True
+    )
+    order_date: Mapped[date] = mapped_column(Date, index=True)
+    expected_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    received_on: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="ordered", index=True)
+    payment_method: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="purchase_orders")
+    supplier: Mapped[Supplier] = relationship(back_populates="purchase_orders")
+    items: Mapped[list["PurchaseOrderItem"]] = relationship(
+        back_populates="purchase_order", cascade="all, delete-orphan"
+    )
+
+    @property
+    def total_eur(self) -> float:
+        return round(sum(item.line_total_eur for item in self.items), 2)
+
+
+class PurchaseOrderItem(Base):
+    __tablename__ = "purchase_order_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"), index=True
+    )
+    supply_item_id: Mapped[int] = mapped_column(
+        ForeignKey("supply_items.id", ondelete="RESTRICT"), index=True
+    )
+    quantity: Mapped[float] = mapped_column(Float)
+    unit_price_eur: Mapped[float] = mapped_column(Float)
+
+    purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="items")
+    supply_item: Mapped[SupplyItem] = relationship(
+        back_populates="purchase_order_items"
+    )
+
+    @property
+    def line_total_eur(self) -> float:
+        return round(self.quantity * self.unit_price_eur, 2)
 
 
 class ProductPrice(Base):

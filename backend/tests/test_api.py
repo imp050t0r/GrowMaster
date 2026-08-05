@@ -936,3 +936,154 @@ def test_bed_planting_and_task_workflow() -> None:
         assert late_refund.status_code == 409
         assert "že zaključen" in late_refund.json()["detail"]
         assert len(client.get("/api/day-closes").json()) == 2
+
+        supplier = client.post(
+            "/api/suppliers",
+            json={
+                "name": "Agro oskrba",
+                "tax_number": "SI12345678",
+                "email": "narocila@example.test",
+                "phone": "+386 1 555 01 01",
+            },
+        )
+        assert supplier.status_code == 201
+        assert supplier.json()["name"] == "Agro oskrba"
+        assert client.post(
+            "/api/suppliers",
+            json={"name": "agro oskrba"},
+        ).status_code == 409
+
+        seed_supply = client.post(
+            "/api/supply-items",
+            json={
+                "name": "Seme rukole Astro",
+                "category": "seed",
+                "unit": "vrečka",
+                "opening_stock": 1,
+                "reorder_level": 2,
+            },
+        )
+        assert seed_supply.status_code == 201
+        assert seed_supply.json()["low_stock"] is True
+        packaging_supply = client.post(
+            "/api/supply-items",
+            json={
+                "name": "Papirnata vrečka 1 kg",
+                "category": "packaging",
+                "unit": "kos",
+                "reorder_level": 50,
+            },
+        )
+        assert packaging_supply.status_code == 201
+
+        invalid_purchase_date = client.post(
+            "/api/purchase-orders",
+            json={
+                "supplier_id": supplier.json()["id"],
+                "order_date": "2026-09-28",
+                "expected_date": "2026-09-27",
+                "payment_method": "bank_transfer",
+                "items": [
+                    {
+                        "supply_item_id": seed_supply.json()["id"],
+                        "quantity": 3,
+                        "unit_price_eur": 4.5,
+                    }
+                ],
+            },
+        )
+        assert invalid_purchase_date.status_code == 422
+
+        purchase = client.post(
+            "/api/purchase-orders",
+            json={
+                "supplier_id": supplier.json()["id"],
+                "order_date": "2026-09-28",
+                "expected_date": "2026-10-01",
+                "payment_method": "bank_transfer",
+                "notes": "Jesenska dopolnitev zaloge.",
+                "items": [
+                    {
+                        "supply_item_id": seed_supply.json()["id"],
+                        "quantity": 3,
+                        "unit_price_eur": 4.5,
+                    },
+                    {
+                        "supply_item_id": packaging_supply.json()["id"],
+                        "quantity": 100,
+                        "unit_price_eur": 0.12,
+                    },
+                ],
+            },
+        )
+        assert purchase.status_code == 201
+        purchase_data = purchase.json()
+        assert purchase_data["number"] == "NB-2026-0001"
+        assert purchase_data["status"] == "ordered"
+        assert purchase_data["total_eur"] == 25.5
+        assert len(purchase_data["items"]) == 2
+
+        stock_before_receipt = client.get("/api/supply-items").json()
+        seed_before = next(
+            item for item in stock_before_receipt
+            if item["id"] == seed_supply.json()["id"]
+        )
+        assert seed_before["stock_quantity"] == 1
+
+        invalid_receipt = client.post(
+            f"/api/purchase-orders/{purchase_data['id']}/receive",
+            json={"received_on": "2026-09-27"},
+        )
+        assert invalid_receipt.status_code == 422
+        receipt = client.post(
+            f"/api/purchase-orders/{purchase_data['id']}/receive",
+            json={"received_on": "2026-10-01"},
+        )
+        assert receipt.status_code == 200
+        assert receipt.json()["status"] == "received"
+        assert receipt.json()["received_on"] == "2026-10-01"
+        assert client.post(
+            f"/api/purchase-orders/{purchase_data['id']}/receive",
+            json={"received_on": "2026-10-01"},
+        ).status_code == 409
+
+        stock_after_receipt = client.get("/api/supply-items").json()
+        seed_after = next(
+            item for item in stock_after_receipt
+            if item["id"] == seed_supply.json()["id"]
+        )
+        packaging_after = next(
+            item for item in stock_after_receipt
+            if item["id"] == packaging_supply.json()["id"]
+        )
+        assert seed_after["stock_quantity"] == 4
+        assert seed_after["low_stock"] is False
+        assert packaging_after["stock_quantity"] == 100
+
+        cancelled_purchase = client.post(
+            "/api/purchase-orders",
+            json={
+                "supplier_id": supplier.json()["id"],
+                "order_date": "2026-10-02",
+                "payment_method": "card",
+                "items": [
+                    {
+                        "supply_item_id": seed_supply.json()["id"],
+                        "quantity": 1,
+                        "unit_price_eur": 4.5,
+                    }
+                ],
+            },
+        )
+        assert cancelled_purchase.status_code == 201
+        cancelled = client.post(
+            f"/api/purchase-orders/{cancelled_purchase.json()['id']}/cancel"
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
+        assert client.post(
+            f"/api/purchase-orders/{cancelled_purchase.json()['id']}/receive",
+            json={"received_on": "2026-10-03"},
+        ).status_code == 409
+        assert len(client.get("/api/purchase-orders").json()) == 2
+        assert len(client.get("/api/suppliers").json()) == 1

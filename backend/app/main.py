@@ -32,11 +32,15 @@ from app.models import (
     OrderPayment,
     Planting,
     ProductPrice,
+    PurchaseOrder,
+    PurchaseOrderItem,
     RetailSale,
     RetailSaleItem,
     Refund,
     Sale,
     SalesSettings,
+    Supplier,
+    SupplyItem,
     Task,
     Variety,
 )
@@ -58,12 +62,16 @@ from app.schemas import (
     OrderPaymentCreate,
     OrderStatusUpdate,
     ProductPriceUpdate,
+    PurchaseOrderCreate,
+    PurchaseOrderReceive,
     RetailSaleCreate,
     RefundCreate,
     PlantingCreate,
     RotationPreview,
     SaleCreate,
     SalesSettingsUpdate,
+    SupplierCreate,
+    SupplyItemCreate,
     TaskComplete,
     TaskCreate,
 )
@@ -81,7 +89,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -3078,4 +3086,287 @@ def close_business_day(
     return {
         "message": "Poslovni dan je zaključen in denarni vnosi za ta datum so zaklenjeni.",
         **serialize_day_close(day_close),
+    }
+
+
+def serialize_supplier(supplier: Supplier) -> dict:
+    return {
+        "id": supplier.id,
+        "name": supplier.name,
+        "tax_number": supplier.tax_number,
+        "email": supplier.email,
+        "phone": supplier.phone,
+        "notes": supplier.notes,
+    }
+
+
+def serialize_supply_item(supply_item: SupplyItem) -> dict:
+    return {
+        "id": supply_item.id,
+        "name": supply_item.name,
+        "category": supply_item.category,
+        "unit": supply_item.unit,
+        "stock_quantity": round(supply_item.stock_quantity, 3),
+        "reorder_level": round(supply_item.reorder_level, 3),
+        "low_stock": (
+            supply_item.reorder_level > 0
+            and supply_item.stock_quantity <= supply_item.reorder_level
+        ),
+    }
+
+
+def purchase_order_load_options() -> tuple:
+    return (
+        selectinload(PurchaseOrder.supplier),
+        selectinload(PurchaseOrder.items).selectinload(
+            PurchaseOrderItem.supply_item
+        ),
+    )
+
+
+def serialize_purchase_order(purchase_order: PurchaseOrder) -> dict:
+    return {
+        "id": purchase_order.id,
+        "number": f"NB-{purchase_order.order_date.year}-{purchase_order.id:04d}",
+        "supplier": serialize_supplier(purchase_order.supplier),
+        "order_date": purchase_order.order_date,
+        "expected_date": purchase_order.expected_date,
+        "received_on": purchase_order.received_on,
+        "status": purchase_order.status,
+        "payment_method": purchase_order.payment_method,
+        "notes": purchase_order.notes,
+        "total_eur": purchase_order.total_eur,
+        "items": [
+            {
+                "id": item.id,
+                "supply_item_id": item.supply_item_id,
+                "name": item.supply_item.name,
+                "category": item.supply_item.category,
+                "unit": item.supply_item.unit,
+                "quantity": item.quantity,
+                "unit_price_eur": item.unit_price_eur,
+                "line_total_eur": item.line_total_eur,
+            }
+            for item in purchase_order.items
+        ],
+    }
+
+
+@app.get("/api/suppliers")
+def list_suppliers(db: Session = Depends(get_db)) -> list[dict]:
+    suppliers = db.scalars(
+        select(Supplier)
+        .where(Supplier.farm_id == DEFAULT_FARM_ID)
+        .order_by(Supplier.name, Supplier.id)
+    ).all()
+    return [serialize_supplier(supplier) for supplier in suppliers]
+
+
+@app.post("/api/suppliers", status_code=status.HTTP_201_CREATED)
+def create_supplier(payload: SupplierCreate, db: Session = Depends(get_db)) -> dict:
+    name = payload.name.strip()
+    existing = db.scalar(
+        select(Supplier.id).where(
+            Supplier.farm_id == DEFAULT_FARM_ID,
+            func.lower(Supplier.name) == name.lower(),
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Dobavitelj s tem nazivom že obstaja.")
+    supplier = Supplier(
+        farm_id=DEFAULT_FARM_ID,
+        name=name,
+        tax_number=payload.tax_number.strip() if payload.tax_number else None,
+        email=payload.email.strip() if payload.email else None,
+        phone=payload.phone.strip() if payload.phone else None,
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    db.add(supplier)
+    db.commit()
+    db.refresh(supplier)
+    return {"message": "Dobavitelj je dodan.", **serialize_supplier(supplier)}
+
+
+@app.get("/api/supply-items")
+def list_supply_items(db: Session = Depends(get_db)) -> list[dict]:
+    supply_items = db.scalars(
+        select(SupplyItem)
+        .where(SupplyItem.farm_id == DEFAULT_FARM_ID)
+        .order_by(SupplyItem.category, SupplyItem.name, SupplyItem.id)
+    ).all()
+    return [serialize_supply_item(supply_item) for supply_item in supply_items]
+
+
+@app.post("/api/supply-items", status_code=status.HTTP_201_CREATED)
+def create_supply_item(
+    payload: SupplyItemCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    name = payload.name.strip()
+    existing = db.scalar(
+        select(SupplyItem.id).where(
+            SupplyItem.farm_id == DEFAULT_FARM_ID,
+            func.lower(SupplyItem.name) == name.lower(),
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Material s tem nazivom že obstaja.")
+    supply_item = SupplyItem(
+        farm_id=DEFAULT_FARM_ID,
+        name=name,
+        category=payload.category,
+        unit=payload.unit.strip(),
+        stock_quantity=round(payload.opening_stock, 3),
+        reorder_level=round(payload.reorder_level, 3),
+    )
+    db.add(supply_item)
+    db.commit()
+    db.refresh(supply_item)
+    return {"message": "Material je dodan v katalog.", **serialize_supply_item(supply_item)}
+
+
+@app.get("/api/purchase-orders")
+def list_purchase_orders(db: Session = Depends(get_db)) -> list[dict]:
+    purchase_orders = db.scalars(
+        select(PurchaseOrder)
+        .where(PurchaseOrder.farm_id == DEFAULT_FARM_ID)
+        .options(*purchase_order_load_options())
+        .order_by(PurchaseOrder.order_date.desc(), PurchaseOrder.id.desc())
+    ).all()
+    return [
+        serialize_purchase_order(purchase_order)
+        for purchase_order in purchase_orders
+    ]
+
+
+@app.post("/api/purchase-orders", status_code=status.HTTP_201_CREATED)
+def create_purchase_order(
+    payload: PurchaseOrderCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    supplier = db.scalar(
+        select(Supplier).where(
+            Supplier.id == payload.supplier_id,
+            Supplier.farm_id == DEFAULT_FARM_ID,
+        )
+    )
+    if supplier is None:
+        raise HTTPException(status_code=404, detail="Dobavitelj ne obstaja.")
+    if payload.expected_date and payload.expected_date < payload.order_date:
+        raise HTTPException(
+            status_code=422,
+            detail="Predvideni prevzem ne sme biti pred datumom naročila.",
+        )
+    supply_item_ids = [item.supply_item_id for item in payload.items]
+    if len(supply_item_ids) != len(set(supply_item_ids)):
+        raise HTTPException(
+            status_code=422,
+            detail="Isti material je lahko v naročilu samo enkrat.",
+        )
+    supply_items = db.scalars(
+        select(SupplyItem).where(
+            SupplyItem.farm_id == DEFAULT_FARM_ID,
+            SupplyItem.id.in_(supply_item_ids),
+        )
+    ).all()
+    supply_items_by_id = {item.id: item for item in supply_items}
+    missing = [item_id for item_id in supply_item_ids if item_id not in supply_items_by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail="Izbrani material ne obstaja.")
+    purchase_order = PurchaseOrder(
+        farm_id=DEFAULT_FARM_ID,
+        supplier_id=supplier.id,
+        order_date=payload.order_date,
+        expected_date=payload.expected_date,
+        status="ordered",
+        payment_method=payload.payment_method,
+        notes=payload.notes.strip() if payload.notes else None,
+        items=[
+            PurchaseOrderItem(
+                supply_item_id=item.supply_item_id,
+                quantity=round(item.quantity, 3),
+                unit_price_eur=round(item.unit_price_eur, 4),
+            )
+            for item in payload.items
+        ],
+    )
+    db.add(purchase_order)
+    db.commit()
+    purchase_order = db.scalar(
+        select(PurchaseOrder)
+        .where(PurchaseOrder.id == purchase_order.id)
+        .options(*purchase_order_load_options())
+    )
+    return {
+        "message": "Nabavno naročilo je ustvarjeno.",
+        **serialize_purchase_order(purchase_order),
+    }
+
+
+@app.post("/api/purchase-orders/{purchase_order_id}/receive")
+def receive_purchase_order(
+    purchase_order_id: int,
+    payload: PurchaseOrderReceive,
+    db: Session = Depends(get_db),
+) -> dict:
+    purchase_order = db.scalar(
+        select(PurchaseOrder)
+        .where(
+            PurchaseOrder.id == purchase_order_id,
+            PurchaseOrder.farm_id == DEFAULT_FARM_ID,
+        )
+        .options(*purchase_order_load_options())
+        .with_for_update()
+    )
+    if purchase_order is None:
+        raise HTTPException(status_code=404, detail="Nabavno naročilo ne obstaja.")
+    if purchase_order.status != "ordered":
+        raise HTTPException(
+            status_code=409,
+            detail="Prevzeti je mogoče samo odprto nabavno naročilo.",
+        )
+    if payload.received_on < purchase_order.order_date:
+        raise HTTPException(
+            status_code=422,
+            detail="Datum prevzema ne sme biti pred datumom naročila.",
+        )
+    for item in purchase_order.items:
+        item.supply_item.stock_quantity = round(
+            item.supply_item.stock_quantity + item.quantity, 3
+        )
+    purchase_order.status = "received"
+    purchase_order.received_on = payload.received_on
+    db.commit()
+    return {
+        "message": "Naročilo je prevzeto, zaloga materiala pa posodobljena.",
+        **serialize_purchase_order(purchase_order),
+    }
+
+
+@app.post("/api/purchase-orders/{purchase_order_id}/cancel")
+def cancel_purchase_order(
+    purchase_order_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    purchase_order = db.scalar(
+        select(PurchaseOrder)
+        .where(
+            PurchaseOrder.id == purchase_order_id,
+            PurchaseOrder.farm_id == DEFAULT_FARM_ID,
+        )
+        .options(*purchase_order_load_options())
+        .with_for_update()
+    )
+    if purchase_order is None:
+        raise HTTPException(status_code=404, detail="Nabavno naročilo ne obstaja.")
+    if purchase_order.status != "ordered":
+        raise HTTPException(
+            status_code=409,
+            detail="Preklicati je mogoče samo odprto nabavno naročilo.",
+        )
+    purchase_order.status = "cancelled"
+    db.commit()
+    return {
+        "message": "Nabavno naročilo je preklicano.",
+        **serialize_purchase_order(purchase_order),
     }

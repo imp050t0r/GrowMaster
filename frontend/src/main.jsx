@@ -55,6 +55,9 @@ function App() {
   const [cashFlow, setCashFlow] = useState({ summary: {}, daily: [], entries: [], note: "" });
   const [dayCloses, setDayCloses] = useState([]);
   const [dayClosePreview, setDayClosePreview] = useState(null);
+  const [suppliers, setSuppliers] = useState([]);
+  const [supplyItems, setSupplyItems] = useState([]);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [reportStart, setReportStart] = useState(today);
@@ -104,6 +107,10 @@ function App() {
   const [priceForm, setPriceForm] = useState({ crop_id: "", quality: "A", price_per_kg_eur: "" });
   const [paymentForm, setPaymentForm] = useState({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" });
   const [dayCloseForm, setDayCloseForm] = useState({ business_date: today, opening_cash_eur: "0", counted_cash_eur: "", notes: "" });
+  const [supplierForm, setSupplierForm] = useState({ name: "", tax_number: "", email: "", phone: "" });
+  const [supplyItemForm, setSupplyItemForm] = useState({ name: "", category: "seed", unit: "kos", opening_stock: "0", reorder_level: "0" });
+  const [purchaseForm, setPurchaseForm] = useState({ supplier_id: "", supply_item_id: "", order_date: today, expected_date: "", payment_method: "bank_transfer", quantity: "", unit_price_eur: "", notes: "" });
+  const [purchaseCart, setPurchaseCart] = useState([]);
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -115,7 +122,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -136,6 +143,9 @@ function App() {
       apiRequest(`/api/receivables?as_of=${receivablesAsOf}&include_paid=${includePaidReceivables}`),
       apiRequest(`/api/cash-flow?start=${cashFlowStart}&end=${cashFlowEnd}`),
       apiRequest("/api/day-closes"),
+      apiRequest("/api/suppliers"),
+      apiRequest("/api/supply-items"),
+      apiRequest("/api/purchase-orders"),
       apiRequest("/api/invoices"),
       apiRequest("/api/invoice-profile"),
     ]);
@@ -159,6 +169,9 @@ function App() {
     setReceivables(receivablesData);
     setCashFlow(cashFlowData);
     setDayCloses(dayCloseData);
+    setSuppliers(supplierData);
+    setSupplyItems(supplyItemData);
+    setPurchaseOrders(purchaseOrderData);
     setInvoices(invoiceData);
     setInvoiceProfile(invoiceProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
@@ -175,6 +188,11 @@ function App() {
       return { ...current, harvest_id: selected?.harvest_id || "", price_per_kg_eur: sameSelection && current.price_per_kg_eur ? current.price_per_kg_eur : selected?.suggested_price_per_kg_eur || "" };
     });
     setPriceForm((current) => ({ ...current, crop_id: current.crop_id || cropData[0]?.id || "" }));
+    setPurchaseForm((current) => ({
+      ...current,
+      supplier_id: current.supplier_id || supplierData[0]?.id || "",
+      supply_item_id: current.supply_item_id || supplyItemData[0]?.id || "",
+    }));
     setPlanForm((current) => {
       const cropId = current.crop_id || cropData[0]?.id || "";
       const crop = cropData.find((item) => String(item.id) === String(cropId));
@@ -576,6 +594,68 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
+  async function createSupplier(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/suppliers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(supplierForm) });
+      setSupplierForm({ name: "", tax_number: "", email: "", phone: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function createSupplyItem(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/supply-items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...supplyItemForm, opening_stock: Number(supplyItemForm.opening_stock), reorder_level: Number(supplyItemForm.reorder_level) }) });
+      setSupplyItemForm({ name: "", category: supplyItemForm.category, unit: supplyItemForm.unit, opening_stock: "0", reorder_level: "0" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  function addPurchaseItem(event) {
+    event.preventDefault(); clearMessages();
+    const supplyItem = supplyItems.find((item) => String(item.id) === String(purchaseForm.supply_item_id));
+    const quantity = Number(purchaseForm.quantity);
+    const price = Number(purchaseForm.unit_price_eur);
+    if (!supplyItem || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      setError("Izberite material ter vnesite veljavno količino in ceno."); return;
+    }
+    if (purchaseCart.some((item) => item.supply_item_id === supplyItem.id)) {
+      setError("Ta material je že v naročilu."); return;
+    }
+    setPurchaseCart([...purchaseCart, { supply_item_id: supplyItem.id, name: supplyItem.name, unit: supplyItem.unit, quantity, unit_price_eur: price, line_total_eur: Number((quantity * price).toFixed(2)) }]);
+    setPurchaseForm({ ...purchaseForm, quantity: "", unit_price_eur: "" });
+  }
+
+  async function createPurchaseOrder() {
+    if (!purchaseForm.supplier_id) { setError("Najprej dodajte in izberite dobavitelja."); return; }
+    if (purchaseCart.length === 0) { setError("V naročilo dodajte vsaj en material."); return; }
+    clearMessages();
+    try {
+      const items = purchaseCart.map(({ supply_item_id, quantity, unit_price_eur }) => ({ supply_item_id, quantity, unit_price_eur }));
+      const data = await apiRequest("/api/purchase-orders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supplier_id: Number(purchaseForm.supplier_id), order_date: purchaseForm.order_date, expected_date: purchaseForm.expected_date || null, payment_method: purchaseForm.payment_method, notes: purchaseForm.notes || null, items }) });
+      setPurchaseCart([]); setPurchaseForm({ ...purchaseForm, quantity: "", unit_price_eur: "", notes: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function receivePurchaseOrder(purchaseOrder) {
+    const receivedOn = window.prompt("Datum prevzema:", today);
+    if (!receivedOn) return;
+    if (!window.confirm(`Prevzamem ${purchaseOrder.number} in povečam zalogo vseh postavk?`)) return;
+    clearMessages();
+    try {
+      const data = await apiRequest(`/api/purchase-orders/${purchaseOrder.id}/receive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ received_on: receivedOn }) });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function cancelPurchaseOrder(purchaseOrder) {
+    if (!window.confirm(`Prekličem ${purchaseOrder.number}?`)) return;
+    clearMessages();
+    try {
+      const data = await apiRequest(`/api/purchase-orders/${purchaseOrder.id}/cancel`, { method: "POST" });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   function changePlanCrop(event) {
     const cropId = event.target.value;
     const crop = crops.find((item) => String(item.id) === String(cropId));
@@ -622,6 +702,7 @@ function App() {
     ["receivables", "Terjatve", "↔"],
     ["cashflow", "Denar", "◒"],
     ["closing", "Zaključek", "✓"],
+    ["purchasing", "Nabava", "↓"],
     ["planning", "Plan", "◫"],
   ];
 
@@ -633,7 +714,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.3</span>
+        <span className="status-pill">MVP 1.4</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -734,6 +815,14 @@ function App() {
       )}
       {view === "closing" && (
         <DayCloseView closes={dayCloses} preview={dayClosePreview} form={dayCloseForm} setForm={setDayCloseForm} closeDay={closeBusinessDay} />
+      )}
+      {view === "purchasing" && (
+        <PurchasingView suppliers={suppliers} supplyItems={supplyItems} purchaseOrders={purchaseOrders}
+          supplierForm={supplierForm} setSupplierForm={setSupplierForm} createSupplier={createSupplier}
+          supplyItemForm={supplyItemForm} setSupplyItemForm={setSupplyItemForm} createSupplyItem={createSupplyItem}
+          purchaseForm={purchaseForm} setPurchaseForm={setPurchaseForm} purchaseCart={purchaseCart}
+          addPurchaseItem={addPurchaseItem} removePurchaseItem={(itemId) => setPurchaseCart(purchaseCart.filter((item) => item.supply_item_id !== itemId))}
+          createPurchaseOrder={createPurchaseOrder} receivePurchaseOrder={receivePurchaseOrder} cancelPurchaseOrder={cancelPurchaseOrder} />
       )}
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
@@ -1092,6 +1181,65 @@ function DayCloseView({ closes, preview, form, setForm, closeDay }) {
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Nespremenljiva zgodovina</p><h2>Pretekli zaključki</h2></div><span>{closes.length} zapisov</span></div>
       {closes.length === 0 ? <p className="empty-state">Zaključen ni še noben poslovni dan.</p> : <div className="day-close-history">{closes.map((item) => <article key={item.id}><div><time>{item.business_date}</time><span>{item.retail_sale_count} hitrih prodaj · {item.payment_count} plačil · {item.refund_count} vračil</span></div><div><span>Pričakovano {money(item.expected_cash_eur)}</span><strong className={item.difference_eur < 0 ? "negative" : "positive"}>{item.difference_eur >= 0 ? "+" : ""}{money(item.difference_eur)}</strong></div></article>)}</div>}
+    </section>
+  </>;
+}
+
+function PurchasingView({ suppliers, supplyItems, purchaseOrders, supplierForm, setSupplierForm, createSupplier, supplyItemForm, setSupplyItemForm, createSupplyItem, purchaseForm, setPurchaseForm, purchaseCart, addPurchaseItem, removePurchaseItem, createPurchaseOrder, receivePurchaseOrder, cancelPurchaseOrder }) {
+  const categoryLabels = { seed: "Seme", fertilizer: "Gnojilo", packaging: "Embalaža", tools: "Orodje", fuel: "Gorivo", other: "Drugo" };
+  const paymentLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
+  const statusLabels = { ordered: "Naročeno", received: "Prevzeto", cancelled: "Preklicano" };
+  const cartTotal = purchaseCart.reduce((sum, item) => sum + item.line_total_eur, 0);
+  const openOrders = purchaseOrders.filter((item) => item.status === "ordered");
+  const lowStock = supplyItems.filter((item) => item.low_stock);
+  return <>
+    <section className="metric-grid purchasing-metrics">
+      <article className="metric-card"><span>Odprta naročila</span><strong>{openOrders.length}</strong><small>{openOrders.reduce((sum, item) => sum + item.total_eur, 0).toFixed(2)} € naročene vrednosti</small></article>
+      <article className="metric-card"><span>Nizka zaloga</span><strong className={lowStock.length ? "negative" : "positive"}>{lowStock.length}</strong><small>materialov za dopolnitev</small></article>
+      <article className="metric-card"><span>Dobavitelji</span><strong>{suppliers.length}</strong><small>{supplyItems.length} materialov v katalogu</small></article>
+    </section>
+    <section className="purchasing-setup-grid">
+      <form className="panel compact-form" onSubmit={createSupplier}>
+        <div className="section-heading"><div><p className="eyebrow">Imenik</p><h2>Nov dobavitelj</h2></div></div>
+        <label>Naziv<input value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} required /></label>
+        <label>Davčna številka<input value={supplierForm.tax_number} onChange={(e) => setSupplierForm({ ...supplierForm, tax_number: e.target.value })} /></label>
+        <label>E-pošta<input type="email" value={supplierForm.email} onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })} /></label>
+        <label>Telefon<input value={supplierForm.phone} onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })} /></label>
+        <button className="secondary-button">DODAJ DOBAVITELJA</button>
+      </form>
+      <form className="panel compact-form" onSubmit={createSupplyItem}>
+        <div className="section-heading"><div><p className="eyebrow">Katalog in zaloga</p><h2>Nov material</h2></div></div>
+        <label>Naziv<input value={supplyItemForm.name} onChange={(e) => setSupplyItemForm({ ...supplyItemForm, name: e.target.value })} required /></label>
+        <label>Vrsta<select value={supplyItemForm.category} onChange={(e) => setSupplyItemForm({ ...supplyItemForm, category: e.target.value })}>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Enota<input value={supplyItemForm.unit} onChange={(e) => setSupplyItemForm({ ...supplyItemForm, unit: e.target.value })} required /></label>
+        <label>Začetna zaloga<input type="number" min="0" step="0.001" value={supplyItemForm.opening_stock} onChange={(e) => setSupplyItemForm({ ...supplyItemForm, opening_stock: e.target.value })} required /></label>
+        <label>Opozorilo pod<input type="number" min="0" step="0.001" value={supplyItemForm.reorder_level} onChange={(e) => setSupplyItemForm({ ...supplyItemForm, reorder_level: e.target.value })} required /></label>
+        <button className="secondary-button">DODAJ MATERIAL</button>
+      </form>
+    </section>
+    <section className="panel purchase-entry">
+      <div className="section-heading"><div><p className="eyebrow">Večpostavkovno naročilo</p><h2>Novo nabavno naročilo</h2><p className="muted">Vrednost predstavlja strošek nabave. Razporeditev materiala na posamezne gredice in dejansko plačilo ostaneta ločena koraka.</p></div></div>
+      <div className="purchase-order-details">
+        <label>Dobavitelj<select value={purchaseForm.supplier_id} onChange={(e) => setPurchaseForm({ ...purchaseForm, supplier_id: e.target.value })} required><option value="">Izberi</option>{suppliers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Datum naročila<input type="date" value={purchaseForm.order_date} onChange={(e) => setPurchaseForm({ ...purchaseForm, order_date: e.target.value })} required /></label>
+        <label>Predvideni prevzem<input type="date" min={purchaseForm.order_date} value={purchaseForm.expected_date} onChange={(e) => setPurchaseForm({ ...purchaseForm, expected_date: e.target.value })} /></label>
+        <label>Način plačila<select value={purchaseForm.payment_method} onChange={(e) => setPurchaseForm({ ...purchaseForm, payment_method: e.target.value })}><option value="bank_transfer">Nakazilo</option><option value="card">Kartica</option><option value="cash">Gotovina</option></select></label>
+      </div>
+      <form className="purchase-line-form" onSubmit={addPurchaseItem}>
+        <label>Material<select value={purchaseForm.supply_item_id} onChange={(e) => setPurchaseForm({ ...purchaseForm, supply_item_id: e.target.value })} required><option value="">Izberi</option>{supplyItems.map((item) => <option key={item.id} value={item.id}>{item.name} · zaloga {item.stock_quantity} {item.unit}</option>)}</select></label>
+        <label>Količina<input type="number" min="0.001" step="0.001" value={purchaseForm.quantity} onChange={(e) => setPurchaseForm({ ...purchaseForm, quantity: e.target.value })} required /></label>
+        <label>Cena/enoto (€)<input type="number" min="0.0001" step="0.0001" value={purchaseForm.unit_price_eur} onChange={(e) => setPurchaseForm({ ...purchaseForm, unit_price_eur: e.target.value })} required /></label>
+        <button className="secondary-button">DODAJ POSTAVKO</button>
+      </form>
+      <div className="purchase-cart">{purchaseCart.length === 0 ? <p className="empty-state">Naročilo še nima postavk.</p> : purchaseCart.map((item) => <article key={item.supply_item_id}><div><strong>{item.name}</strong><span>{item.quantity} {item.unit} × {item.unit_price_eur.toFixed(4)} €</span></div><strong>{item.line_total_eur.toFixed(2)} €</strong><button className="icon-button" type="button" onClick={() => removePurchaseItem(item.supply_item_id)}>✕</button></article>)}</div>
+      <label>Opomba<textarea value={purchaseForm.notes} onChange={(e) => setPurchaseForm({ ...purchaseForm, notes: e.target.value })} /></label>
+      <div className="purchase-checkout"><span>Skupaj</span><strong>{cartTotal.toFixed(2)} €</strong><button className="primary-button" type="button" disabled={!purchaseCart.length || !purchaseForm.supplier_id} onClick={createPurchaseOrder}>USTVARI NAROČILO</button></div>
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Material za delo</p><h2>Zaloga potrebščin</h2></div><span>{lowStock.length} pod minimumom</span></div>
+      {supplyItems.length === 0 ? <p className="empty-state">Katalog materiala je prazen.</p> : <div className="supply-stock-grid">{supplyItems.map((item) => <article key={item.id} className={item.low_stock ? "low" : ""}><span>{categoryLabels[item.category] || item.category}</span><strong>{item.name}</strong><b>{item.stock_quantity} {item.unit}</b><small>Opozorilo pri {item.reorder_level} {item.unit}</small></article>)}</div>}
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Nabavna zgodovina</p><h2>Naročila dobaviteljem</h2></div><span>{purchaseOrders.length} zapisov</span></div>
+      {purchaseOrders.length === 0 ? <p className="empty-state">Nabavno naročilo še ni ustvarjeno.</p> : <div className="purchase-order-list">{purchaseOrders.map((order) => <article key={order.id} className={order.status}><div className="purchase-order-head"><div><span className={`purchase-state ${order.status}`}>{statusLabels[order.status]}</span><strong>{order.number} · {order.supplier.name}</strong><span>Naročeno {order.order_date}{order.expected_date ? ` · pričakovano ${order.expected_date}` : ""}{order.received_on ? ` · prevzeto ${order.received_on}` : ""}</span></div><div><strong>{order.total_eur.toFixed(2)} €</strong><span>{paymentLabels[order.payment_method]}</span></div></div><div className="purchase-order-lines">{order.items.map((item) => <span key={item.id}>{item.name} · {item.quantity} {item.unit} × {item.unit_price_eur.toFixed(4)} €</span>)}</div>{order.status === "ordered" && <div className="order-actions"><button className="primary-button" onClick={() => receivePurchaseOrder(order)}>PREVZEM</button><button className="text-button danger-text" onClick={() => cancelPurchaseOrder(order)}>PREKLIČI</button></div>}</article>)}</div>}
     </section>
   </>;
 }
