@@ -435,3 +435,83 @@ def test_bed_planting_and_task_workflow() -> None:
             "/api/sales-report?start=2026-09-21&end=2026-09-20"
         )
         assert invalid_report.status_code == 422
+
+        before_delivery = client.get("/api/receivables?as_of=2026-09-11")
+        assert before_delivery.status_code == 200
+        assert before_delivery.json()["summary"]["invoice_count"] == 0
+        assert before_delivery.json()["items"] == []
+
+        overdue_receivables = client.get("/api/receivables?as_of=2026-09-27")
+        assert overdue_receivables.status_code == 200
+        assert overdue_receivables.json()["summary"] == {
+            "invoice_count": 1,
+            "open_count": 1,
+            "overdue_count": 1,
+            "invoiced_eur": 14,
+            "paid_eur": 0,
+            "outstanding_eur": 14,
+            "overdue_eur": 14,
+        }
+        receivable = overdue_receivables.json()["items"][0]
+        assert receivable["order_id"] == fulfilled_order.json()["id"]
+        assert receivable["due_date"] == "2026-09-26"
+        assert receivable["status"] == "overdue"
+        assert receivable["days_overdue"] == 1
+
+        partial_payment = client.post(
+            f"/api/orders/{fulfilled_order.json()['id']}/payments",
+            json={
+                "payment_date": "2026-09-20",
+                "amount_eur": 4,
+                "payment_method": "bank_transfer",
+                "notes": "Delno nakazilo",
+            },
+        )
+        assert partial_payment.status_code == 201
+        assert partial_payment.json()["status"] == "partial"
+        assert partial_payment.json()["paid_eur"] == 4
+        assert partial_payment.json()["outstanding_eur"] == 10
+
+        overpayment = client.post(
+            f"/api/orders/{fulfilled_order.json()['id']}/payments",
+            json={
+                "payment_date": "2026-09-21",
+                "amount_eur": 11,
+                "payment_method": "bank_transfer",
+            },
+        )
+        assert overpayment.status_code == 409
+
+        final_payment = client.post(
+            f"/api/orders/{fulfilled_order.json()['id']}/payments",
+            json={
+                "payment_date": "2026-09-21",
+                "amount_eur": 10,
+                "payment_method": "bank_transfer",
+            },
+        )
+        assert final_payment.status_code == 201
+        assert final_payment.json()["status"] == "paid"
+        assert final_payment.json()["outstanding_eur"] == 0
+        assert len(final_payment.json()["payments"]) == 2
+
+        historical_receivables = client.get(
+            "/api/receivables?as_of=2026-09-20&include_paid=true"
+        )
+        historical = historical_receivables.json()["items"][0]
+        assert historical["status"] == "partial"
+        assert historical["paid_eur"] == 4
+        assert historical["outstanding_eur"] == 10
+        assert len(historical["payments"]) == 1
+
+        open_receivables = client.get("/api/receivables?as_of=2026-09-27")
+        assert open_receivables.status_code == 200
+        assert open_receivables.json()["items"] == []
+        assert open_receivables.json()["summary"]["paid_eur"] == 14
+        assert open_receivables.json()["summary"]["outstanding_eur"] == 0
+
+        paid_receivables = client.get(
+            "/api/receivables?as_of=2026-09-27&include_paid=true"
+        )
+        assert len(paid_receivables.json()["items"]) == 1
+        assert paid_receivables.json()["items"][0]["status"] == "paid"
