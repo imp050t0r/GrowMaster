@@ -76,6 +76,7 @@ function App() {
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [dataSafety, setDataSafety] = useState({ automatic_backups: [] });
+  const [account, setAccount] = useState({ display_name: "", active_sessions: 0, session_days: 30 });
   const [reportStart, setReportStart] = useState(today);
   const [reportEnd, setReportEnd] = useState(today);
   const [receivablesAsOf, setReceivablesAsOf] = useState(today);
@@ -140,6 +141,8 @@ function App() {
   const [farmExpenseForm, setFarmExpenseForm] = useState({ expense_date: today, category: "fuel", amount_eur: "", payment_method: "cash", supplier: "", reference: "", description: "" });
   const [restoreFile, setRestoreFile] = useState(null);
   const [restoreConfirmation, setRestoreConfirmation] = useState("");
+  const [accountForm, setAccountForm] = useState({ display_name: "", current_password: "" });
+  const [passwordForm, setPasswordForm] = useState({ current_password: "", new_password: "", confirmation: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -285,6 +288,16 @@ function App() {
   }, [auth.authenticated, view]);
 
   useEffect(() => {
+    if (!auth.authenticated || view !== "settings") return;
+    apiRequest("/api/auth/account")
+      .then((data) => {
+        setAccount(data);
+        setAccountForm((current) => ({ ...current, display_name: data.display_name }));
+      })
+      .catch((loadError) => setError(loadError.message));
+  }, [auth.authenticated, view]);
+
+  useEffect(() => {
     const openingCash = Number(dayCloseForm.opening_cash_eur);
     if (!auth.authenticated || !dayCloseForm.business_date || !Number.isFinite(openingCash) || openingCash < 0) return;
     apiRequest(`/api/day-closes/preview?business_date=${dayCloseForm.business_date}&opening_cash_eur=${openingCash}`)
@@ -316,6 +329,38 @@ function App() {
       await apiRequest("/api/auth/logout", { method: "POST" });
       setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
       setAuthForm({ display_name: "", password: "", confirmation: "" });
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function updateAccount(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/auth/account", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(accountForm),
+      });
+      setAccount(data);
+      setAccountForm({ display_name: data.display_name, current_password: "" });
+      setAuth((current) => ({ ...current, display_name: data.display_name }));
+      setNotice(data.message);
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function changePassword(event) {
+    event.preventDefault(); clearMessages();
+    if (passwordForm.new_password !== passwordForm.confirmation) {
+      setError("Novi gesli se ne ujemata."); return;
+    }
+    try {
+      const data = await apiRequest("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: passwordForm.current_password, new_password: passwordForm.new_password }),
+      });
+      setAccount(data);
+      setPasswordForm({ current_password: "", new_password: "", confirmation: "" });
+      setNotice(data.message);
     } catch (requestError) { setError(requestError.message); }
   }
 
@@ -878,6 +923,7 @@ function App() {
     ["purchasing", "Nabava", "↓"],
     ["planning", "Plan", "◫"],
     ["data", "Podatki", "⬇"],
+    ["settings", "Nastavitve", "⚙"],
   ];
 
   if (auth.loading || !auth.authenticated) {
@@ -893,7 +939,7 @@ function App() {
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
         <div className="account-summary">
-          <span className="status-pill">MVP 1.10</span>
+          <span className="status-pill">MVP 1.11</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
           <button type="button" onClick={logout}>ODJAVA</button>
         </div>
@@ -1034,6 +1080,10 @@ function App() {
       {view === "data" && (
         <DataSafetyView status={dataSafety} restoreFile={restoreFile} setRestoreFile={setRestoreFile}
           confirmation={restoreConfirmation} setConfirmation={setRestoreConfirmation} restoreData={restoreData} />
+      )}
+      {view === "settings" && (
+        <AccountSettingsView account={account} accountForm={accountForm} setAccountForm={setAccountForm}
+          passwordForm={passwordForm} setPasswordForm={setPasswordForm} updateAccount={updateAccount} changePassword={changePassword} />
       )}
     </main>
   );
@@ -1676,6 +1726,37 @@ function AuthenticationView({ auth, form, setForm, submit, error }) {
       {!setup && <p className="auth-hint">Prijava velja {auth.session_days || 30} dni na tej napravi ali do odjave.</p>}
     </form>}
   </main>;
+}
+
+function AccountSettingsView({ account, accountForm, setAccountForm, passwordForm, setPasswordForm, updateAccount, changePassword }) {
+  return <>
+    <section className="panel settings-heading">
+      <div><p className="eyebrow">Dostop do aplikacije</p><h2>Nastavitve uporabnika</h2><p className="muted">Spremembe so zaščitene s trenutnim geslom. Geslo in prijavne seje ostanejo ločeni od poslovnih varnostnih kopij.</p></div>
+      <span className="data-safe-badge">✓ ZAŠČITENO</span>
+    </section>
+    <section className="metric-grid settings-metrics">
+      <article className="metric-card"><span>Uporabnik</span><strong>{account.display_name || "—"}</strong><small>edini skrbniški dostop</small></article>
+      <article className="metric-card"><span>Aktivne prijave</span><strong>{account.active_sessions || 0}</strong><small>največ 10 naprav oziroma brskalnikov</small></article>
+      <article className="metric-card"><span>Veljavnost prijave</span><strong>{account.session_days || 30} dni</strong><small>ali do ročne odjave</small></article>
+    </section>
+    <section className="settings-grid">
+      <form className="panel settings-form" onSubmit={updateAccount}>
+        <div><p className="eyebrow">Prikaz v aplikaciji</p><h2>Spremeni ime</h2></div>
+        <label>Ime uporabnika<input value={accountForm.display_name} onChange={(event) => setAccountForm({ ...accountForm, display_name: event.target.value })} maxLength="120" autoComplete="name" required /></label>
+        <label>Trenutno geslo<input type="password" value={accountForm.current_password} onChange={(event) => setAccountForm({ ...accountForm, current_password: event.target.value })} autoComplete="current-password" required /></label>
+        <button className="primary-button" type="submit">SHRANI IME</button>
+      </form>
+      <form className="panel settings-form" onSubmit={changePassword}>
+        <div><p className="eyebrow">Varnost računa</p><h2>Spremeni geslo</h2></div>
+        <label>Trenutno geslo<input type="password" value={passwordForm.current_password} onChange={(event) => setPasswordForm({ ...passwordForm, current_password: event.target.value })} autoComplete="current-password" required /></label>
+        <label>Novo geslo<input type="password" value={passwordForm.new_password} onChange={(event) => setPasswordForm({ ...passwordForm, new_password: event.target.value })} autoComplete="new-password" minLength="12" maxLength="256" required /></label>
+        <label>Ponovi novo geslo<input type="password" value={passwordForm.confirmation} onChange={(event) => setPasswordForm({ ...passwordForm, confirmation: event.target.value })} autoComplete="new-password" minLength="12" maxLength="256" required /></label>
+        <p className="auth-hint">Vsaj 12 znakov, črka in številka. Po spremembi bodo vse druge naprave samodejno odjavljene.</p>
+        <button className="danger-button" type="submit">SPREMENI GESLO</button>
+      </form>
+    </section>
+    <p className="security-note">Če geslo pozabiš, ga zaradi varnosti ni mogoče pridobiti iz baze ali varnostne kopije. Pred uporabo pravih podatkov ga shrani v zaupanja vreden upravljalnik gesel.</p>
+  </>;
 }
 
 createRoot(document.getElementById("root")).render(<React.StrictMode><App /></React.StrictMode>);

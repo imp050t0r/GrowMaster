@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.auth import (
     SESSION_COOKIE,
     SESSION_LIFETIME,
+    active_session_count,
     authenticated_credential,
     clear_login_failures,
     cookie_secure,
@@ -24,6 +25,7 @@ from app.auth import (
     login_rate_limited,
     password_is_strong,
     record_login_failure,
+    replace_password,
     revoke_session,
     verify_password,
 )
@@ -80,6 +82,7 @@ from app.models import (
     Worker,
 )
 from app.schemas import (
+    AccountUpdate,
     AuthLogin,
     AuthSetup,
     BedCreate,
@@ -100,6 +103,7 @@ from app.schemas import (
     OrderCreate,
     OrderPaymentCreate,
     OrderStatusUpdate,
+    PasswordChange,
     ProductPriceUpdate,
     PurchaseOrderCreate,
     PurchaseOrderReceive,
@@ -131,7 +135,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.10.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.11.0", lifespan=lifespan)
 PUBLIC_API_PATHS = {
     "/api/health",
     "/api/auth/status",
@@ -185,6 +189,25 @@ def set_auth_cookie(response: Response, token: str) -> None:
     response.headers["Cache-Control"] = "no-store"
 
 
+def reauthenticate(
+    request: Request, db: Session, credential, current_password: str
+) -> None:
+    host = request.client.host if request.client else "local"
+    client_key = f"account:{host}"
+    if login_rate_limited(client_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Preveč neuspelih poskusov. Poskusite znova čez pet minut.",
+        )
+    if not verify_password(credential, current_password):
+        record_login_failure(client_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Trenutno geslo ni pravilno.",
+        )
+    clear_login_failures(client_key)
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"app": "GrowMaster", "status": "running"}
@@ -217,9 +240,14 @@ def setup_authentication(
             status_code=status.HTTP_409_CONFLICT,
             detail="GrowMaster je že zaščiten z geslom.",
         )
+    if not payload.display_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Ime uporabnika ne sme biti prazno.",
+        )
     if not password_is_strong(payload.password):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Geslo mora imeti vsaj 12 znakov ter vsebovati črko in številko.",
         )
     try:
@@ -296,6 +324,93 @@ def logout(
     )
     response.headers["Cache-Control"] = "no-store"
     return {"message": "Odjava je uspela."}
+
+
+@app.get("/api/auth/account")
+def account_settings(
+    request: Request, db: Session = Depends(get_db)
+) -> dict:
+    credential = authenticated_credential(
+        db, request.cookies.get(SESSION_COOKIE)
+    )
+    if credential is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Za dostop se prijavite v GrowMaster.",
+        )
+    return {
+        "display_name": credential.display_name,
+        "active_sessions": active_session_count(db, credential),
+        "session_days": SESSION_LIFETIME.days,
+    }
+
+
+@app.put("/api/auth/account")
+def update_account(
+    payload: AccountUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    credential = authenticated_credential(
+        db, request.cookies.get(SESSION_COOKIE)
+    )
+    if credential is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Za dostop se prijavite v GrowMaster.",
+        )
+    display_name = payload.display_name.strip()
+    if not display_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Ime uporabnika ne sme biti prazno.",
+        )
+    reauthenticate(request, db, credential, payload.current_password)
+    credential.display_name = display_name
+    db.commit()
+    return {
+        "display_name": credential.display_name,
+        "active_sessions": active_session_count(db, credential),
+        "session_days": SESSION_LIFETIME.days,
+        "message": "Ime uporabnika je posodobljeno.",
+    }
+
+
+@app.post("/api/auth/change-password")
+def change_password(
+    payload: PasswordChange,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    credential = authenticated_credential(
+        db, request.cookies.get(SESSION_COOKIE)
+    )
+    if credential is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Za dostop se prijavite v GrowMaster.",
+        )
+    reauthenticate(request, db, credential, payload.current_password)
+    if not password_is_strong(payload.new_password):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Novo geslo mora imeti vsaj 12 znakov ter vsebovati črko in številko.",
+        )
+    if verify_password(credential, payload.new_password):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Novo geslo mora biti drugačno od trenutnega.",
+        )
+    token, _ = replace_password(db, credential, payload.new_password)
+    db.commit()
+    set_auth_cookie(response, token)
+    return {
+        "display_name": credential.display_name,
+        "active_sessions": 1,
+        "session_days": SESSION_LIFETIME.days,
+        "message": "Geslo je spremenjeno, vse druge naprave pa so odjavljene.",
+    }
 
 
 @app.get("/api/system/data-safety")

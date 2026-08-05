@@ -66,6 +66,8 @@ GrowMaster is a local-first farm management application for professional market 
 - separate persistent Docker volume retaining the ten newest recovery copies
 - first-use administrator setup with a locally hashed password
 - HTTP-only, 30-day local sessions, logout and protection of every business-data API
+- in-app display-name and password changes with current-password confirmation
+- immediate revocation of every older browser session after a password change
 - portable backups that deliberately exclude passwords and active sessions
 - semicolon-delimited UTF-8 CSV profitability export
 - partial and final supplier payments with payment history and overpayment safeguards
