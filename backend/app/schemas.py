@@ -159,6 +159,13 @@ class ProductPriceUpdate(BaseModel):
     price_per_kg_eur: float = Field(gt=0, le=100000)
 
 
+class DayCloseCreate(BaseModel):
+    business_date: date
+    opening_cash_eur: float = Field(ge=0, le=1000000)
+    counted_cash_eur: float = Field(ge=0, le=1000000)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class SalesSettingsUpdate(BaseModel):
     basic_agriculture_invoice_exemption: bool = True
     seller_name: str = Field(min_length=1, max_length=160)

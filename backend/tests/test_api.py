@@ -828,3 +828,111 @@ def test_bed_planting_and_task_workflow() -> None:
         assert credited["credit_note"]["refundable_eur"] == 0
         assert len(credited["credit_note"]["refunds"]) == 2
         assert invalid_cash_flow.status_code == 422
+
+        close_preview = client.get(
+            "/api/day-closes/preview?business_date=2026-09-20&opening_cash_eur=50"
+        )
+        assert close_preview.status_code == 200
+        preview = close_preview.json()
+        assert preview["closed"] is False
+        assert preview["opening_cash_eur"] == 50
+        assert preview["cash_in_eur"] == 3.8
+        assert preview["card_in_eur"] == 0.7
+        assert preview["bank_transfer_in_eur"] == 4
+        assert preview["total_inflow_eur"] == 8.5
+        assert preview["total_refund_eur"] == 0
+        assert preview["expected_cash_eur"] == 53.8
+        assert preview["retail_sale_count"] == 2
+        assert preview["payment_count"] == 1
+
+        day_close = client.post(
+            "/api/day-closes",
+            json={
+                "business_date": "2026-09-20",
+                "opening_cash_eur": 50,
+                "counted_cash_eur": 54,
+                "notes": "Zaključek tržnice.",
+            },
+        )
+        assert day_close.status_code == 201
+        assert day_close.json()["expected_cash_eur"] == 53.8
+        assert day_close.json()["counted_cash_eur"] == 54
+        assert day_close.json()["difference_eur"] == 0.2
+        assert client.post(
+            "/api/day-closes",
+            json={
+                "business_date": "2026-09-20",
+                "opening_cash_eur": 50,
+                "counted_cash_eur": 54,
+            },
+        ).status_code == 409
+
+        closed_preview = client.get(
+            "/api/day-closes/preview?business_date=2026-09-20&opening_cash_eur=0"
+        )
+        assert closed_preview.status_code == 200
+        assert closed_preview.json()["closed"] is True
+        assert closed_preview.json()["opening_cash_eur"] == 50
+        assert len(client.get("/api/day-closes").json()) == 1
+
+        late_sale = client.post(
+            "/api/retail-sales",
+            json={
+                "sale_date": "2026-09-20",
+                "payment_method": "cash",
+                "items": [
+                    {
+                        "harvest_id": second_quality_harvest.json()["id"],
+                        "quantity_kg": 0.1,
+                        "price_per_kg_eur": 5,
+                    }
+                ],
+            },
+        )
+        assert late_sale.status_code == 409
+        assert "že zaključen" in late_sale.json()["detail"]
+
+        late_payment = client.post(
+            f"/api/orders/{fulfilled_order.json()['id']}/payments",
+            json={
+                "payment_date": "2026-09-20",
+                "amount_eur": 1,
+                "payment_method": "cash",
+            },
+        )
+        assert late_payment.status_code == 409
+        assert "že zaključen" in late_payment.json()["detail"]
+
+        refund_day_preview = client.get(
+            "/api/day-closes/preview?business_date=2026-09-23&opening_cash_eur=20"
+        )
+        assert refund_day_preview.status_code == 200
+        refund_preview = refund_day_preview.json()
+        assert refund_preview["card_refund_eur"] == 0.7
+        assert refund_preview["total_refund_eur"] == 0.7
+        assert refund_preview["net_receipts_eur"] == -0.7
+        assert refund_preview["expected_cash_eur"] == 20
+        assert refund_preview["refund_count"] == 2
+
+        refund_day_close = client.post(
+            "/api/day-closes",
+            json={
+                "business_date": "2026-09-23",
+                "opening_cash_eur": 20,
+                "counted_cash_eur": 20,
+            },
+        )
+        assert refund_day_close.status_code == 201
+        assert refund_day_close.json()["difference_eur"] == 0
+
+        late_refund = client.post(
+            f"/api/credit-notes/{credit_note_data['id']}/refunds",
+            json={
+                "refund_date": "2026-09-23",
+                "amount_eur": 0.01,
+                "payment_method": "card",
+            },
+        )
+        assert late_refund.status_code == 409
+        assert "že zaključen" in late_refund.json()["detail"]
+        assert len(client.get("/api/day-closes").json()) == 2
