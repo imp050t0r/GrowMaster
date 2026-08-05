@@ -19,12 +19,53 @@ from app.migrations import run_migrations, schema_migrations  # noqa: E402
 
 def test_bed_planting_and_task_workflow() -> None:
     with TestClient(app) as client:
-        assert run_migrations() == "0001_current_schema"
-        assert run_migrations() == "0001_current_schema"
+        auth_status = client.get("/api/auth/status")
+        assert auth_status.status_code == 200
+        assert auth_status.json() == {
+            "configured": False,
+            "authenticated": False,
+            "display_name": None,
+            "session_days": 30,
+        }
+        protected = client.get(
+            "/api/beds", headers={"Origin": "http://localhost:3000"}
+        )
+        assert protected.status_code == 401
+        assert protected.headers["access-control-allow-origin"] == (
+            "http://localhost:3000"
+        )
+        assert client.post(
+            "/api/auth/setup",
+            json={"display_name": "Nosilec kmetije", "password": "prekratko"},
+        ).status_code == 422
+        setup = client.post(
+            "/api/auth/setup",
+            json={
+                "display_name": "Nosilec kmetije",
+                "password": "Zelo varno geslo 2026!",
+            },
+        )
+        assert setup.status_code == 201
+        assert setup.json()["authenticated"] is True
+        assert setup.json()["display_name"] == "Nosilec kmetije"
+        set_cookie = setup.headers["set-cookie"].lower()
+        assert "growmaster_session=" in set_cookie
+        assert "httponly" in set_cookie
+        assert "samesite=strict" in set_cookie
+        assert client.post(
+            "/api/auth/setup",
+            json={
+                "display_name": "Drugi uporabnik",
+                "password": "Drugo varno geslo 2026!",
+            },
+        ).status_code == 409
+
+        assert run_migrations() == "0002_authentication"
+        assert run_migrations() == "0002_authentication"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 1
+            ) == 2
         beds = client.get("/api/beds").json()
         crops = client.get("/api/crops").json()
         assert len(beds) == 6
@@ -1638,7 +1679,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0001_current_schema"
+        assert data_safety_summary["schema_revision"] == "0002_authentication"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["table_count"] == 37
         assert data_safety_summary["record_count"] > 0
@@ -1658,7 +1699,10 @@ def test_bed_planting_and_task_workflow() -> None:
         assert backup_document["payload"]["record_count"] == (
             data_safety_summary["record_count"]
         )
+        assert backup_document["payload"]["schema_revision"] == "0001_current_schema"
         assert len(backup_document["payload"]["tables"]) == 37
+        assert "admin_credentials" not in backup_document["payload"]["tables"]
+        assert "auth_sessions" not in backup_document["payload"]["tables"]
 
         assert client.post(
             "/api/system/backups/restore?confirmation=NAPAČNO",
@@ -1716,3 +1760,16 @@ def test_bed_planting_and_task_workflow() -> None:
         assert bed_after_restore.json()["id"] > max(
             item["id"] for item in beds_after_restore
         )
+
+        logout = client.post("/api/auth/logout")
+        assert logout.status_code == 200
+        assert client.get("/api/beds").status_code == 401
+        assert client.post(
+            "/api/auth/login", json={"password": "Napačno geslo 2026!"}
+        ).status_code == 401
+        login = client.post(
+            "/api/auth/login", json={"password": "Zelo varno geslo 2026!"}
+        )
+        assert login.status_code == 200
+        assert login.json()["display_name"] == "Nosilec kmetije"
+        assert client.get("/api/beds").status_code == 200

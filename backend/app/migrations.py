@@ -29,8 +29,15 @@ def create_current_schema(connection: Connection) -> None:
     Base.metadata.create_all(bind=connection)
 
 
+def create_authentication_schema(connection: Connection) -> None:
+    """Add local credentials and sessions without changing business data."""
+    app.models.AdminCredential.__table__.create(bind=connection, checkfirst=True)
+    app.models.AuthSession.__table__.create(bind=connection, checkfirst=True)
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
+    Migration("0002_authentication", create_authentication_schema),
 )
 
 

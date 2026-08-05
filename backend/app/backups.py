@@ -18,6 +18,8 @@ import app.models  # noqa: F401  Ensures every mapped table is registered.
 
 BACKUP_FORMAT = "growmaster-portable-backup"
 BACKUP_FORMAT_VERSION = 1
+BACKUP_SCHEMA_REVISION = "0001_current_schema"
+SECURITY_TABLES = {"admin_credentials", "auth_sessions"}
 MAX_BACKUP_BYTES = 25 * 1024 * 1024
 AUTOMATIC_BACKUP_RETENTION = 10
 AUTOMATIC_BACKUP_PATTERN = re.compile(
@@ -42,6 +44,15 @@ class ParsedBackup:
 
 def backup_directory() -> Path:
     return Path(os.getenv("BACKUP_DIR", "backups"))
+
+
+def backup_tables() -> list:
+    """Return portable business-data tables, never credentials or live sessions."""
+    return [
+        table
+        for table in Base.metadata.sorted_tables
+        if table.name not in SECURITY_TABLES
+    ]
 
 
 def canonical_json(value: object) -> bytes:
@@ -92,7 +103,7 @@ def decode_value(value: object) -> object:
 
 
 def database_summary(db: Session) -> dict:
-    tables = Base.metadata.sorted_tables
+    tables = backup_tables()
     counts = {
         table.name: db.scalar(select(func.count()).select_from(table)) or 0
         for table in tables
@@ -110,7 +121,7 @@ def database_summary(db: Session) -> dict:
 def create_backup_bytes(db: Session) -> tuple[bytes, dict]:
     tables: dict[str, list[dict]] = {}
     record_count = 0
-    for table in Base.metadata.sorted_tables:
+    for table in backup_tables():
         rows = db.execute(select(table)).mappings().all()
         tables[table.name] = [
             {key: encode_value(value) for key, value in dict(row).items()}
@@ -121,7 +132,7 @@ def create_backup_bytes(db: Session) -> tuple[bytes, dict]:
     payload = {
         "format": BACKUP_FORMAT,
         "format_version": BACKUP_FORMAT_VERSION,
-        "schema_revision": latest_revision(),
+        "schema_revision": BACKUP_SCHEMA_REVISION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "table_count": len(tables),
         "record_count": record_count,
@@ -175,7 +186,7 @@ def parse_backup(content: bytes) -> ParsedBackup:
         raise BackupValidationError("Datoteka ni GrowMaster varnostna kopija.")
     if payload.get("format_version") != BACKUP_FORMAT_VERSION:
         raise BackupValidationError("Različica zapisa varnostne kopije ni podprta.")
-    if payload.get("schema_revision") != latest_revision():
+    if payload.get("schema_revision") != BACKUP_SCHEMA_REVISION:
         raise BackupValidationError(
             "Varnostna kopija pripada drugi različici podatkovne baze."
         )
@@ -183,7 +194,7 @@ def parse_backup(content: bytes) -> ParsedBackup:
     if not isinstance(tables_payload, dict):
         raise BackupValidationError("Seznam tabel v varnostni kopiji ni veljaven.")
 
-    known_tables = {table.name: table for table in Base.metadata.sorted_tables}
+    known_tables = {table.name: table for table in backup_tables()}
     if set(tables_payload) != set(known_tables):
         raise BackupValidationError(
             "Varnostna kopija nima vseh pričakovanih podatkovnih tabel."
@@ -278,7 +289,7 @@ def automatic_backup_path(filename: str) -> Path | None:
 def reset_postgres_sequences(db: Session) -> None:
     if db.bind is None or db.bind.dialect.name != "postgresql":
         return
-    for table in Base.metadata.sorted_tables:
+    for table in backup_tables():
         for column in table.primary_key.columns:
             if not isinstance(column.type, Integer):
                 continue
@@ -304,7 +315,7 @@ def reset_postgres_sequences(db: Session) -> None:
 
 
 def restore_parsed_backup(db: Session, backup: ParsedBackup) -> None:
-    tables = Base.metadata.sorted_tables
+    tables = backup_tables()
     try:
         for table in reversed(tables):
             db.execute(table.delete())

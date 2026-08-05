@@ -10,7 +10,7 @@ Startup stops if the database contains an unknown newer revision. This prevents 
 
 ## Portable backup
 
-`GET /api/system/backups/export` downloads one JSON file containing every application table, including archived invoice PDFs. Dates and binary values use explicit portable encodings. The document contains:
+`GET /api/system/backups/export` downloads one JSON file containing every business-data table, including archived invoice PDFs. Authentication credentials and active sessions are deliberately excluded, so restoring a backup never replaces the current administrator password. Dates and binary values use explicit portable encodings. The document contains:
 
 - backup-format and database-schema versions,
 - creation time and record counts,
