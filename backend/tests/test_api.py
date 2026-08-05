@@ -137,6 +137,8 @@ def test_bed_planting_and_task_workflow() -> None:
                 "email": "narocila@example.com",
                 "phone": "+386 40 000 000",
                 "address": "Tržna ulica 1, Ljubljana",
+                "customer_type": "business",
+                "tax_number": "SI12345678",
             },
         )
         assert customer.status_code == 201
@@ -328,3 +330,67 @@ def test_bed_planting_and_task_workflow() -> None:
         visible_plans = client.get("/api/plans").json()
         assert len(visible_plans) == 1
         assert visible_plans[0]["status"] == "activated"
+
+        settings = client.get("/api/sales-settings")
+        assert settings.status_code == 200
+        assert settings.json()["basic_agriculture_invoice_exemption"] is True
+
+        anonymous_sale = client.post(
+            "/api/retail-sales",
+            json={
+                "sale_date": "2026-09-20",
+                "payment_method": "cash",
+                "items": [
+                    {
+                        "harvest_id": harvest.json()["id"],
+                        "quantity_kg": 0.4,
+                        "price_per_kg_eur": 7,
+                    }
+                ],
+            },
+        )
+        assert anonymous_sale.status_code == 201
+        assert anonymous_sale.json()["customer"] == "Končni potrošnik"
+        assert anonymous_sale.json()["customer_type"] == "consumer"
+        assert anonymous_sale.json()["invoice_required"] is False
+        assert anonymous_sale.json()["total_eur"] == 2.8
+
+        receipt = client.get(
+            f"/api/retail-sales/{anonymous_sale.json()['id']}/document?document_type=receipt"
+        )
+        assert receipt.status_code == 200
+        assert receipt.json()["document_number"].startswith("P-")
+        consumer_invoice = client.get(
+            f"/api/retail-sales/{anonymous_sale.json()['id']}/document?document_type=invoice"
+        )
+        assert consumer_invoice.status_code == 409
+
+        business_sale = client.post(
+            "/api/retail-sales",
+            json={
+                "customer_id": customer.json()["id"],
+                "sale_date": "2026-09-20",
+                "payment_method": "card",
+                "items": [
+                    {
+                        "harvest_id": harvest.json()["id"],
+                        "quantity_kg": 0.1,
+                        "price_per_kg_eur": 7,
+                    }
+                ],
+            },
+        )
+        assert business_sale.status_code == 201
+        assert business_sale.json()["customer_type"] == "business"
+        assert business_sale.json()["invoice_required"] is True
+        business_invoice = client.get(
+            f"/api/retail-sales/{business_sale.json()['id']}/document?document_type=invoice"
+        )
+        assert business_invoice.status_code == 200
+        assert business_invoice.json()["fiscal_confirmation_required"] is True
+
+        retail_stock = client.get("/api/inventory").json()
+        retail_stock = next(
+            item for item in retail_stock if item["harvest_id"] == harvest.json()["id"]
+        )
+        assert retail_stock["available_kg"] == 0
