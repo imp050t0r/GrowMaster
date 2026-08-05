@@ -28,6 +28,8 @@ class Farm(Base):
     harvests: Mapped[list["Harvest"]] = relationship(back_populates="farm")
     costs: Mapped[list["Cost"]] = relationship(back_populates="farm")
     sales: Mapped[list["Sale"]] = relationship(back_populates="farm")
+    customers: Mapped[list["Customer"]] = relationship(back_populates="farm")
+    orders: Mapped[list["Order"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -116,6 +118,7 @@ class Harvest(Base):
     bed: Mapped[Bed] = relationship(back_populates="harvests")
     planting: Mapped[Planting] = relationship(back_populates="harvests")
     sales: Mapped[list["Sale"]] = relationship(back_populates="harvest")
+    order_items: Mapped[list["OrderItem"]] = relationship(back_populates="harvest")
 
 
 class Cost(Base):
@@ -153,6 +156,63 @@ class Sale(Base):
 
     @property
     def revenue_eur(self) -> float:
+        return round(self.quantity_kg * self.price_per_kg_eur, 2)
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+    __table_args__ = (UniqueConstraint("farm_id", "name", name="uq_customer_farm_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    email: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="customers")
+    orders: Mapped[list["Order"]] = relationship(back_populates="customer")
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), index=True)
+    order_date: Mapped[date] = mapped_column(Date, index=True)
+    delivery_date: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="confirmed", index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="orders")
+    customer: Mapped[Customer] = relationship(back_populates="orders")
+    items: Mapped[list["OrderItem"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
+
+    @property
+    def total_eur(self) -> float:
+        return round(sum(item.line_total_eur for item in self.items), 2)
+
+
+class OrderItem(Base):
+    __tablename__ = "order_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    harvest_id: Mapped[int] = mapped_column(ForeignKey("harvests.id", ondelete="RESTRICT"), index=True)
+    quantity_kg: Mapped[float] = mapped_column(Float)
+    price_per_kg_eur: Mapped[float] = mapped_column(Float)
+
+    order: Mapped[Order] = relationship(back_populates="items")
+    harvest: Mapped[Harvest] = relationship(back_populates="order_items")
+
+    @property
+    def line_total_eur(self) -> float:
         return round(self.quantity_kg * self.price_per_kg_eur, 2)
 
 

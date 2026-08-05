@@ -129,3 +129,125 @@ def test_bed_planting_and_task_workflow() -> None:
         assert bed_economics["costs_eur"] == 42.5
         assert bed_economics["revenue_eur"] == 90
         assert bed_economics["profit_eur"] == 47.5
+
+        customer = client.post(
+            "/api/customers",
+            json={
+                "name": "Bistro Zeleno",
+                "email": "narocila@example.com",
+                "phone": "+386 40 000 000",
+                "address": "Tržna ulica 1, Ljubljana",
+            },
+        )
+        assert customer.status_code == 201
+
+        inventory = client.get("/api/inventory").json()
+        stock = next(item for item in inventory if item["harvest_id"] == harvest.json()["id"])
+        assert stock["available_kg"] == 3.5
+        assert stock["reserved_kg"] == 0
+
+        reserved_order = client.post(
+            "/api/orders",
+            json={
+                "customer_id": customer.json()["id"],
+                "order_date": "2026-09-10",
+                "delivery_date": "2026-09-11",
+                "items": [
+                    {
+                        "harvest_id": harvest.json()["id"],
+                        "quantity_kg": 3,
+                        "price_per_kg_eur": 6.5,
+                    }
+                ],
+            },
+        )
+        assert reserved_order.status_code == 201
+        assert reserved_order.json()["status"] == "confirmed"
+        assert reserved_order.json()["total_eur"] == 19.5
+
+        reserved_stock = client.get("/api/inventory").json()
+        reserved_stock = next(
+            item for item in reserved_stock if item["harvest_id"] == harvest.json()["id"]
+        )
+        assert reserved_stock["reserved_kg"] == 3
+        assert reserved_stock["available_kg"] == 0.5
+
+        sale_into_reservation = client.post(
+            "/api/sales",
+            json={
+                "harvest_id": harvest.json()["id"],
+                "sale_date": "2026-09-10",
+                "quantity_kg": 1,
+                "price_per_kg_eur": 6,
+            },
+        )
+        assert sale_into_reservation.status_code == 409
+
+        unavailable_order = client.post(
+            "/api/orders",
+            json={
+                "customer_id": customer.json()["id"],
+                "order_date": "2026-09-10",
+                "delivery_date": "2026-09-11",
+                "items": [
+                    {
+                        "harvest_id": harvest.json()["id"],
+                        "quantity_kg": 1,
+                        "price_per_kg_eur": 6.5,
+                    }
+                ],
+            },
+        )
+        assert unavailable_order.status_code == 409
+
+        delivery_note = client.get(
+            f"/api/orders/{reserved_order.json()['id']}/document?document_type=delivery_note"
+        )
+        assert delivery_note.status_code == 200
+        assert delivery_note.json()["document_number"].startswith("D-")
+
+        cancelled = client.post(
+            f"/api/orders/{reserved_order.json()['id']}/status",
+            json={"status": "cancelled"},
+        )
+        assert cancelled.status_code == 200
+        released_stock = client.get("/api/inventory").json()
+        released_stock = next(
+            item for item in released_stock if item["harvest_id"] == harvest.json()["id"]
+        )
+        assert released_stock["available_kg"] == 3.5
+
+        fulfilled_order = client.post(
+            "/api/orders",
+            json={
+                "customer_id": customer.json()["id"],
+                "order_date": "2026-09-11",
+                "delivery_date": "2026-09-12",
+                "items": [
+                    {
+                        "harvest_id": harvest.json()["id"],
+                        "quantity_kg": 2,
+                        "price_per_kg_eur": 7,
+                    }
+                ],
+            },
+        )
+        assert fulfilled_order.status_code == 201
+        fulfilled = client.post(
+            f"/api/orders/{fulfilled_order.json()['id']}/status",
+            json={"status": "fulfilled"},
+        )
+        assert fulfilled.status_code == 200
+        invoice = client.get(
+            f"/api/orders/{fulfilled_order.json()['id']}/document?document_type=invoice"
+        )
+        assert invoice.status_code == 200
+        assert invoice.json()["order"]["total_eur"] == 14
+
+        final_stock = client.get("/api/inventory").json()
+        final_stock = next(
+            item for item in final_stock if item["harvest_id"] == harvest.json()["id"]
+        )
+        assert final_stock["sold_kg"] == 17
+        assert final_stock["reserved_kg"] == 0
+        assert final_stock["available_kg"] == 1.5
