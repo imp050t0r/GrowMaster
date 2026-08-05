@@ -1,9 +1,12 @@
+import csv
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+import io
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -58,7 +61,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="0.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -1538,3 +1541,198 @@ def retail_sale_document(
         ),
         "issued_on": date.today(),
     }
+
+
+def sales_report_range(start: date | None, end: date | None) -> tuple[date, date]:
+    range_start = start or date.today()
+    range_end = end or range_start
+    if range_end < range_start:
+        raise HTTPException(status_code=422, detail="Konec obdobja ne sme biti pred začetkom.")
+    return range_start, range_end
+
+
+def build_sales_report(db: Session, start: date | None, end: date | None) -> dict:
+    range_start, range_end = sales_report_range(start, end)
+    settings = get_sales_settings(db)
+    retail_sales = db.scalars(
+        select(RetailSale)
+        .where(
+            RetailSale.farm_id == DEFAULT_FARM_ID,
+            RetailSale.sale_date >= range_start,
+            RetailSale.sale_date <= range_end,
+        )
+        .options(*retail_sale_options())
+    ).all()
+    orders = db.scalars(
+        select(Order)
+        .where(
+            Order.farm_id == DEFAULT_FARM_ID,
+            Order.status == "fulfilled",
+            Order.delivery_date >= range_start,
+            Order.delivery_date <= range_end,
+        )
+        .options(*order_load_options())
+    ).all()
+
+    entries = []
+    for retail_sale in retail_sales:
+        serialized = serialize_retail_sale(retail_sale, settings)
+        entries.append(
+            {
+                "key": f"retail-{retail_sale.id}",
+                "source": "retail_sale",
+                "number": serialized["number"],
+                "date": retail_sale.sale_date,
+                "customer": serialized["customer"],
+                "customer_type": serialized["customer_type"],
+                "payment_method": retail_sale.payment_method,
+                "total_eur": retail_sale.total_eur,
+                "invoice_required": serialized["invoice_required"],
+            }
+        )
+    for order in orders:
+        customer_type = order.customer.profile.customer_type if order.customer.profile else "consumer"
+        invoice_required = (
+            customer_type == "business"
+            or not settings.basic_agriculture_invoice_exemption
+        )
+        entries.append(
+            {
+                "key": f"order-{order.id}",
+                "source": "order",
+                "number": f"GM-{order.order_date.year}-{order.id:04d}",
+                "date": order.delivery_date,
+                "customer": order.customer.name,
+                "customer_type": customer_type,
+                "payment_method": "invoice" if invoice_required else "unclassified",
+                "total_eur": order.total_eur,
+                "invoice_required": invoice_required,
+            }
+        )
+    entries.sort(key=lambda entry: (entry["date"], entry["key"]), reverse=True)
+
+    payment_keys = ("cash", "card", "bank_transfer", "invoice", "unclassified")
+    summary = {
+        "transactions": len(entries),
+        "total_eur": round(sum(entry["total_eur"] for entry in entries), 2),
+        **{
+            f"{payment_method}_eur": round(
+                sum(
+                    entry["total_eur"]
+                    for entry in entries
+                    if entry["payment_method"] == payment_method
+                ),
+                2,
+            )
+            for payment_method in payment_keys
+        },
+        "invoice_eur": round(
+            sum(entry["total_eur"] for entry in entries if entry["invoice_required"]),
+            2,
+        ),
+        "consumer_eur": round(
+            sum(entry["total_eur"] for entry in entries if entry["customer_type"] == "consumer"),
+            2,
+        ),
+        "business_eur": round(
+            sum(entry["total_eur"] for entry in entries if entry["customer_type"] == "business"),
+            2,
+        ),
+        "invoice_count": sum(entry["invoice_required"] for entry in entries),
+    }
+    daily = []
+    for report_date in sorted({entry["date"] for entry in entries}, reverse=True):
+        day_entries = [entry for entry in entries if entry["date"] == report_date]
+        daily.append(
+            {
+                "date": report_date,
+                "transactions": len(day_entries),
+                "total_eur": round(sum(entry["total_eur"] for entry in day_entries), 2),
+                **{
+                    f"{payment_method}_eur": round(
+                        sum(
+                            entry["total_eur"]
+                            for entry in day_entries
+                            if entry["payment_method"] == payment_method
+                        ),
+                        2,
+                    )
+                    for payment_method in payment_keys
+                },
+                "invoice_eur": round(
+                    sum(
+                        entry["total_eur"]
+                        for entry in day_entries
+                        if entry["invoice_required"]
+                    ),
+                    2,
+                ),
+            }
+        )
+    return {
+        "start": range_start,
+        "end": range_end,
+        "summary": summary,
+        "daily": daily,
+        "entries": entries,
+        "note": (
+            "Register vključuje hitre prodaje in dostavljena naročila. "
+            "Izdani računi so prikazani ločeno; njihovo plačilo s tem ni samodejno potrjeno."
+        ),
+    }
+
+
+@app.get("/api/sales-report")
+def sales_report(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    return build_sales_report(db, start, end)
+
+
+@app.get("/api/sales-report/export.csv")
+def export_sales_report(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> Response:
+    report = build_sales_report(db, start, end)
+
+    def spreadsheet_cell(value: object) -> str:
+        text = str(value)
+        return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        [
+            "Datum",
+            "Številka",
+            "Vrsta",
+            "Kupec",
+            "Tip kupca",
+            "Način plačila",
+            "Znesek EUR",
+            "Račun potreben",
+        ]
+    )
+    for entry in report["entries"]:
+        writer.writerow(
+            [
+                entry["date"].isoformat(),
+                spreadsheet_cell(entry["number"]),
+                spreadsheet_cell(entry["source"]),
+                spreadsheet_cell(entry["customer"]),
+                spreadsheet_cell(entry["customer_type"]),
+                spreadsheet_cell(entry["payment_method"]),
+                f'{entry["total_eur"]:.2f}',
+                "da" if entry["invoice_required"] else "ne",
+            ]
+        )
+    filename = f'growmaster-prodaja-{report["start"]}-{report["end"]}.csv'
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

@@ -48,6 +48,9 @@ function App() {
   const [forecast, setForecast] = useState({ rows: [], warnings: [] });
   const [retailSales, setRetailSales] = useState([]);
   const [salesSettings, setSalesSettings] = useState(null);
+  const [salesReport, setSalesReport] = useState({ summary: {}, daily: [], entries: [], note: "" });
+  const [reportStart, setReportStart] = useState(today);
+  const [reportEnd, setReportEnd] = useState(today);
   const [planStart, setPlanStart] = useState(today);
   const [planEnd, setPlanEnd] = useState(inDays(90));
   const [taskDate, setTaskDate] = useState(today);
@@ -95,7 +98,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -111,6 +114,7 @@ function App() {
       apiRequest(`/api/planning/forecast?start=${planStart}&end=${planEnd}`),
       apiRequest("/api/retail-sales"),
       apiRequest("/api/sales-settings"),
+      apiRequest(`/api/sales-report?start=${reportStart}&end=${reportEnd}`),
     ]);
     setCrops(cropData);
     setBeds(bedData);
@@ -127,6 +131,7 @@ function App() {
     setForecast(forecastData);
     setRetailSales(retailSaleData);
     setSalesSettings(salesSettingsData);
+    setSalesReport(salesReportData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
     setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
     setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
@@ -155,7 +160,7 @@ function App() {
 
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
-  }, [taskDate, planStart, planEnd]);
+  }, [taskDate, planStart, planEnd, reportStart, reportEnd]);
 
   function clearMessages() {
     setNotice("");
@@ -399,6 +404,7 @@ function App() {
     ["tasks", "Opravila", "✓"],
     ["economics", "Žetev €", "€"],
     ["orders", "Naročila", "▤"],
+    ["reports", "Prodaja", "Σ"],
     ["planning", "Plan", "◫"],
   ];
 
@@ -410,7 +416,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 0.6</span>
+        <span className="status-pill">MVP 0.7</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -489,6 +495,9 @@ function App() {
           document={document} setDocument={setDocument} retailSales={retailSales}
           quickSaleForm={quickSaleForm} setQuickSaleForm={setQuickSaleForm} createQuickSale={createQuickSale} openRetailDocument={openRetailDocument}
           salesSettings={salesSettings} setSalesSettings={setSalesSettings} saveSalesSettings={saveSalesSettings} />
+      )}
+      {view === "reports" && (
+        <SalesReportView report={salesReport} start={reportStart} setStart={setReportStart} end={reportEnd} setEnd={setReportEnd} />
       )}
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
@@ -711,6 +720,31 @@ function OrdersView({ inventory, customers, orders, customerForm, setCustomerFor
       </article>)}</div>
     </section>
     {document && (() => { const record = document.order || document.sale; const customer = document.customer || { name: record.customer, address: "" }; return <section className="panel printable-document"><div className="section-heading"><div><p className="eyebrow">{document.document_type === "invoice" ? "Račun" : document.document_type === "delivery_note" ? "Dobavnica" : "Interno potrdilo prodaje"}</p><h2>{document.document_number}</h2></div><div className="order-actions"><button className="secondary-button" onClick={() => window.print()}>NATISNI</button><button className="icon-button" onClick={() => setDocument(null)}>✕</button></div></div>{document.seller && <p><strong>{document.seller.name}</strong><br />{document.seller.tax_number || ""}</p>}<p><strong>Kupec:</strong> {customer.name}<br />{customer.address || ""}</p><div className="document-lines">{record.items.map((item) => <div key={item.id}><span>{item.crop} {item.variety} · {item.quantity_kg} kg</span><strong>{item.line_total_eur.toFixed(2)} €</strong></div>)}</div><div className="document-total">Skupaj <strong>{record.total_eur.toFixed(2)} €</strong></div>{document.fiscal_confirmation_required && <p className="forecast-warning">Ta račun je treba pred uporabo vključiti v ustrezen postopek davčnega potrjevanja.</p>}</section>; })()}
+  </>;
+}
+
+function SalesReportView({ report, start, setStart, end, setEnd }) {
+  const summary = report.summary || {};
+  const paymentLabel = (method) => ({ cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo", invoice: "Izdani račun", unclassified: "Ni določeno" }[method] || method);
+  return <>
+    <section className="panel report-heading">
+      <div><p className="eyebrow">Dnevni register</p><h2>Pregled prodaje</h2><p className="muted">{report.note}</p></div>
+      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/sales-report/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div>
+    </section>
+    <section className="metric-grid report-metrics">
+      <article className="metric-card"><span>Skupaj</span><strong>{(summary.total_eur || 0).toFixed(2)} €</strong><small>{summary.transactions || 0} prodaj · nerazvrščeno {(summary.unclassified_eur || 0).toFixed(2)} €</small></article>
+      <article className="metric-card"><span>Gotovina</span><strong>{(summary.cash_eur || 0).toFixed(2)} €</strong><small>prejeto ob prodaji</small></article>
+      <article className="metric-card"><span>Kartice</span><strong>{(summary.card_eur || 0).toFixed(2)} €</strong><small>kartična plačila</small></article>
+      <article className="metric-card"><span>Nakazila</span><strong>{(summary.bank_transfer_eur || 0).toFixed(2)} €</strong><small>evidentirana plačila</small></article>
+      <article className="metric-card"><span>Izdani računi</span><strong>{(summary.invoice_eur || 0).toFixed(2)} €</strong><small>{summary.invoice_count || 0} računov · ne pomeni plačano</small></article>
+      <article className="metric-card"><span>Poslovni kupci</span><strong>{(summary.business_eur || 0).toFixed(2)} €</strong><small>končni kupci {(summary.consumer_eur || 0).toFixed(2)} €</small></article>
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Po dnevih</p><h2>Dnevni seštevki</h2></div><span>{report.daily.length} dni</span></div>
+      {report.daily.length === 0 ? <p className="empty-state">V izbranem obdobju še ni evidentirane prodaje.</p> : <div className="daily-sales-list">{report.daily.map((day) => <article key={day.date}><div><time>{day.date}</time><strong>{day.total_eur.toFixed(2)} €</strong><span>{day.transactions} prodaj</span></div><small>Gotovina {day.cash_eur.toFixed(2)} € · kartice {day.card_eur.toFixed(2)} € · nakazila {day.bank_transfer_eur.toFixed(2)} € · računi {day.invoice_eur.toFixed(2)} €</small></article>)}</div>}
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Knjiga prodaje</p><h2>Posamezni zapisi</h2></div><span>{report.entries.length} zapisov</span></div>
+      <div className="sales-report-table"><b>Datum</b><b>Dokument</b><b>Kupec</b><b>Način</b><b>Znesek</b>{report.entries.map((entry) => <React.Fragment key={entry.key}><span>{entry.date}</span><span>{entry.number}<small>{entry.source === "order" ? "naročilo" : "hitra prodaja"}</small></span><span>{entry.customer}<small>{entry.customer_type === "business" ? "poslovni" : "končni"}</small></span><span>{paymentLabel(entry.payment_method)}{entry.invoice_required && <small>račun</small>}</span><strong>{entry.total_eur.toFixed(2)} €</strong></React.Fragment>)}</div>
+    </section>
   </>;
 }
 
