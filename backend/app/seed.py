@@ -1,7 +1,9 @@
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Bed, Crop, Farm, Variety
+from app.models import Bed, Crop, Farm, Task, Variety
 
 
 CROP_DATA = [
@@ -67,6 +69,7 @@ def seed_database(db: Session) -> None:
                     last_crop_family=previous_families.get(name),
                 )
             )
+        db.flush()
 
     if db.scalar(select(Crop).limit(1)) is None:
         for item in CROP_DATA:
@@ -80,5 +83,36 @@ def seed_database(db: Session) -> None:
                 for name, days in item["varieties"]
             ]
             db.add(crop)
+        db.flush()
+
+    if db.scalar(select(Task).limit(1)) is None:
+        beds = {bed.name: bed for bed in db.scalars(select(Bed)).all()}
+        today = date.today()
+        db.add_all(
+            [
+                Task(
+                    farm_id=farm.id,
+                    title="Jutranji pregled vseh gredic",
+                    task_type="inspection",
+                    due_date=today,
+                    priority="normal",
+                ),
+                Task(
+                    farm_id=farm.id,
+                    title="Preveri namakalni sistem",
+                    task_type="irrigation",
+                    due_date=today,
+                    priority="high",
+                ),
+                Task(
+                    farm_id=farm.id,
+                    bed_id=beds.get("A3").id if beds.get("A3") else None,
+                    title="Pripravi gredico A3 za setev",
+                    task_type="bed_preparation",
+                    due_date=today,
+                    priority="normal",
+                ),
+            ]
+        )
 
     db.commit()
