@@ -243,8 +243,65 @@ def test_bed_planting_and_task_workflow() -> None:
         invoice = client.get(
             f"/api/orders/{fulfilled_order.json()['id']}/document?document_type=invoice"
         )
-        assert invoice.status_code == 200
-        assert invoice.json()["order"]["total_eur"] == 14
+        assert invoice.status_code == 410
+
+        sales_identity = client.put(
+            "/api/sales-settings",
+            json={
+                "basic_agriculture_invoice_exemption": True,
+                "seller_name": "Kmetija Zeleni Gaj",
+                "seller_tax_number": "SI87654321",
+            },
+        )
+        assert sales_identity.status_code == 200
+        invoice_profile = client.put(
+            "/api/invoice-profile",
+            json={
+                "seller_address": "Poljska pot 5, 1000 Ljubljana",
+                "seller_iban": "SI56191000000123456",
+                "seller_registration_number": "1234567000",
+                "vat_note": "DDV ni obračunan v skladu s posebnim režimom.",
+                "business_premise_code": "GM",
+                "device_code": "01",
+                "default_due_days": 14,
+            },
+        )
+        assert invoice_profile.status_code == 200
+        archived_invoice = client.post(
+            "/api/invoices",
+            json={
+                "source_type": "order",
+                "source_id": fulfilled_order.json()["id"],
+                "issued_on": "2026-09-12",
+                "payment_method": "bank_transfer",
+            },
+        )
+        assert archived_invoice.status_code == 201
+        archived_invoice_data = archived_invoice.json()
+        assert archived_invoice_data["number"] == "R-GM-01-2026-0001"
+        assert archived_invoice_data["due_date"] == "2026-09-26"
+        assert archived_invoice_data["fiscal_status"] == "not_required"
+        assert archived_invoice_data["customer"]["tax_number"] == "SI12345678"
+        assert archived_invoice_data["lines"][0]["line_total_eur"] == 14
+        assert len(archived_invoice_data["pdf_sha256"]) == 64
+        invoice_pdf = client.get(
+            f"/api/invoices/{archived_invoice_data['id']}/pdf"
+        )
+        assert invoice_pdf.status_code == 200
+        assert invoice_pdf.headers["content-type"] == "application/pdf"
+        assert invoice_pdf.content.startswith(b"%PDF")
+        assert client.get(
+            f"/api/invoices/{archived_invoice_data['id']}/pdf"
+        ).content == invoice_pdf.content
+        duplicate_invoice = client.post(
+            "/api/invoices",
+            json={
+                "source_type": "order",
+                "source_id": fulfilled_order.json()["id"],
+                "issued_on": "2026-09-13",
+            },
+        )
+        assert duplicate_invoice.status_code == 409
 
         final_stock = client.get("/api/inventory").json()
         final_stock = next(
@@ -386,8 +443,41 @@ def test_bed_planting_and_task_workflow() -> None:
         business_invoice = client.get(
             f"/api/retail-sales/{business_sale.json()['id']}/document?document_type=invoice"
         )
-        assert business_invoice.status_code == 200
-        assert business_invoice.json()["fiscal_confirmation_required"] is True
+        assert business_invoice.status_code == 410
+
+        fiscal_invoice = client.post(
+            "/api/invoices",
+            json={
+                "source_type": "retail_sale",
+                "source_id": business_sale.json()["id"],
+                "issued_on": "2026-09-20",
+            },
+        )
+        assert fiscal_invoice.status_code == 201
+        fiscal_invoice_data = fiscal_invoice.json()
+        assert fiscal_invoice_data["number"] == "R-GM-01-2026-0002"
+        assert fiscal_invoice_data["fiscal_status"] == "pending"
+        pending_pdf = client.get(
+            f"/api/invoices/{fiscal_invoice_data['id']}/pdf"
+        )
+        assert pending_pdf.status_code == 409
+        confirmation = client.post(
+            f"/api/invoices/{fiscal_invoice_data['id']}/fiscal-confirmation",
+            json={"eor": "EOR-RAČUN-001", "zoi": "ZOI-RAČUN-001"},
+        )
+        assert confirmation.status_code == 200
+        assert confirmation.json()["fiscal_status"] == "confirmed"
+        assert len(confirmation.json()["pdf_sha256"]) == 64
+        locked_confirmation = client.post(
+            f"/api/invoices/{fiscal_invoice_data['id']}/fiscal-confirmation",
+            json={"eor": "DRUG-EOR"},
+        )
+        assert locked_confirmation.status_code == 409
+        confirmed_pdf = client.get(
+            f"/api/invoices/{fiscal_invoice_data['id']}/pdf"
+        )
+        assert confirmed_pdf.status_code == 200
+        assert confirmed_pdf.content.startswith(b"%PDF")
 
         retail_stock = client.get("/api/inventory").json()
         retail_stock = next(
@@ -558,4 +648,45 @@ def test_bed_planting_and_task_workflow() -> None:
         invalid_cash_flow = client.get(
             "/api/cash-flow?start=2026-09-22&end=2026-09-21"
         )
+        assert invalid_cash_flow.status_code == 422
+
+        credit_note = client.post(
+            f"/api/invoices/{fiscal_invoice_data['id']}/credit-notes",
+            json={
+                "issued_on": "2026-09-22",
+                "reason": "Napačno evidentirana poslovna prodaja.",
+            },
+        )
+        assert credit_note.status_code == 201
+        credit_note_data = credit_note.json()
+        assert credit_note_data["number"] == "DB-GM-01-2026-0001"
+        assert credit_note_data["fiscal_status"] == "pending"
+        assert client.get(
+            f"/api/credit-notes/{credit_note_data['id']}/pdf"
+        ).status_code == 409
+        credit_confirmation = client.post(
+            f"/api/credit-notes/{credit_note_data['id']}/fiscal-confirmation",
+            json={"eor": "EOR-DOBROPIS-001", "zoi": "ZOI-DOBROPIS-001"},
+        )
+        assert credit_confirmation.status_code == 200
+        assert len(credit_confirmation.json()["pdf_sha256"]) == 64
+        credit_pdf = client.get(
+            f"/api/credit-notes/{credit_note_data['id']}/pdf"
+        )
+        assert credit_pdf.status_code == 200
+        assert credit_pdf.content.startswith(b"%PDF")
+        assert client.post(
+            f"/api/invoices/{fiscal_invoice_data['id']}/credit-notes",
+            json={"issued_on": "2026-09-23", "reason": "Drugi dobropis"},
+        ).status_code == 409
+
+        archived_documents = client.get("/api/invoices")
+        assert archived_documents.status_code == 200
+        assert len(archived_documents.json()) == 2
+        credited = next(
+            item for item in archived_documents.json()
+            if item["id"] == fiscal_invoice_data["id"]
+        )
+        assert credited["status"] == "credited"
+        assert credited["credit_note"]["number"] == "DB-GM-01-2026-0001"
         assert invalid_cash_flow.status_code == 422

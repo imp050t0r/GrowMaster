@@ -7,6 +7,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -34,6 +35,9 @@ class Farm(Base):
     crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="farm")
     sales_settings: Mapped["SalesSettings | None"] = relationship(back_populates="farm")
     retail_sales: Mapped[list["RetailSale"]] = relationship(back_populates="farm")
+    invoice_profile: Mapped["InvoiceProfile | None"] = relationship(back_populates="farm")
+    invoices: Mapped[list["Invoice"]] = relationship(back_populates="farm")
+    credit_notes: Mapped[list["CreditNote"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -216,6 +220,7 @@ class Order(Base):
     payments: Mapped[list["OrderPayment"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
+    invoice: Mapped["Invoice | None"] = relationship(back_populates="order", uselist=False)
 
     @property
     def total_eur(self) -> float:
@@ -299,6 +304,128 @@ class SalesSettings(Base):
     farm: Mapped[Farm] = relationship(back_populates="sales_settings")
 
 
+class InvoiceProfile(Base):
+    __tablename__ = "invoice_profiles"
+
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True
+    )
+    seller_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seller_iban: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    seller_registration_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vat_note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    business_premise_code: Mapped[str] = mapped_column(String(20), default="GM")
+    device_code: Mapped[str] = mapped_column(String(20), default="01")
+    default_due_days: Mapped[int] = mapped_column(Integer, default=14)
+
+    farm: Mapped[Farm] = relationship(back_populates="invoice_profile")
+
+
+class DocumentSequence(Base):
+    __tablename__ = "document_sequences"
+    __table_args__ = (
+        UniqueConstraint(
+            "farm_id", "year", "document_type", name="uq_document_sequence"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    year: Mapped[int] = mapped_column(Integer)
+    document_type: Mapped[str] = mapped_column(String(20))
+    next_number: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("orders.id", ondelete="RESTRICT"), nullable=True, unique=True
+    )
+    retail_sale_id: Mapped[int | None] = mapped_column(
+        ForeignKey("retail_sales.id", ondelete="RESTRICT"), nullable=True, unique=True
+    )
+    number: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    issued_on: Mapped[date] = mapped_column(Date, index=True)
+    supply_date: Mapped[date] = mapped_column(Date)
+    due_date: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20), default="issued", index=True)
+    payment_method: Mapped[str] = mapped_column(String(20))
+    seller_name: Mapped[str] = mapped_column(String(160))
+    seller_address: Mapped[str] = mapped_column(Text)
+    seller_tax_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    seller_iban: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    seller_registration_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vat_note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    customer_name: Mapped[str] = mapped_column(String(160))
+    customer_address: Mapped[str] = mapped_column(Text)
+    customer_tax_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    total_eur: Mapped[float] = mapped_column(Float)
+    fiscal_confirmation_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    eor: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    zoi: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    pdf_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    pdf_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="invoices")
+    order: Mapped[Order | None] = relationship(back_populates="invoice")
+    retail_sale: Mapped["RetailSale | None"] = relationship(back_populates="invoice")
+    lines: Mapped[list["InvoiceLine"]] = relationship(
+        back_populates="invoice", cascade="all, delete-orphan", order_by="InvoiceLine.id"
+    )
+    credit_note: Mapped["CreditNote | None"] = relationship(
+        back_populates="invoice", uselist=False
+    )
+
+
+class InvoiceLine(Base):
+    __tablename__ = "invoice_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"), index=True
+    )
+    description: Mapped[str] = mapped_column(String(240))
+    quantity: Mapped[float] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String(20), default="kg")
+    unit_price_eur: Mapped[float] = mapped_column(Float)
+    line_total_eur: Mapped[float] = mapped_column(Float)
+
+    invoice: Mapped[Invoice] = relationship(back_populates="lines")
+
+
+class CreditNote(Base):
+    __tablename__ = "credit_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="RESTRICT"), unique=True, index=True
+    )
+    number: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    issued_on: Mapped[date] = mapped_column(Date, index=True)
+    reason: Mapped[str] = mapped_column(String(500))
+    total_eur: Mapped[float] = mapped_column(Float)
+    fiscal_confirmation_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    eor: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    zoi: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    pdf_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    pdf_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="credit_notes")
+    invoice: Mapped[Invoice] = relationship(back_populates="credit_note")
+
+
 class RetailSale(Base):
     __tablename__ = "retail_sales"
 
@@ -316,6 +443,9 @@ class RetailSale(Base):
     customer: Mapped[Customer | None] = relationship(back_populates="retail_sales")
     items: Mapped[list["RetailSaleItem"]] = relationship(
         back_populates="retail_sale", cascade="all, delete-orphan"
+    )
+    invoice: Mapped["Invoice | None"] = relationship(
+        back_populates="retail_sale", uselist=False
     )
 
     @property

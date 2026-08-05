@@ -52,6 +52,8 @@ function App() {
   const [salesReport, setSalesReport] = useState({ summary: {}, daily: [], entries: [], note: "" });
   const [receivables, setReceivables] = useState({ summary: {}, items: [], note: "" });
   const [cashFlow, setCashFlow] = useState({ summary: {}, daily: [], entries: [], note: "" });
+  const [invoices, setInvoices] = useState([]);
+  const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [reportStart, setReportStart] = useState(today);
   const [reportEnd, setReportEnd] = useState(today);
   const [receivablesAsOf, setReceivablesAsOf] = useState(today);
@@ -107,7 +109,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -126,6 +128,8 @@ function App() {
       apiRequest(`/api/sales-report?start=${reportStart}&end=${reportEnd}`),
       apiRequest(`/api/receivables?as_of=${receivablesAsOf}&include_paid=${includePaidReceivables}`),
       apiRequest(`/api/cash-flow?start=${cashFlowStart}&end=${cashFlowEnd}`),
+      apiRequest("/api/invoices"),
+      apiRequest("/api/invoice-profile"),
     ]);
     setCrops(cropData);
     setBeds(bedData);
@@ -145,6 +149,8 @@ function App() {
     setSalesReport(salesReportData);
     setReceivables(receivablesData);
     setCashFlow(cashFlowData);
+    setInvoices(invoiceData);
+    setInvoiceProfile(invoiceProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
     setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
     setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
@@ -376,6 +382,50 @@ function App() {
     catch (requestError) { setError(requestError.message); }
   }
 
+  async function saveInvoiceProfile(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/invoice-profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(invoiceProfile) });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function issueInvoice(sourceType, sourceId) {
+    if (!window.confirm("Izdani račun se arhivira in ga pozneje ni mogoče spreminjati. Nadaljujem?")) return;
+    clearMessages();
+    try {
+      const data = await apiRequest("/api/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_type: sourceType, source_id: sourceId, issued_on: today }) });
+      setNotice(data.message); await loadData(); setView("invoices");
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  function openInvoicePdf(invoiceId) {
+    window.open(`${API_URL}/api/invoices/${invoiceId}/pdf`, "_blank", "noopener,noreferrer");
+  }
+
+  async function saveFiscalConfirmation(invoiceId, creditNoteId = null) {
+    const eor = window.prompt("Vpišite EOR, ki ga je vrnil sistem davčnega potrjevanja:");
+    if (!eor) return;
+    const zoi = window.prompt("Vpišite ZOI (če ga imate):") || null;
+    clearMessages();
+    const path = creditNoteId ? `/api/credit-notes/${creditNoteId}/fiscal-confirmation` : `/api/invoices/${invoiceId}/fiscal-confirmation`;
+    try {
+      const data = await apiRequest(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eor, zoi }) });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function issueCreditNote(invoiceId) {
+    const reason = window.prompt("Razlog za celotni dobropis:");
+    if (!reason) return;
+    if (!window.confirm("Dobropis bo nespremenljivo arhiviran, prvotni račun pa bo ostal v zgodovini. Nadaljujem?")) return;
+    clearMessages();
+    try {
+      const data = await apiRequest(`/api/invoices/${invoiceId}/credit-notes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ issued_on: today, reason }) });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   async function recordPayment(event) {
     event.preventDefault(); clearMessages();
     try {
@@ -431,6 +481,7 @@ function App() {
     ["tasks", "Opravila", "✓"],
     ["economics", "Žetev €", "€"],
     ["orders", "Naročila", "▤"],
+    ["invoices", "Računi", "R"],
     ["reports", "Prodaja", "Σ"],
     ["receivables", "Terjatve", "↔"],
     ["cashflow", "Denar", "◒"],
@@ -445,7 +496,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 0.9</span>
+        <span className="status-pill">MVP 1.0</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -521,9 +572,15 @@ function App() {
           customerForm={customerForm} setCustomerForm={setCustomerForm} createCustomer={createCustomer}
           orderForm={orderForm} setOrderForm={setOrderForm} createOrder={createOrder}
           changeOrderStatus={changeOrderStatus} openOrderDocument={openOrderDocument}
+          issueInvoice={issueInvoice} openInvoicePdf={openInvoicePdf}
           document={document} setDocument={setDocument} retailSales={retailSales}
           quickSaleForm={quickSaleForm} setQuickSaleForm={setQuickSaleForm} createQuickSale={createQuickSale} openRetailDocument={openRetailDocument}
           salesSettings={salesSettings} setSalesSettings={setSalesSettings} saveSalesSettings={saveSalesSettings} />
+      )}
+      {view === "invoices" && (
+        <InvoicesView invoices={invoices} profile={invoiceProfile} setProfile={setInvoiceProfile}
+          saveProfile={saveInvoiceProfile} openPdf={openInvoicePdf}
+          confirmFiscal={saveFiscalConfirmation} issueCreditNote={issueCreditNote} />
       )}
       {view === "reports" && (
         <SalesReportView report={salesReport} start={reportStart} setStart={setReportStart} end={reportEnd} setEnd={setReportEnd} />
@@ -710,7 +767,7 @@ function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setH
   </>;
 }
 
-function OrdersView({ inventory, customers, orders, customerForm, setCustomerForm, createCustomer, orderForm, setOrderForm, createOrder, changeOrderStatus, openOrderDocument, document, setDocument, retailSales, quickSaleForm, setQuickSaleForm, createQuickSale, openRetailDocument, salesSettings, setSalesSettings, saveSalesSettings }) {
+function OrdersView({ inventory, customers, orders, customerForm, setCustomerForm, createCustomer, orderForm, setOrderForm, createOrder, changeOrderStatus, openOrderDocument, issueInvoice, openInvoicePdf, document, setDocument, retailSales, quickSaleForm, setQuickSaleForm, createQuickSale, openRetailDocument, salesSettings, setSalesSettings, saveSalesSettings }) {
   const available = inventory.filter((item) => item.available_kg > 0);
   return <>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prodajna zaloga</p><h2>Na voljo</h2></div><span>{available.reduce((sum, item) => sum + item.available_kg, 0).toFixed(1)} kg</span></div>
@@ -727,7 +784,7 @@ function OrdersView({ inventory, customers, orders, customerForm, setCustomerFor
       </form>
       {salesSettings && <form className="panel compact-form" onSubmit={saveSalesSettings}><h2>Nastavitve prodaje</h2><label className="check-label"><input type="checkbox" checked={salesSettings.basic_agriculture_invoice_exemption} onChange={(e) => setSalesSettings({ ...salesSettings, basic_agriculture_invoice_exemption: e.target.checked })} /> Izjema osnovne kmetijske dejavnosti po 81.a</label><label>Naziv kmetije<input value={salesSettings.seller_name} onChange={(e) => setSalesSettings({ ...salesSettings, seller_name: e.target.value })} required /></label><label>Davčna številka<input value={salesSettings.seller_tax_number || ""} onChange={(e) => setSalesSettings({ ...salesSettings, seller_tax_number: e.target.value || null })} /></label><button className="secondary-button">SHRANI NASTAVITVE</button></form>}
     </section>
-    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Neposredna prodaja</p><h2>Zadnje hitre prodaje</h2></div><span>{retailSales.length} zapisov</span></div><div className="retail-sales-list">{retailSales.map((sale) => <article key={sale.id}><div><strong>{sale.number} · {sale.customer}</strong><span>{sale.sale_date} · {sale.total_eur.toFixed(2)} € · {sale.payment_method === "cash" ? "gotovina" : sale.payment_method === "card" ? "kartica" : "nakazilo"}</span></div><div className="order-actions"><button className="text-button" onClick={() => openRetailDocument(sale.id, "receipt")}>POTRDILO</button>{sale.invoice_required && <button className="secondary-button" onClick={() => openRetailDocument(sale.id, "invoice")}>RAČUN</button>}</div></article>)}</div></section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Neposredna prodaja</p><h2>Zadnje hitre prodaje</h2></div><span>{retailSales.length} zapisov</span></div><div className="retail-sales-list">{retailSales.map((sale) => <article key={sale.id}><div><strong>{sale.number} · {sale.customer}</strong><span>{sale.sale_date} · {sale.total_eur.toFixed(2)} € · {sale.payment_method === "cash" ? "gotovina" : sale.payment_method === "card" ? "kartica" : "nakazilo"}</span></div><div className="order-actions"><button className="text-button" onClick={() => openRetailDocument(sale.id, "receipt")}>POTRDILO</button>{sale.invoice_required && !sale.invoice && <button className="secondary-button" onClick={() => issueInvoice("retail_sale", sale.id)}>IZDAJ RAČUN</button>}{sale.invoice && sale.invoice.fiscal_status !== "pending" && <button className="secondary-button" onClick={() => openInvoicePdf(sale.invoice.id)}>PDF RAČUNA</button>}{sale.invoice?.fiscal_status === "pending" && <span className="fiscal-badge pending">MANJKA EOR</span>}</div></article>)}</div></section>
     <section className="order-entry-grid">
       <form className="panel compact-form" onSubmit={createCustomer}><h2>Nov kupec</h2>
         <label>Vrsta<select value={customerForm.customer_type} onChange={(e) => setCustomerForm({ ...customerForm, customer_type: e.target.value })}><option value="consumer">Končni potrošnik</option><option value="business">Poslovni kupec</option></select></label>
@@ -751,10 +808,35 @@ function OrdersView({ inventory, customers, orders, customerForm, setCustomerFor
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prodajni tok</p><h2>Naročila</h2></div><span>{orders.length} skupaj</span></div>
       <div className="orders-list">{orders.map((order) => <article key={order.id}><div className="order-head"><div><strong>{order.number} · {order.customer}</strong><span>Dostava {order.delivery_date} · {order.total_eur.toFixed(2)} €</span></div><span className={`order-status ${order.status}`}>{order.status === "confirmed" ? "Potrjeno" : order.status === "fulfilled" ? "Dostavljeno" : "Preklicano"}</span></div>
         <div className="order-lines">{order.items.map((item) => <span key={item.id}>{item.crop} {item.variety} · {item.quantity_kg} kg × {item.price_per_kg_eur.toFixed(2)} €</span>)}</div>
-        <div className="order-actions"><button className="text-button" onClick={() => openOrderDocument(order.id, "delivery_note")}>DOBAVNICA</button>{order.status === "fulfilled" && order.customer_type === "business" && <button className="text-button" onClick={() => openOrderDocument(order.id, "invoice")}>RAČUN</button>}{order.status === "confirmed" && <><button className="secondary-button" onClick={() => changeOrderStatus(order.id, "fulfilled")}>DOSTAVLJENO</button><button className="text-button danger-text" onClick={() => changeOrderStatus(order.id, "cancelled")}>PREKLIČI</button></>}</div>
+        <div className="order-actions"><button className="text-button" onClick={() => openOrderDocument(order.id, "delivery_note")}>DOBAVNICA</button>{order.status === "fulfilled" && order.customer_type === "business" && !order.invoice && <button className="secondary-button" onClick={() => issueInvoice("order", order.id)}>IZDAJ RAČUN</button>}{order.invoice && order.invoice.fiscal_status !== "pending" && <button className="text-button" onClick={() => openInvoicePdf(order.invoice.id)}>PDF RAČUNA</button>}{order.invoice?.fiscal_status === "pending" && <span className="fiscal-badge pending">MANJKA EOR</span>}{order.status === "confirmed" && <><button className="secondary-button" onClick={() => changeOrderStatus(order.id, "fulfilled")}>DOSTAVLJENO</button><button className="text-button danger-text" onClick={() => changeOrderStatus(order.id, "cancelled")}>PREKLIČI</button></>}</div>
       </article>)}</div>
     </section>
     {document && (() => { const record = document.order || document.sale; const customer = document.customer || { name: record.customer, address: "" }; return <section className="panel printable-document"><div className="section-heading"><div><p className="eyebrow">{document.document_type === "invoice" ? "Račun" : document.document_type === "delivery_note" ? "Dobavnica" : "Interno potrdilo prodaje"}</p><h2>{document.document_number}</h2></div><div className="order-actions"><button className="secondary-button" onClick={() => window.print()}>NATISNI</button><button className="icon-button" onClick={() => setDocument(null)}>✕</button></div></div>{document.seller && <p><strong>{document.seller.name}</strong><br />{document.seller.tax_number || ""}</p>}<p><strong>Kupec:</strong> {customer.name}<br />{customer.address || ""}</p><div className="document-lines">{record.items.map((item) => <div key={item.id}><span>{item.crop} {item.variety} · {item.quantity_kg} kg</span><strong>{item.line_total_eur.toFixed(2)} €</strong></div>)}</div><div className="document-total">Skupaj <strong>{record.total_eur.toFixed(2)} €</strong></div>{document.fiscal_confirmation_required && <p className="forecast-warning">Ta račun je treba pred uporabo vključiti v ustrezen postopek davčnega potrjevanja.</p>}</section>; })()}
+  </>;
+}
+
+function InvoicesView({ invoices, profile, setProfile, saveProfile, openPdf, confirmFiscal, issueCreditNote }) {
+  const paymentLabel = (value) => ({ bank_transfer: "Nakazilo", cash: "Gotovina", card: "Kartica" }[value] || value);
+  const fiscalLabel = (value) => ({ not_required: "EOR ni potreben", pending: "Čaka EOR", confirmed: "Davčno potrjeno" }[value] || value);
+  return <>
+    {profile && <form className="panel invoice-profile-form" onSubmit={saveProfile}>
+      <div className="section-heading"><div><p className="eyebrow">Glava dokumenta</p><h2>Podatki za račune</h2><p className="muted">Naziv in davčna številka se urejata v nastavitvah prodaje. Ti podatki se ob izdaji zamrznejo.</p></div><button className="secondary-button">SHRANI</button></div>
+      <label>Naslov prodajalca<textarea value={profile.seller_address || ""} onChange={(e) => setProfile({ ...profile, seller_address: e.target.value })} required /></label>
+      <label>IBAN<input value={profile.seller_iban || ""} onChange={(e) => setProfile({ ...profile, seller_iban: e.target.value || null })} /></label>
+      <label>Matična številka<input value={profile.seller_registration_number || ""} onChange={(e) => setProfile({ ...profile, seller_registration_number: e.target.value || null })} /></label>
+      <label>Davčna opomba<input value={profile.vat_note || ""} onChange={(e) => setProfile({ ...profile, vat_note: e.target.value || null })} placeholder="Npr. klavzula glede DDV" /></label>
+      <label>Poslovni prostor<input value={profile.business_premise_code} onChange={(e) => setProfile({ ...profile, business_premise_code: e.target.value })} required /></label>
+      <label>Naprava<input value={profile.device_code} onChange={(e) => setProfile({ ...profile, device_code: e.target.value })} required /></label>
+      <label>Privzeti rok (dni)<input type="number" min="0" max="365" value={profile.default_due_days} onChange={(e) => setProfile({ ...profile, default_due_days: Number(e.target.value) })} required /></label>
+    </form>}
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Nespremenljivi arhiv</p><h2>Izdani računi in dobropisi</h2></div><span>{invoices.length} računov</span></div>
+      <p className="invoice-legal-note">Končni PDF za gotovino ali kartico je odklenjen šele po vpisu EOR. GrowMaster EOR shrani, davčne potrditve pa brez vašega certifikata ne izvaja sam.</p>
+      {invoices.length === 0 ? <p className="empty-state">Račun še ni izdan. Izdate ga pri dostavljenem poslovnem naročilu ali poslovni hitri prodaji.</p> : <div className="invoice-list">{invoices.map((invoice) => <article key={invoice.id} className={invoice.status}>
+        <div className="invoice-main"><div><span className={`fiscal-badge ${invoice.fiscal_status}`}>{fiscalLabel(invoice.fiscal_status)}</span><strong>{invoice.number} · {invoice.customer.name}</strong><span>Izdano {invoice.issued_on} · dobava {invoice.supply_date} · rok {invoice.due_date}</span><span>{paymentLabel(invoice.payment_method)} · {invoice.source_type === "order" ? "naročilo" : "hitra prodaja"} #{invoice.source_id}</span></div><div><strong>{invoice.total_eur.toFixed(2)} €</strong><span>{invoice.status === "credited" ? "Dobropisano" : `${invoice.outstanding_eur.toFixed(2)} € odprto`}</span></div></div>
+        <div className="order-actions">{invoice.fiscal_status === "pending" && <button className="secondary-button" onClick={() => confirmFiscal(invoice.id)}>VPIŠI EOR</button>}{invoice.fiscal_status !== "pending" && <button className="secondary-button" onClick={() => openPdf(invoice.id)}>ODPRI PDF</button>}{invoice.status !== "credited" && <button className="text-button danger-text" onClick={() => issueCreditNote(invoice.id)}>IZDAJ DOBROPIS</button>}</div>
+        {invoice.credit_note && <div className="credit-note-row"><div><strong>{invoice.credit_note.number}</strong><span>{invoice.credit_note.issued_on} · {invoice.credit_note.reason}</span></div><div className="order-actions">{invoice.credit_note.fiscal_status === "pending" ? <button className="secondary-button" onClick={() => confirmFiscal(invoice.id, invoice.credit_note.id)}>VPIŠI EOR DOBROPISA</button> : <a className="secondary-button export-button" href={`${API_URL}/api/credit-notes/${invoice.credit_note.id}/pdf`} target="_blank" rel="noreferrer">PDF DOBROPISA</a>}</div></div>}
+      </article>)}</div>}
+    </section>
   </>;
 }
 
