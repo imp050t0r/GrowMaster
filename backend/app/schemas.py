@@ -109,3 +109,23 @@ class OrderCreate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: Literal["fulfilled", "cancelled"]
+
+
+class CropPlanCreate(BaseModel):
+    bed_id: int
+    crop_id: int
+    variety_id: int
+    sowing_date: date
+    transplant_date: date | None = None
+    expected_yield_kg: float = Field(gt=0, le=100000)
+    succession_count: int = Field(default=1, ge=1, le=20)
+    succession_interval_days: int = Field(default=14, ge=1, le=365)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class CropPlanActivate(BaseModel):
+    override_rotation: bool = False
+
+
+class CropPlanStatusUpdate(BaseModel):
+    status: Literal["cancelled"]
