@@ -37,7 +37,7 @@ button { cursor: pointer; }
   top: 10px;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 8px;
   margin-top: 14px;
   padding: 8px;
@@ -171,6 +171,28 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
 .economics-table > * { min-width: 105px; padding: 12px 10px; border-bottom: 1px solid #e5ece7; }
 .economics-table .positive { color: #17603f; }
 .economics-table .negative { color: #a1372b; }
+.inventory-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.inventory-grid article { display: grid; gap: 5px; padding: 15px; background: #f8fbf9; border: 1px solid #dce7df; border-radius: 13px; }
+.inventory-grid article > span, .inventory-grid small { color: #647a70; font-size: 0.82rem; }
+.inventory-grid article > div { display: grid; gap: 3px; margin-top: 7px; }
+.order-entry-grid { display: grid; grid-template-columns: 0.8fr 2fr; gap: 14px; }
+.order-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; gap: 12px; }
+.order-form h2 { grid-column: 1 / -1; margin: 0 0 4px; }
+.orders-list { display: grid; gap: 12px; }
+.orders-list article { display: grid; gap: 12px; padding: 16px; background: #f8fbf9; border: 1px solid #dce7df; border-radius: 14px; }
+.order-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.order-head > div { display: grid; gap: 4px; }
+.order-head > div span, .order-lines { color: #647a70; font-size: 0.86rem; }
+.order-status { padding: 5px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 900; text-transform: uppercase; }
+.order-status.confirmed { color: #795112; background: #fff0cc; }
+.order-status.fulfilled { color: #17603f; background: #dff3e7; }
+.order-status.cancelled { color: #7c3730; background: #f5dfdc; }
+.order-lines { display: grid; gap: 4px; }
+.order-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.danger-text { color: #a1372b; }
+.document-lines { display: grid; gap: 0; margin-top: 20px; }
+.document-lines > div { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid #dce7df; }
+.document-total { display: flex; justify-content: flex-end; gap: 18px; padding-top: 18px; font-size: 1.2rem; }
 
 @media (max-width: 900px) {
   .planting-form, .task-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -178,6 +200,8 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
   .bed-grid, .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .inline-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .economics-forms { grid-template-columns: 1fr; }
+  .inventory-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .order-entry-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {
@@ -188,7 +212,8 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
   .main-nav { position: fixed; top: auto; right: 8px; bottom: 8px; left: 8px; margin: 0; }
   .main-nav button { display: grid; gap: 1px; min-height: 54px; font-size: 0.72rem; }
   .main-nav button span { font-size: 1.1rem; }
-  .planting-form, .task-form, .inline-form, .bed-grid, .metric-grid, .detail-columns, .completion-form { grid-template-columns: 1fr; }
+  .planting-form, .task-form, .inline-form, .bed-grid, .metric-grid, .detail-columns, .completion-form, .inventory-grid, .order-form { grid-template-columns: 1fr; }
+  .order-form h2 { grid-column: 1; }
   .task-form .wide, .completion-form .wide, .completion-actions { grid-column: span 1; }
   .primary-button { width: 100%; }
   .section-heading { align-items: center; }
@@ -196,4 +221,11 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
   .task-main { grid-template-columns: auto 1fr; }
   .task-state { grid-column: 2; justify-self: start; }
   .completion-actions { flex-direction: column-reverse; }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .printable-document, .printable-document * { visibility: visible; }
+  .printable-document { position: absolute; inset: 0; margin: 0; border: 0; box-shadow: none; }
+  .printable-document button { display: none; }
 }
