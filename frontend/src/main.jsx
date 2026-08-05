@@ -63,6 +63,7 @@ function App() {
   const [workers, setWorkers] = useState([]);
   const [laborReport, setLaborReport] = useState({ summary: {}, by_worker: [], by_bed: [], entries: [], note: "" });
   const [profitabilityReport, setProfitabilityReport] = useState({ summary: {}, by_bed: [], by_crop: [], note: "" });
+  const [farmExpenses, setFarmExpenses] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [reportStart, setReportStart] = useState(today);
@@ -126,6 +127,7 @@ function App() {
   const [supplierPaymentForm, setSupplierPaymentForm] = useState({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" });
   const [workerForm, setWorkerForm] = useState({ name: "", role: "", hourly_rate_eur: "" });
   const [laborForm, setLaborForm] = useState({ worker_id: "", bed_id: "", planting_id: "", work_date: today, duration_minutes: "", hourly_rate_eur: "", description: "" });
+  const [farmExpenseForm, setFarmExpenseForm] = useState({ expense_date: today, category: "fuel", amount_eur: "", payment_method: "cash", supplier: "", reference: "", description: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -137,7 +139,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, profitabilityData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, profitabilityData, farmExpenseData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -165,6 +167,7 @@ function App() {
       apiRequest("/api/workers"),
       apiRequest(`/api/labor-report?start=${laborStart}&end=${laborEnd}`),
       apiRequest(`/api/profitability-report?start=${profitabilityStart}&end=${profitabilityEnd}`),
+      apiRequest(`/api/farm-expenses?start=${profitabilityStart}&end=${profitabilityEnd}`),
       apiRequest("/api/invoices"),
       apiRequest("/api/invoice-profile"),
     ]);
@@ -195,6 +198,7 @@ function App() {
     setWorkers(workerData);
     setLaborReport(laborData);
     setProfitabilityReport(profitabilityData);
+    setFarmExpenses(farmExpenseData);
     setInvoices(invoiceData);
     setInvoiceProfile(invoiceProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
@@ -632,6 +636,24 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
+  async function createFarmExpense(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/farm-expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...farmExpenseForm,
+          amount_eur: Number(farmExpenseForm.amount_eur),
+          supplier: farmExpenseForm.supplier || null,
+          reference: farmExpenseForm.reference || null,
+        }),
+      });
+      setFarmExpenseForm({ ...farmExpenseForm, amount_eur: "", supplier: "", reference: "", description: "" });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   async function createSupplier(event) {
     event.preventDefault(); clearMessages();
     try {
@@ -773,6 +795,7 @@ function App() {
     ["labor", "Delo", "◷"],
     ["economics", "Žetev €", "€"],
     ["profitability", "Analitika", "◎"],
+    ["expenses", "Stroški", "−"],
     ["orders", "Naročila", "▤"],
     ["invoices", "Računi", "R"],
     ["reports", "Prodaja", "Σ"],
@@ -791,7 +814,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.7</span>
+        <span className="status-pill">MVP 1.8</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -872,6 +895,11 @@ function App() {
       {view === "profitability" && (
         <ProfitabilityView data={profitabilityReport}
           start={profitabilityStart} setStart={setProfitabilityStart}
+          end={profitabilityEnd} setEnd={setProfitabilityEnd} />
+      )}
+      {view === "expenses" && (
+        <FarmExpensesView expenses={farmExpenses} form={farmExpenseForm} setForm={setFarmExpenseForm}
+          createExpense={createFarmExpense} start={profitabilityStart} setStart={setProfitabilityStart}
           end={profitabilityEnd} setEnd={setProfitabilityEnd} />
       )}
       {view === "orders" && (
@@ -1172,14 +1200,51 @@ function ProfitabilityView({ data, start, setStart, end, setEnd }) {
     <section className="metric-grid profitability-metrics">
       <article className="metric-card"><span>Dobiček</span><strong className={Number(summary.profit_eur || 0) >= 0 ? "positive" : "negative"}>{money(summary.profit_eur)}</strong><small>marža {ratio(summary.margin_pct, "%")}</small></article>
       <article className="metric-card"><span>Neto prihodki</span><strong>{money(summary.net_revenue_eur)}</strong><small>bruto {money(summary.gross_revenue_eur)} · dobropisi {money(summary.credit_notes_eur)}</small></article>
-      <article className="metric-card"><span>Skupni stroški</span><strong>{money(summary.costs_eur)}</strong><small>{money(summary.direct_costs_eur)} neposredno · {money(summary.material_costs_eur)} material · {money(summary.labor_costs_eur)} delo</small></article>
+      <article className="metric-card"><span>Skupni stroški</span><strong>{money(summary.costs_eur)}</strong><small>{money(summary.direct_costs_eur)} neposredno · {money(summary.material_costs_eur)} material · {money(summary.labor_costs_eur)} delo · {money(summary.overhead_costs_eur)} splošno</small></article>
       <article className="metric-card"><span>Žetev</span><strong>{Number(summary.harvested_kg || 0).toFixed(2)} kg</strong><small>{Number(summary.sold_kg || 0).toFixed(2)} kg prodano · {ratio(summary.harvest_kg_m2, "kg/m²")}</small></article>
       <article className="metric-card"><span>Rezultat na površino</span><strong>{ratio(summary.profit_eur_m2, "€/m²")}</strong><small>{Number(summary.active_area_m2 || 0).toFixed(2)} m² aktivnih · prihodek {ratio(summary.revenue_eur_m2, "€/m²")}</small></article>
       <article className="metric-card"><span>Učinek dela</span><strong>{ratio(summary.profit_eur_per_labor_hour, "€/h")}</strong><small>{Number(summary.labor_hours || 0).toFixed(2)} ur evidentiranega dela</small></article>
     </section>
-    {Number(summary.unallocated_costs_eur || 0) > 0 && <aside className="allocation-note"><strong>{money(summary.unallocated_costs_eur)} stroškov ni pripisanih setvi.</strong><span>V skupnem rezultatu so vključeni, pri kulturah pa ne; pri gredicah se pokažejo, kadar je bila gredica izbrana. Od tega {money(summary.unallocated_direct_costs_eur)} neposrednih, {money(summary.unallocated_material_costs_eur)} materiala in {money(summary.unallocated_labor_costs_eur)} dela.</span></aside>}
+    {Number(summary.unallocated_costs_eur || 0) > 0 && <aside className="allocation-note"><strong>{money(summary.unallocated_costs_eur)} stroškov ni pripisanih setvi.</strong><span>V skupnem rezultatu so vključeni, pri kulturah pa ne; pri gredicah se pokažejo, kadar je bila gredica izbrana. Od tega {money(summary.unallocated_direct_costs_eur)} neposrednih, {money(summary.unallocated_material_costs_eur)} materiala, {money(summary.unallocated_labor_costs_eur)} dela in {money(summary.unallocated_overhead_costs_eur)} splošnih stroškov kmetije.</span></aside>}
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Po površinah</p><h2>Rezultat po gredicah</h2></div><span>{data.by_bed.length} aktivnih</span></div><ProfitabilityTable rows={data.by_bed} nameKey="bed" /></section>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Po pridelkih</p><h2>Rezultat po kulturah</h2><p className="muted">Površina iste setve se pri kulturi upošteva samo enkrat, tudi če ima več žetev ali prodaj.</p></div><span>{data.by_crop.length} kultur</span></div><ProfitabilityTable rows={data.by_crop} nameKey="crop" /></section>
+  </>;
+}
+
+function FarmExpensesView({ expenses, form, setForm, createExpense, start, setStart, end, setEnd }) {
+  const categoryLabels = { fuel: "Gorivo", utilities: "Elektrika in voda", rent: "Najemnina", insurance: "Zavarovanje", maintenance: "Vzdrževanje", administration: "Administracija", other: "Drugo" };
+  const methodLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
+  const total = expenses.reduce((sum, item) => sum + item.amount_eur, 0);
+  const byMethod = (method) => expenses.filter((item) => item.payment_method === method).reduce((sum, item) => sum + item.amount_eur, 0);
+  return <>
+    <section className="panel report-heading">
+      <div><p className="eyebrow">Stroški celotne kmetije</p><h2>Splošni stroški</h2><p className="muted">Sem vnesi gorivo, elektriko, najemnino, zavarovanje in podobne stroške, ki ne pripadajo eni gredici. Nabavljenega materiala ali stroška določene gredice tu ne vnašaj še enkrat.</p></div>
+      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label></div>
+    </section>
+    <section className="metric-grid farm-expense-metrics">
+      <article className="metric-card"><span>Skupaj</span><strong>{total.toFixed(2)} €</strong><small>{expenses.length} evidentiranih stroškov</small></article>
+      <article className="metric-card"><span>Gotovina</span><strong>{byMethod("cash").toFixed(2)} €</strong><small>zmanjša pričakovano gotovino ob zaključku dneva</small></article>
+      <article className="metric-card"><span>Kartica in nakazila</span><strong>{(byMethod("card") + byMethod("bank_transfer")).toFixed(2)} €</strong><small>kartica {byMethod("card").toFixed(2)} € · nakazila {byMethod("bank_transfer").toFixed(2)} €</small></article>
+    </section>
+    <section className="farm-expense-grid">
+      <form className="panel farm-expense-form" onSubmit={createExpense}>
+        <div className="section-heading"><div><p className="eyebrow">Nov odliv</p><h2>Dodaj splošni strošek</h2></div></div>
+        <div className="farm-expense-fields">
+          <label>Datum<input type="date" value={form.expense_date} onChange={(e) => setForm({ ...form, expense_date: e.target.value })} required /></label>
+          <label>Vrsta<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Znesek (€)<input type="number" min="0.01" step="0.01" value={form.amount_eur} onChange={(e) => setForm({ ...form, amount_eur: e.target.value })} required /></label>
+          <label>Način plačila<select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>{Object.entries(methodLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label>Dobavitelj<input value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })} placeholder="Neobvezno" /></label>
+          <label>Številka listine<input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="Npr. račun ali potrdilo" /></label>
+          <label className="wide">Opis<input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Kaj je bilo plačano?" required /></label>
+        </div>
+        <button className="primary-button">SHRANI STROŠEK</button>
+      </form>
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Izbrano obdobje</p><h2>Zgodovina stroškov</h2></div><span>{expenses.length} zapisov</span></div>
+        {expenses.length === 0 ? <p className="empty-state">V izbranem obdobju ni splošnih stroškov.</p> : <div className="farm-expense-list">{expenses.map((item) => <article key={item.id}><div><strong>{item.description}</strong><span>{item.expense_date} · {categoryLabels[item.category] || item.category} · {methodLabels[item.payment_method] || item.payment_method}</span>{(item.supplier || item.reference) && <small>{item.supplier || "Brez dobavitelja"}{item.reference ? ` · ${item.reference}` : ""}</small>}</div><strong>{item.amount_eur.toFixed(2)} €</strong></article>)}</div>}
+      </section>
+    </section>
   </>;
 }
 
@@ -1307,9 +1372,9 @@ function ReceivablesView({ data, asOf, setAsOf, includePaid, setIncludePaid, pay
 
 function CashFlowView({ data, start, setStart, end, setEnd }) {
   const summary = data.summary || {};
-  const categoryLabels = { seed: "Seme", labor: "Delo", fertilizer: "Gnojila", water: "Voda", packaging: "Embalaža", purchasing: "Plačila dobaviteljem", other: "Drugo" };
+  const categoryLabels = { seed: "Seme", labor: "Delo", fertilizer: "Gnojila", water: "Voda", packaging: "Embalaža", purchasing: "Plačila dobaviteljem", fuel: "Gorivo", utilities: "Elektrika in voda", rent: "Najemnina", insurance: "Zavarovanje", maintenance: "Vzdrževanje", administration: "Administracija", other: "Drugo" };
   const methodLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
-  const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek", refund: "vračilo kupcu", supplier_payment: "plačilo dobavitelju" }[source] || source);
+  const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek", farm_expense: "splošni strošek", refund: "vračilo kupcu", supplier_payment: "plačilo dobavitelju" }[source] || source);
   return <>
     <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/cash-flow/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div></section>
     <section className="metric-grid cashflow-metrics">
@@ -1335,13 +1400,13 @@ function DayCloseView({ closes, preview, form, setForm, closeDay }) {
   const money = (amount) => `${(amount || 0).toFixed(2)} €`;
   return <>
     <section className="panel day-close-heading">
-      <div><p className="eyebrow">Konec prodajnega dne</p><h2>Dnevni zaključek</h2><p className="muted">Seštevek hitrih prodaj, prejetih plačil računov in vračil kupcem. Zaključek shrani nespremenljiv posnetek in zaklene nove denarne vnose za izbrani datum.</p></div>
+      <div><p className="eyebrow">Konec prodajnega dne</p><h2>Dnevni zaključek</h2><p className="muted">Seštevek prodaje, prejetih plačil, vračil, dobaviteljev in splošnih stroškov. Zaključek shrani nespremenljiv posnetek in zaklene nove denarne vnose za izbrani datum.</p></div>
       {value.closed && <span className="closed-day-badge">✓ DAN ZAKLJUČEN</span>}
     </section>
     <section className="metric-grid day-close-metrics">
       <article className="metric-card"><span>Prilivi</span><strong className="positive">{money(value.total_inflow_eur)}</strong><small>{value.retail_sale_count || 0} hitrih prodaj · {value.payment_count || 0} plačil računov</small></article>
-      <article className="metric-card"><span>Odlivi</span><strong className="negative">{money(value.total_outflow_eur)}</strong><small>{value.refund_count || 0} vračil · {value.supplier_payment_count || 0} plačil dobaviteljem</small></article>
-      <article className="metric-card"><span>Pričakovana gotovina</span><strong>{money(value.expected_cash_eur)}</strong><small>začetna + prilivi − vračila − dobavitelji</small></article>
+      <article className="metric-card"><span>Odlivi</span><strong className="negative">{money(value.total_outflow_eur)}</strong><small>{value.refund_count || 0} vračil · {value.supplier_payment_count || 0} plačil dobaviteljem · {value.farm_expense_count || 0} splošnih stroškov</small></article>
+      <article className="metric-card"><span>Pričakovana gotovina</span><strong>{money(value.expected_cash_eur)}</strong><small>začetna + prilivi − vsi gotovinski odlivi</small></article>
       <article className="metric-card"><span>Razlika v blagajni</span><strong className={(value.closed ? value.difference_eur : liveDifference) < 0 ? "negative" : "positive"}>{value.closed ? money(value.difference_eur) : liveDifference === null ? "—" : money(liveDifference)}</strong><small>prešteto minus pričakovano</small></article>
     </section>
     <section className="day-close-grid">
@@ -1355,15 +1420,15 @@ function DayCloseView({ closes, preview, form, setForm, closeDay }) {
       </form>
       <section className="panel payment-breakdown">
         <div className="section-heading"><div><p className="eyebrow">Po načinu plačila</p><h2>Kontrolni seštevek</h2></div></div>
-        <article><span>Gotovina</span><strong>+{money(value.cash_in_eur)} / −{money((value.cash_refund_eur || 0) + (value.cash_supplier_payment_eur || 0))}</strong></article>
-        <article><span>Kartice</span><strong>+{money(value.card_in_eur)} / −{money((value.card_refund_eur || 0) + (value.card_supplier_payment_eur || 0))}</strong></article>
-        <article><span>Nakazila</span><strong>+{money(value.bank_transfer_in_eur)} / −{money((value.bank_transfer_refund_eur || 0) + (value.bank_transfer_supplier_payment_eur || 0))}</strong></article>
-        <p className="day-close-note">Odlivi vključujejo vračila kupcem in dejanska plačila dobaviteljem. Stare ročno vnesene stroške brez načina plačila še vedno prikazuje samo denarni tok.</p>
+        <article><span>Gotovina</span><strong>+{money(value.cash_in_eur)} / −{money((value.cash_refund_eur || 0) + (value.cash_supplier_payment_eur || 0) + (value.cash_farm_expense_eur || 0))}</strong></article>
+        <article><span>Kartice</span><strong>+{money(value.card_in_eur)} / −{money((value.card_refund_eur || 0) + (value.card_supplier_payment_eur || 0) + (value.card_farm_expense_eur || 0))}</strong></article>
+        <article><span>Nakazila</span><strong>+{money(value.bank_transfer_in_eur)} / −{money((value.bank_transfer_refund_eur || 0) + (value.bank_transfer_supplier_payment_eur || 0) + (value.bank_transfer_farm_expense_eur || 0))}</strong></article>
+        <p className="day-close-note">Odlivi vključujejo vračila kupcem, dejanska plačila dobaviteljem in splošne stroške kmetije. Stare ročno vnesene stroške brez načina plačila še vedno prikazuje samo denarni tok.</p>
       </section>
     </section>
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Nespremenljiva zgodovina</p><h2>Pretekli zaključki</h2></div><span>{closes.length} zapisov</span></div>
-      {closes.length === 0 ? <p className="empty-state">Zaključen ni še noben poslovni dan.</p> : <div className="day-close-history">{closes.map((item) => <article key={item.id}><div><time>{item.business_date}</time><span>{item.retail_sale_count} hitrih prodaj · {item.payment_count} prejetih plačil · {item.refund_count} vračil · {item.supplier_payment_count || 0} plačil dobaviteljem</span></div><div><span>Pričakovano {money(item.expected_cash_eur)}</span><strong className={item.difference_eur < 0 ? "negative" : "positive"}>{item.difference_eur >= 0 ? "+" : ""}{money(item.difference_eur)}</strong></div></article>)}</div>}
+      {closes.length === 0 ? <p className="empty-state">Zaključen ni še noben poslovni dan.</p> : <div className="day-close-history">{closes.map((item) => <article key={item.id}><div><time>{item.business_date}</time><span>{item.retail_sale_count} hitrih prodaj · {item.payment_count} prejetih plačil · {item.refund_count} vračil · {item.supplier_payment_count || 0} plačil dobaviteljem · {item.farm_expense_count || 0} splošnih stroškov</span></div><div><span>Pričakovano {money(item.expected_cash_eur)}</span><strong className={item.difference_eur < 0 ? "negative" : "positive"}>{item.difference_eur >= 0 ? "+" : ""}{money(item.difference_eur)}</strong></div></article>)}</div>}
     </section>
   </>;
 }

@@ -21,9 +21,11 @@ from app.models import (
     CustomerProfile,
     CreditNote,
     DayClose,
+    DayCloseFarmExpenseSnapshot,
     DayCloseSupplierPaymentSnapshot,
     DocumentSequence,
     Farm,
+    FarmExpense,
     Harvest,
     Invoice,
     InvoiceLine,
@@ -59,6 +61,7 @@ from app.schemas import (
     CustomerCreate,
     CreditNoteCreate,
     DayCloseCreate,
+    FarmExpenseCreate,
     FiscalConfirmationCreate,
     HarvestCreate,
     InvoiceCreate,
@@ -98,7 +101,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.7.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.8.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -872,6 +875,7 @@ def profitability_row(row: dict) -> dict:
     net_revenue_eur = row["gross_revenue_eur"] - row["credit_notes_eur"]
     costs_eur = (
         row["direct_costs_eur"]
+        + row["overhead_costs_eur"]
         + row["material_costs_eur"]
         + row["labor_costs_eur"]
     )
@@ -890,6 +894,7 @@ def profitability_row(row: dict) -> dict:
         "credit_notes_eur": round(row["credit_notes_eur"], 2),
         "net_revenue_eur": round(net_revenue_eur, 2),
         "direct_costs_eur": round(row["direct_costs_eur"], 2),
+        "overhead_costs_eur": round(row["overhead_costs_eur"], 2),
         "material_costs_eur": round(row["material_costs_eur"], 2),
         "labor_costs_eur": round(row["labor_costs_eur"], 2),
         "costs_eur": round(costs_eur, 2),
@@ -960,6 +965,13 @@ def build_profitability_report(
             selectinload(Cost.planting).selectinload(Planting.crop),
         )
     ).all()
+    farm_expenses = db.scalars(
+        select(FarmExpense).where(
+            FarmExpense.farm_id == DEFAULT_FARM_ID,
+            FarmExpense.expense_date >= range_start,
+            FarmExpense.expense_date <= range_end,
+        )
+    ).all()
     usages = db.scalars(
         select(SupplyUsage)
         .where(
@@ -1003,6 +1015,7 @@ def build_profitability_report(
             "gross_revenue_eur": 0.0,
             "credit_notes_eur": 0.0,
             "direct_costs_eur": 0.0,
+            "overhead_costs_eur": 0.0,
             "material_costs_eur": 0.0,
             "labor_costs_eur": 0.0,
             "labor_minutes": 0,
@@ -1116,6 +1129,7 @@ def build_profitability_report(
     finalized_crops.sort(key=lambda row: row["crop"])
 
     direct_costs_eur = sum(cost.amount_eur for cost in costs)
+    overhead_costs_eur = sum(expense.amount_eur for expense in farm_expenses)
     material_costs_eur = sum(usage.total_cost_eur for usage in usages)
     labor_costs_eur = sum(entry.total_cost_eur for entry in labor_entries)
     gross_revenue_eur = sum(
@@ -1123,7 +1137,12 @@ def build_profitability_report(
     )
     credit_notes_eur = sum(note.total_eur for note in credit_notes)
     net_revenue_eur = gross_revenue_eur - credit_notes_eur
-    costs_eur = direct_costs_eur + material_costs_eur + labor_costs_eur
+    costs_eur = (
+        direct_costs_eur
+        + overhead_costs_eur
+        + material_costs_eur
+        + labor_costs_eur
+    )
     profit_eur = net_revenue_eur - costs_eur
     labor_minutes = sum(entry.duration_minutes for entry in labor_entries)
     labor_hours = labor_minutes / 60
@@ -1147,6 +1166,7 @@ def build_profitability_report(
             "credit_notes_eur": round(credit_notes_eur, 2),
             "net_revenue_eur": round(net_revenue_eur, 2),
             "direct_costs_eur": round(direct_costs_eur, 2),
+            "overhead_costs_eur": round(overhead_costs_eur, 2),
             "material_costs_eur": round(material_costs_eur, 2),
             "labor_costs_eur": round(labor_costs_eur, 2),
             "costs_eur": round(costs_eur, 2),
@@ -1174,9 +1194,13 @@ def build_profitability_report(
             "unallocated_material_costs_eur": round(unallocated_material, 2),
             "unallocated_labor_costs_eur": round(unallocated_labor, 2),
             "unallocated_costs_eur": round(
-                unallocated_direct + unallocated_material + unallocated_labor,
+                unallocated_direct
+                + unallocated_material
+                + unallocated_labor
+                + overhead_costs_eur,
                 2,
             ),
+            "unallocated_overhead_costs_eur": round(overhead_costs_eur, 2),
             "unallocated_credit_notes_eur": round(
                 unallocated_credit_notes_eur, 2
             ),
@@ -1187,6 +1211,8 @@ def build_profitability_report(
             "Prihodki sledijo datumu prodaje, dobropisi datumu izdaje, stroški pa "
             "datumu posameznega vnosa. Poročilo po kulturah vključuje samo stroške, "
             "pripisane konkretni setvi; preostanek je prikazan kot nealokiran. "
+            "Splošni stroški kmetije znižajo skupni dobiček, ne pa rezultata "
+            "posamezne gredice ali kulture. "
             "Dobiček je poslovni rezultat in ni enak denarnemu toku."
         ),
     }
@@ -1222,6 +1248,7 @@ def export_profitability_report(
             "Dobropisi EUR",
             "Neto prihodki EUR",
             "Neposredni stroški EUR",
+            "Splošni stroški EUR",
             "Material EUR",
             "Delo EUR",
             "Skupni stroški EUR",
@@ -1231,6 +1258,37 @@ def export_profitability_report(
             "Dobiček EUR/m2",
             "Ure dela",
             "Dobiček EUR/uro",
+        ]
+    )
+    summary = report["summary"]
+    writer.writerow(
+        [
+            "Skupaj",
+            "Kmetija",
+            summary["active_area_m2"],
+            "",
+            summary["harvested_kg"],
+            summary["sold_kg"],
+            summary["gross_revenue_eur"],
+            summary["credit_notes_eur"],
+            summary["net_revenue_eur"],
+            summary["direct_costs_eur"],
+            summary["overhead_costs_eur"],
+            summary["material_costs_eur"],
+            summary["labor_costs_eur"],
+            summary["costs_eur"],
+            summary["profit_eur"],
+            summary["margin_pct"] if summary["margin_pct"] is not None else "",
+            summary["harvest_kg_m2"]
+            if summary["harvest_kg_m2"] is not None
+            else "",
+            summary["profit_eur_m2"]
+            if summary["profit_eur_m2"] is not None
+            else "",
+            summary["labor_hours"],
+            summary["profit_eur_per_labor_hour"]
+            if summary["profit_eur_per_labor_hour"] is not None
+            else "",
         ]
     )
     for row_type, rows, name_key in (
@@ -1250,6 +1308,7 @@ def export_profitability_report(
                     row["credit_notes_eur"],
                     row["net_revenue_eur"],
                     row["direct_costs_eur"],
+                    row["overhead_costs_eur"],
                     row["material_costs_eur"],
                     row["labor_costs_eur"],
                     row["costs_eur"],
@@ -1351,6 +1410,66 @@ def create_cost(payload: CostCreate, db: Session = Depends(get_db)) -> dict:
     db.commit()
     db.refresh(cost)
     return {"message": "Strošek je zabeležen.", **serialize_cost(cost)}
+
+
+def serialize_farm_expense(expense: FarmExpense) -> dict:
+    return {
+        "id": expense.id,
+        "expense_date": expense.expense_date,
+        "category": expense.category,
+        "amount_eur": round(expense.amount_eur, 2),
+        "payment_method": expense.payment_method,
+        "supplier": expense.supplier,
+        "reference": expense.reference,
+        "description": expense.description,
+    }
+
+
+@app.get("/api/farm-expenses")
+def list_farm_expenses(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    range_start, range_end = profitability_range(start, end)
+    expenses = db.scalars(
+        select(FarmExpense)
+        .where(
+            FarmExpense.farm_id == DEFAULT_FARM_ID,
+            FarmExpense.expense_date >= range_start,
+            FarmExpense.expense_date <= range_end,
+        )
+        .order_by(FarmExpense.expense_date.desc(), FarmExpense.id.desc())
+    ).all()
+    return [serialize_farm_expense(expense) for expense in expenses]
+
+
+@app.post("/api/farm-expenses", status_code=status.HTTP_201_CREATED)
+def create_farm_expense(
+    payload: FarmExpenseCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    ensure_business_day_open(db, payload.expense_date)
+    description = payload.description.strip()
+    if not description:
+        raise HTTPException(status_code=422, detail="Opis stroška je obvezen.")
+    expense = FarmExpense(
+        farm_id=DEFAULT_FARM_ID,
+        expense_date=payload.expense_date,
+        category=payload.category,
+        amount_eur=round(payload.amount_eur, 2),
+        payment_method=payload.payment_method,
+        supplier=payload.supplier.strip() if payload.supplier else None,
+        reference=payload.reference.strip() if payload.reference else None,
+        description=description,
+    )
+    db.add(expense)
+    db.commit()
+    db.refresh(expense)
+    return {
+        "message": "Splošni strošek kmetije je evidentiran.",
+        **serialize_farm_expense(expense),
+    }
 
 
 @app.get("/api/sales")
@@ -3461,6 +3580,13 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
         )
         .options(selectinload(Cost.bed))
     ).all()
+    farm_expenses = db.scalars(
+        select(FarmExpense).where(
+            FarmExpense.farm_id == DEFAULT_FARM_ID,
+            FarmExpense.expense_date >= range_start,
+            FarmExpense.expense_date <= range_end,
+        )
+    ).all()
     refunds = db.scalars(
         select(Refund)
         .where(
@@ -3530,6 +3656,22 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
                 "method": None,
                 "category": cost.category,
                 "amount_eur": round(cost.amount_eur, 2),
+            }
+        )
+    for expense in farm_expenses:
+        entries.append(
+            {
+                "key": f"farm-expense-{expense.id}",
+                "date": expense.expense_date,
+                "direction": "outflow",
+                "source": "farm_expense",
+                "reference": expense.reference
+                or f"SK-{expense.expense_date.year}-{expense.id:04d}",
+                "party": expense.supplier or "Kmetija",
+                "description": expense.description,
+                "method": expense.payment_method,
+                "category": expense.category,
+                "amount_eur": round(expense.amount_eur, 2),
             }
         )
     for refund in refunds:
@@ -3649,7 +3791,7 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
         "note": (
             "Denarni tok vključuje poravnane hitre prodaje, dejansko evidentirana "
             "plačila računov, dejanska vračila po dobropisih, plačila dobaviteljem "
-            "in neposredne stroške. Vračilo "
+            "ter neposredne in splošne stroške kmetije. Vračilo "
             "je odliv na datum vračila, vendar ni poslovni strošek gredice. "
             "Izdani računi brez plačila ter stare ročne prodaje brez načina plačila "
             "niso vključeni."
@@ -3741,6 +3883,12 @@ def build_day_close_preview(
             SupplierPayment.payment_date == business_date,
         )
     ).all()
+    farm_expenses = db.scalars(
+        select(FarmExpense).where(
+            FarmExpense.farm_id == DEFAULT_FARM_ID,
+            FarmExpense.expense_date == business_date,
+        )
+    ).all()
     methods = ("cash", "card", "bank_transfer")
     inflow_by_method = {
         method: round(
@@ -3780,9 +3928,21 @@ def build_day_close_preview(
         )
         for method in methods
     }
+    farm_expense_out_by_method = {
+        method: round(
+            sum(
+                expense.amount_eur
+                for expense in farm_expenses
+                if expense.payment_method == method
+            ),
+            2,
+        )
+        for method in methods
+    }
     total_inflow_eur = round(sum(inflow_by_method.values()), 2)
     total_refund_eur = round(sum(refund_by_method.values()), 2)
     total_supplier_payment_eur = round(sum(supplier_out_by_method.values()), 2)
+    total_farm_expense_eur = round(sum(farm_expense_out_by_method.values()), 2)
     opening_cash_eur = round(opening_cash_eur, 2)
     return {
         "business_date": business_date,
@@ -3798,32 +3958,47 @@ def build_day_close_preview(
         "bank_transfer_supplier_payment_eur": supplier_out_by_method[
             "bank_transfer"
         ],
+        "cash_farm_expense_eur": farm_expense_out_by_method["cash"],
+        "card_farm_expense_eur": farm_expense_out_by_method["card"],
+        "bank_transfer_farm_expense_eur": farm_expense_out_by_method[
+            "bank_transfer"
+        ],
         "total_inflow_eur": total_inflow_eur,
         "total_refund_eur": total_refund_eur,
         "total_supplier_payment_eur": total_supplier_payment_eur,
+        "total_farm_expense_eur": total_farm_expense_eur,
         "total_outflow_eur": round(
-            total_refund_eur + total_supplier_payment_eur, 2
+            total_refund_eur
+            + total_supplier_payment_eur
+            + total_farm_expense_eur,
+            2,
         ),
         "net_receipts_eur": round(
-            total_inflow_eur - total_refund_eur - total_supplier_payment_eur,
+            total_inflow_eur
+            - total_refund_eur
+            - total_supplier_payment_eur
+            - total_farm_expense_eur,
             2,
         ),
         "expected_cash_eur": round(
             opening_cash_eur
             + inflow_by_method["cash"]
             - refund_by_method["cash"]
-            - supplier_out_by_method["cash"],
+            - supplier_out_by_method["cash"]
+            - farm_expense_out_by_method["cash"],
             2,
         ),
         "retail_sale_count": len(retail_sales),
         "payment_count": len(payments),
         "refund_count": len(refunds),
         "supplier_payment_count": len(supplier_payments),
+        "farm_expense_count": len(farm_expenses),
     }
 
 
 def serialize_day_close(day_close: DayClose) -> dict:
     snapshot = day_close.supplier_payment_snapshot
+    expense_snapshot = day_close.farm_expense_snapshot
     cash_supplier_payment_eur = snapshot.cash_out_eur if snapshot else 0
     card_supplier_payment_eur = snapshot.card_out_eur if snapshot else 0
     bank_supplier_payment_eur = snapshot.bank_transfer_out_eur if snapshot else 0
@@ -3831,6 +4006,17 @@ def serialize_day_close(day_close: DayClose) -> dict:
         cash_supplier_payment_eur
         + card_supplier_payment_eur
         + bank_supplier_payment_eur,
+        2,
+    )
+    cash_farm_expense_eur = expense_snapshot.cash_out_eur if expense_snapshot else 0
+    card_farm_expense_eur = expense_snapshot.card_out_eur if expense_snapshot else 0
+    bank_farm_expense_eur = (
+        expense_snapshot.bank_transfer_out_eur if expense_snapshot else 0
+    )
+    total_farm_expense_eur = round(
+        cash_farm_expense_eur
+        + card_farm_expense_eur
+        + bank_farm_expense_eur,
         2,
     )
     return {
@@ -3846,16 +4032,24 @@ def serialize_day_close(day_close: DayClose) -> dict:
         "cash_supplier_payment_eur": cash_supplier_payment_eur,
         "card_supplier_payment_eur": card_supplier_payment_eur,
         "bank_transfer_supplier_payment_eur": bank_supplier_payment_eur,
+        "cash_farm_expense_eur": cash_farm_expense_eur,
+        "card_farm_expense_eur": card_farm_expense_eur,
+        "bank_transfer_farm_expense_eur": bank_farm_expense_eur,
         "total_inflow_eur": day_close.total_inflow_eur,
         "total_refund_eur": day_close.total_refund_eur,
         "total_supplier_payment_eur": total_supplier_payment_eur,
+        "total_farm_expense_eur": total_farm_expense_eur,
         "total_outflow_eur": round(
-            day_close.total_refund_eur + total_supplier_payment_eur, 2
+            day_close.total_refund_eur
+            + total_supplier_payment_eur
+            + total_farm_expense_eur,
+            2,
         ),
         "net_receipts_eur": round(
             day_close.total_inflow_eur
             - day_close.total_refund_eur
-            - total_supplier_payment_eur,
+            - total_supplier_payment_eur
+            - total_farm_expense_eur,
             2,
         ),
         "expected_cash_eur": day_close.expected_cash_eur,
@@ -3865,6 +4059,9 @@ def serialize_day_close(day_close: DayClose) -> dict:
         "payment_count": day_close.payment_count,
         "refund_count": day_close.refund_count,
         "supplier_payment_count": snapshot.payment_count if snapshot else 0,
+        "farm_expense_count": expense_snapshot.expense_count
+        if expense_snapshot
+        else 0,
         "notes": day_close.notes,
         "closed_at": day_close.closed_at,
     }
@@ -3875,7 +4072,10 @@ def list_day_closes(db: Session = Depends(get_db)) -> list[dict]:
     closes = db.scalars(
         select(DayClose)
         .where(DayClose.farm_id == DEFAULT_FARM_ID)
-        .options(selectinload(DayClose.supplier_payment_snapshot))
+        .options(
+            selectinload(DayClose.supplier_payment_snapshot),
+            selectinload(DayClose.farm_expense_snapshot),
+        )
         .order_by(DayClose.business_date.desc(), DayClose.id.desc())
     ).all()
     return [serialize_day_close(day_close) for day_close in closes]
@@ -3893,7 +4093,10 @@ def day_close_preview(
             DayClose.farm_id == DEFAULT_FARM_ID,
             DayClose.business_date == business_date,
         )
-        .options(selectinload(DayClose.supplier_payment_snapshot))
+        .options(
+            selectinload(DayClose.supplier_payment_snapshot),
+            selectinload(DayClose.farm_expense_snapshot),
+        )
     )
     if existing:
         return {"closed": True, **serialize_day_close(existing)}
@@ -3949,6 +4152,12 @@ def close_business_day(
                 "bank_transfer_supplier_payment_eur"
             ],
             payment_count=preview["supplier_payment_count"],
+        ),
+        farm_expense_snapshot=DayCloseFarmExpenseSnapshot(
+            cash_out_eur=preview["cash_farm_expense_eur"],
+            card_out_eur=preview["card_farm_expense_eur"],
+            bank_transfer_out_eur=preview["bank_transfer_farm_expense_eur"],
+            expense_count=preview["farm_expense_count"],
         ),
     )
     db.add(day_close)

@@ -50,6 +50,7 @@ class Farm(Base):
     )
     workers: Mapped[list["Worker"]] = relationship(back_populates="farm")
     labor_entries: Mapped[list["LaborEntry"]] = relationship(back_populates="farm")
+    farm_expenses: Mapped[list["FarmExpense"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -466,6 +467,25 @@ class SupplierPayment(Base):
     purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="payments")
 
 
+class FarmExpense(Base):
+    __tablename__ = "farm_expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    expense_date: Mapped[date] = mapped_column(Date, index=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    amount_eur: Mapped[float] = mapped_column(Float)
+    payment_method: Mapped[str] = mapped_column(String(20))
+    supplier: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    description: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="farm_expenses")
+
+
 class Worker(Base):
     __tablename__ = "workers"
     __table_args__ = (
@@ -594,6 +614,13 @@ class DayClose(Base):
             uselist=False,
         )
     )
+    farm_expense_snapshot: Mapped["DayCloseFarmExpenseSnapshot | None"] = (
+        relationship(
+            back_populates="day_close",
+            cascade="all, delete-orphan",
+            uselist=False,
+        )
+    )
 
 
 class DayCloseSupplierPaymentSnapshot(Base):
@@ -609,6 +636,22 @@ class DayCloseSupplierPaymentSnapshot(Base):
 
     day_close: Mapped[DayClose] = relationship(
         back_populates="supplier_payment_snapshot"
+    )
+
+
+class DayCloseFarmExpenseSnapshot(Base):
+    __tablename__ = "day_close_farm_expense_snapshots"
+
+    day_close_id: Mapped[int] = mapped_column(
+        ForeignKey("day_closes.id", ondelete="CASCADE"), primary_key=True
+    )
+    cash_out_eur: Mapped[float] = mapped_column(Float, default=0)
+    card_out_eur: Mapped[float] = mapped_column(Float, default=0)
+    bank_transfer_out_eur: Mapped[float] = mapped_column(Float, default=0)
+    expense_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    day_close: Mapped[DayClose] = relationship(
+        back_populates="farm_expense_snapshot"
     )
 
 
