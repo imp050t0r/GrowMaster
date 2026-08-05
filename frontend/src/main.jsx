@@ -5,6 +5,10 @@ import "./styles.css";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const now = new Date();
 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+const inDays = (days) => {
+  const value = new Date(now); value.setDate(value.getDate() + days);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+};
 
 const taskTypeLabels = {
   general: "Splošno",
@@ -39,6 +43,11 @@ function App() {
   const [customers, setCustomers] = useState([]);
   const [orders, setOrders] = useState([]);
   const [document, setDocument] = useState(null);
+  const [plans, setPlans] = useState([]);
+  const [planningCalendar, setPlanningCalendar] = useState([]);
+  const [forecast, setForecast] = useState({ rows: [], warnings: [] });
+  const [planStart, setPlanStart] = useState(today);
+  const [planEnd, setPlanEnd] = useState(inDays(90));
   const [taskDate, setTaskDate] = useState(today);
   const [selectedBed, setSelectedBed] = useState(null);
   const [notice, setNotice] = useState("");
@@ -71,14 +80,19 @@ function App() {
   const [saleForm, setSaleForm] = useState({ harvest_id: "", sale_date: today, quantity_kg: "", price_per_kg_eur: "", customer: "" });
   const [customerForm, setCustomerForm] = useState({ name: "", email: "", phone: "", address: "" });
   const [orderForm, setOrderForm] = useState({ customer_id: "", harvest_id: "", order_date: today, delivery_date: today, quantity_kg: "", price_per_kg_eur: "", notes: "" });
+  const [planForm, setPlanForm] = useState({ bed_id: "", crop_id: "", variety_id: "", sowing_date: today, transplant_date: "", expected_yield_kg: "", succession_count: "1", succession_interval_days: "14", notes: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
     [crops, plantingForm.crop_id],
   );
+  const selectedPlanCrop = useMemo(
+    () => crops.find((crop) => String(crop.id) === String(planForm.crop_id)),
+    [crops, planForm.crop_id],
+  );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -89,6 +103,9 @@ function App() {
       apiRequest("/api/inventory"),
       apiRequest("/api/customers"),
       apiRequest("/api/orders"),
+      apiRequest("/api/plans"),
+      apiRequest(`/api/planning/calendar?start=${planStart}&end=${planEnd}`),
+      apiRequest(`/api/planning/forecast?start=${planStart}&end=${planEnd}`),
     ]);
     setCrops(cropData);
     setBeds(bedData);
@@ -100,6 +117,9 @@ function App() {
     setInventory(inventoryData);
     setCustomers(customerData);
     setOrders(orderData);
+    setPlans(planData);
+    setPlanningCalendar(calendarData.events);
+    setForecast(forecastData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
     setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
     setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
@@ -108,6 +128,11 @@ function App() {
       customer_id: current.customer_id || customerData[0]?.id || "",
       harvest_id: current.harvest_id || inventoryData.find((item) => item.available_kg > 0)?.harvest_id || "",
     }));
+    setPlanForm((current) => {
+      const cropId = current.crop_id || cropData[0]?.id || "";
+      const crop = cropData.find((item) => String(item.id) === String(cropId));
+      return { ...current, bed_id: current.bed_id || bedData[0]?.id || "", crop_id: cropId, variety_id: current.variety_id || crop?.varieties[0]?.id || "" };
+    });
     setPlantingForm((current) => {
       const cropId = current.crop_id || cropData[0]?.id || "";
       const crop = cropData.find((item) => String(item.id) === String(cropId));
@@ -122,7 +147,7 @@ function App() {
 
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
-  }, [taskDate]);
+  }, [taskDate, planStart, planEnd]);
 
   function clearMessages() {
     setNotice("");
@@ -305,6 +330,40 @@ function App() {
     catch (requestError) { setError(requestError.message); }
   }
 
+  function changePlanCrop(event) {
+    const cropId = event.target.value;
+    const crop = crops.find((item) => String(item.id) === String(cropId));
+    setPlanForm({ ...planForm, crop_id: cropId, variety_id: crop?.varieties[0]?.id || "" });
+  }
+
+  async function createPlan(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/plans", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...planForm, bed_id: Number(planForm.bed_id), crop_id: Number(planForm.crop_id), variety_id: Number(planForm.variety_id), transplant_date: planForm.transplant_date || null, expected_yield_kg: Number(planForm.expected_yield_kg), succession_count: Number(planForm.succession_count), succession_interval_days: Number(planForm.succession_interval_days), notes: planForm.notes || null }) });
+      setNotice(`${data.message}${data.warnings.length ? ` Opozorila: ${data.warnings.join(" ")}` : ""}`);
+      setPlanForm({ ...planForm, expected_yield_kg: "", notes: "" }); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function activatePlan(planId, overrideRotation = false) {
+    clearMessages();
+    const response = await fetch(`${API_URL}/api/plans/${planId}/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ override_rotation: overrideRotation }) });
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = data.detail;
+      if (detail?.code === "ROTATION_WARNING" && !overrideRotation && window.confirm(`${detail.message}\n\nVseeno aktiviram setev?`)) return activatePlan(planId, true);
+      setError(typeof detail === "string" ? detail : detail?.message || "Načrta ni mogoče aktivirati."); return;
+    }
+    setNotice(data.message); await loadData();
+  }
+
+  async function cancelPlan(planId) {
+    if (!window.confirm("Prekličem načrtovano setev?")) return;
+    clearMessages();
+    try { const data = await apiRequest(`/api/plans/${planId}/status`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }); setNotice(data.message); await loadData(); }
+    catch (requestError) { setError(requestError.message); }
+  }
+
   const navigation = [
     ["dashboard", "Domov", "⌂"],
     ["beds", "Gredice", "▦"],
@@ -312,6 +371,7 @@ function App() {
     ["tasks", "Opravila", "✓"],
     ["economics", "Žetev €", "€"],
     ["orders", "Naročila", "▤"],
+    ["planning", "Plan", "◫"],
   ];
 
   return (
@@ -322,7 +382,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 0.4</span>
+        <span className="status-pill">MVP 0.5</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -399,6 +459,11 @@ function App() {
           orderForm={orderForm} setOrderForm={setOrderForm} createOrder={createOrder}
           changeOrderStatus={changeOrderStatus} openOrderDocument={openOrderDocument}
           document={document} setDocument={setDocument} />
+      )}
+      {view === "planning" && (
+        <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
+          form={planForm} setForm={setPlanForm} selectedCrop={selectedPlanCrop} changeCrop={changePlanCrop} createPlan={createPlan}
+          activatePlan={activatePlan} cancelPlan={cancelPlan} start={planStart} setStart={setPlanStart} end={planEnd} setEnd={setPlanEnd} />
       )}
     </main>
   );
@@ -602,6 +667,29 @@ function OrdersView({ inventory, customers, orders, customerForm, setCustomerFor
       </article>)}</div>
     </section>
     {document && <section className="panel printable-document"><div className="section-heading"><div><p className="eyebrow">{document.document_type === "invoice" ? "Račun" : "Dobavnica"}</p><h2>{document.document_number}</h2></div><div className="order-actions"><button className="secondary-button" onClick={() => window.print()}>NATISNI</button><button className="icon-button" onClick={() => setDocument(null)}>✕</button></div></div><p><strong>Kupec:</strong> {document.customer.name}<br />{document.customer.address}</p><div className="document-lines">{document.order.items.map((item) => <div key={item.id}><span>{item.crop} {item.variety} · {item.quantity_kg} kg</span><strong>{item.line_total_eur.toFixed(2)} €</strong></div>)}</div><div className="document-total">Skupaj <strong>{document.order.total_eur.toFixed(2)} €</strong></div></section>}
+  </>;
+}
+
+function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, selectedCrop, changeCrop, createPlan, activatePlan, cancelPlan, start, setStart, end, setEnd }) {
+  return <>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Sezonski načrt</p><h2>Načrtuj setev ali serijo</h2></div></div>
+      <form className="planning-form" onSubmit={createPlan}>
+        <label>Gredica<select value={form.bed_id} onChange={(e) => setForm({ ...form, bed_id: e.target.value })} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.area_m2} m²</option>)}</select></label>
+        <label>Kultura<select value={form.crop_id} onChange={changeCrop} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
+        <label>Sorta<select value={form.variety_id} onChange={(e) => setForm({ ...form, variety_id: e.target.value })} required>{(selectedCrop?.varieties || []).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.days_to_harvest} dni</option>)}</select></label>
+        <label>Setev<input type="date" value={form.sowing_date} onChange={(e) => setForm({ ...form, sowing_date: e.target.value })} required /></label>
+        <label>Presajanje<input type="date" value={form.transplant_date} onChange={(e) => setForm({ ...form, transplant_date: e.target.value })} /></label>
+        <label>Pričakovano (kg)<input type="number" min="0.1" step="0.1" value={form.expected_yield_kg} onChange={(e) => setForm({ ...form, expected_yield_kg: e.target.value })} required /></label>
+        <label>Število setev<input type="number" min="1" max="20" value={form.succession_count} onChange={(e) => setForm({ ...form, succession_count: e.target.value })} required /></label>
+        <label>Razmik (dni)<input type="number" min="1" value={form.succession_interval_days} onChange={(e) => setForm({ ...form, succession_interval_days: e.target.value })} required /></label>
+        <button className="primary-button">DODAJ V NAČRT</button>
+      </form>
+    </section>
+    <section className="planning-summary-grid">
+      <div className="panel"><div className="section-heading"><div><p className="eyebrow">Obdobje</p><h2>Koledar dela</h2></div></div><div className="range-form"><label>Od<input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Do<input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></label></div><div className="calendar-list">{calendar.map((event, index) => <article key={`${event.date}-${event.type}-${index}`}><time>{event.date}</time><div><strong>{event.title}</strong><span>{event.bed ? `Gredica ${event.bed}` : event.type === "delivery" ? "Prodaja" : "Splošno"}</span></div><span className={`event-type ${event.type}`}>{event.type === "sowing" ? "Setev" : event.type === "transplant" ? "Presajanje" : event.type === "planned_harvest" ? "Žetev" : event.type === "delivery" ? "Dostava" : "Opravilo"}</span></article>)}</div></div>
+      <div className="panel"><div className="section-heading"><div><p className="eyebrow">Ponudba in povpraševanje</p><h2>Napoved pridelka</h2></div></div>{forecast.warnings.map((warning) => <div className="forecast-warning" key={warning}>⚠ {warning}</div>)}<div className="forecast-list">{forecast.rows.map((row) => <article key={row.crop_id}><div><strong>{row.crop}</strong><span>Zaloga {row.current_stock_kg} kg + načrt {row.planned_yield_kg} kg − naročila {row.confirmed_demand_kg} kg</span></div><b className={row.shortage ? "negative" : "positive"}>{row.projected_balance_kg} kg</b></article>)}</div></div>
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prihodnje setve</p><h2>Načrtovane gredice</h2></div><span>{plans.length} zapisov</span></div><div className="plan-grid">{plans.map((plan) => <article key={plan.id}><div><span className={`plan-state ${plan.status}`}>{plan.status === "planned" ? "Načrtovano" : "Aktivirano"}</span><strong>{plan.crop} {plan.variety}</strong><span>Gredica {plan.bed} · setev {plan.sowing_date}</span><span>Žetev {plan.expected_harvest_date} · {plan.expected_yield_kg} kg</span></div>{plan.status === "planned" && <div className="order-actions"><button className="secondary-button" onClick={() => activatePlan(plan.id)}>AKTIVIRAJ</button><button className="text-button danger-text" onClick={() => cancelPlan(plan.id)}>PREKLIČI</button></div>}</article>)}</div></section>
   </>;
 }
 
