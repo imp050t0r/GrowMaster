@@ -1,6 +1,7 @@
 import csv
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+import hashlib
 import io
 from uuid import uuid4
 
@@ -18,7 +19,13 @@ from app.models import (
     CropPlan,
     Customer,
     CustomerProfile,
+    CreditNote,
+    DocumentSequence,
+    Farm,
     Harvest,
+    Invoice,
+    InvoiceLine,
+    InvoiceProfile,
     Order,
     OrderItem,
     OrderPayment,
@@ -38,7 +45,11 @@ from app.schemas import (
     CropPlanStatusUpdate,
     CropOut,
     CustomerCreate,
+    CreditNoteCreate,
+    FiscalConfirmationCreate,
     HarvestCreate,
+    InvoiceCreate,
+    InvoiceProfileUpdate,
     OrderCreate,
     OrderPaymentCreate,
     OrderStatusUpdate,
@@ -51,6 +62,7 @@ from app.schemas import (
     TaskCreate,
 )
 from app.seed import seed_database
+from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
 
@@ -63,7 +75,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -694,6 +706,20 @@ def serialize_customer(customer: Customer) -> dict:
     }
 
 
+def invoice_summary(invoice: Invoice | None) -> dict | None:
+    if invoice is None:
+        return None
+    return {
+        "id": invoice.id,
+        "number": invoice.number,
+        "status": invoice.status,
+        "fiscal_status": fiscal_status(
+            invoice.fiscal_confirmation_required, invoice.eor
+        ),
+        "credit_note_id": invoice.credit_note.id if invoice.credit_note else None,
+    }
+
+
 def serialize_order(order: Order) -> dict:
     paid_eur = round(sum(payment.amount_eur for payment in order.payments), 2)
     outstanding_eur = round(max(0.0, order.total_eur - paid_eur), 2)
@@ -722,6 +748,7 @@ def serialize_order(order: Order) -> dict:
         "paid_eur": paid_eur,
         "outstanding_eur": outstanding_eur,
         "payment_status": payment_status,
+        "invoice": invoice_summary(order.invoice),
         "payments": [
             {
                 "id": payment.id,
@@ -753,6 +780,7 @@ def order_load_options() -> tuple:
     return (
         selectinload(Order.customer).selectinload(Customer.profile),
         selectinload(Order.payments),
+        selectinload(Order.invoice).selectinload(Invoice.credit_note),
         selectinload(Order.items)
         .selectinload(OrderItem.harvest)
         .selectinload(Harvest.bed),
@@ -972,6 +1000,10 @@ def order_document(
                 status_code=409,
                 detail="Za končnega potrošnika ob vključeni izjemi 81.a račun ni predviden.",
             )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Sprotni račun je ukinjen. Izdajte nespremenljiv račun prek /api/invoices.",
+        )
     return {
         "document_type": document_type,
         "document_number": ("R" if document_type == "invoice" else "D") + f"-{order.order_date.year}-{order.id:04d}",
@@ -1345,6 +1377,7 @@ def get_sales_settings(db: Session) -> SalesSettings:
 def retail_sale_options() -> tuple:
     return (
         selectinload(RetailSale.customer).selectinload(Customer.profile),
+        selectinload(RetailSale.invoice).selectinload(Invoice.credit_note),
         selectinload(RetailSale.items)
         .selectinload(RetailSaleItem.harvest)
         .selectinload(Harvest.bed),
@@ -1388,6 +1421,7 @@ def serialize_retail_sale(retail_sale: RetailSale, settings: SalesSettings) -> d
         "customer": retail_sale.customer.name if retail_sale.customer else "Končni potrošnik",
         "customer_type": customer_type,
         "invoice_required": retail_sale_requires_invoice(retail_sale, settings),
+        "invoice": invoice_summary(retail_sale.invoice),
         "notes": retail_sale.notes,
         "total_eur": retail_sale.total_eur,
         "items": [
@@ -1432,6 +1466,464 @@ def update_sales_settings(
     )
     db.commit()
     return {"message": "Nastavitve prodaje so shranjene.", **sales_settings(db)}
+
+
+def get_invoice_profile(db: Session) -> InvoiceProfile:
+    profile = db.get(InvoiceProfile, DEFAULT_FARM_ID)
+    if profile is None:
+        profile = InvoiceProfile(farm_id=DEFAULT_FARM_ID)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+    return profile
+
+
+def serialize_invoice_profile(profile: InvoiceProfile) -> dict:
+    return {
+        "seller_address": profile.seller_address,
+        "seller_iban": profile.seller_iban,
+        "seller_registration_number": profile.seller_registration_number,
+        "vat_note": profile.vat_note,
+        "business_premise_code": profile.business_premise_code,
+        "device_code": profile.device_code,
+        "default_due_days": profile.default_due_days,
+    }
+
+
+@app.get("/api/invoice-profile")
+def invoice_profile(db: Session = Depends(get_db)) -> dict:
+    return serialize_invoice_profile(get_invoice_profile(db))
+
+
+@app.put("/api/invoice-profile")
+def update_invoice_profile(
+    payload: InvoiceProfileUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    profile = get_invoice_profile(db)
+    profile.seller_address = payload.seller_address.strip()
+    profile.seller_iban = payload.seller_iban.strip() if payload.seller_iban else None
+    profile.seller_registration_number = (
+        payload.seller_registration_number.strip()
+        if payload.seller_registration_number
+        else None
+    )
+    profile.vat_note = payload.vat_note.strip() if payload.vat_note else None
+    profile.business_premise_code = payload.business_premise_code.strip().upper()
+    profile.device_code = payload.device_code.strip().upper()
+    profile.default_due_days = payload.default_due_days
+    db.commit()
+    return {
+        "message": "Podatki za račune so shranjeni.",
+        **serialize_invoice_profile(profile),
+    }
+
+
+def next_document_number(
+    db: Session,
+    issued_on: date,
+    document_type: str,
+    profile: InvoiceProfile,
+) -> str:
+    # Lock the farm row so even creation of a new yearly sequence is serialized.
+    db.scalar(
+        select(Farm.id).where(Farm.id == DEFAULT_FARM_ID).with_for_update()
+    )
+    sequence = db.scalar(
+        select(DocumentSequence)
+        .where(
+            DocumentSequence.farm_id == DEFAULT_FARM_ID,
+            DocumentSequence.year == issued_on.year,
+            DocumentSequence.document_type == document_type,
+        )
+        .with_for_update()
+    )
+    if sequence is None:
+        sequence = DocumentSequence(
+            farm_id=DEFAULT_FARM_ID,
+            year=issued_on.year,
+            document_type=document_type,
+            next_number=1,
+        )
+        db.add(sequence)
+        db.flush()
+    ordinal = sequence.next_number
+    sequence.next_number += 1
+    prefix = "R" if document_type == "invoice" else "DB"
+    return (
+        f"{prefix}-{profile.business_premise_code}-{profile.device_code}-"
+        f"{issued_on.year}-{ordinal:04d}"
+    )
+
+
+def invoice_load_options() -> tuple:
+    return (
+        selectinload(Invoice.lines),
+        selectinload(Invoice.credit_note),
+        selectinload(Invoice.order).selectinload(Order.payments),
+    )
+
+
+def fiscal_status(required: bool, eor: str | None) -> str:
+    return "confirmed" if required and eor else "pending" if required else "not_required"
+
+
+def serialize_credit_note(credit_note: CreditNote | None) -> dict | None:
+    if credit_note is None:
+        return None
+    return {
+        "id": credit_note.id,
+        "number": credit_note.number,
+        "issued_on": credit_note.issued_on,
+        "reason": credit_note.reason,
+        "total_eur": credit_note.total_eur,
+        "fiscal_status": fiscal_status(
+            credit_note.fiscal_confirmation_required, credit_note.eor
+        ),
+        "eor": credit_note.eor,
+        "zoi": credit_note.zoi,
+        "pdf_sha256": credit_note.pdf_sha256,
+    }
+
+
+def serialize_invoice(invoice: Invoice) -> dict:
+    paid_eur = (
+        round(sum(payment.amount_eur for payment in invoice.order.payments), 2)
+        if invoice.order
+        else invoice.total_eur
+    )
+    return {
+        "id": invoice.id,
+        "number": invoice.number,
+        "source_type": "order" if invoice.order_id else "retail_sale",
+        "source_id": invoice.order_id or invoice.retail_sale_id,
+        "issued_on": invoice.issued_on,
+        "supply_date": invoice.supply_date,
+        "due_date": invoice.due_date,
+        "status": invoice.status,
+        "payment_method": invoice.payment_method,
+        "seller": {
+            "name": invoice.seller_name,
+            "address": invoice.seller_address,
+            "tax_number": invoice.seller_tax_number,
+            "iban": invoice.seller_iban,
+            "registration_number": invoice.seller_registration_number,
+        },
+        "customer": {
+            "name": invoice.customer_name,
+            "address": invoice.customer_address,
+            "tax_number": invoice.customer_tax_number,
+        },
+        "total_eur": invoice.total_eur,
+        "paid_eur": paid_eur,
+        "outstanding_eur": (
+            0.0
+            if invoice.status == "credited"
+            else round(max(0.0, invoice.total_eur - paid_eur), 2)
+        ),
+        "fiscal_confirmation_required": invoice.fiscal_confirmation_required,
+        "fiscal_status": fiscal_status(
+            invoice.fiscal_confirmation_required, invoice.eor
+        ),
+        "eor": invoice.eor,
+        "zoi": invoice.zoi,
+        "vat_note": invoice.vat_note,
+        "pdf_sha256": invoice.pdf_sha256,
+        "lines": [
+            {
+                "description": line.description,
+                "quantity": line.quantity,
+                "unit": line.unit,
+                "unit_price_eur": line.unit_price_eur,
+                "line_total_eur": line.line_total_eur,
+            }
+            for line in invoice.lines
+        ],
+        "credit_note": serialize_credit_note(invoice.credit_note),
+    }
+
+
+def get_invoice(db: Session, invoice_id: int) -> Invoice:
+    invoice = db.scalar(
+        select(Invoice)
+        .where(Invoice.id == invoice_id, Invoice.farm_id == DEFAULT_FARM_ID)
+        .options(*invoice_load_options())
+    )
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Račun ne obstaja.")
+    return invoice
+
+
+@app.get("/api/invoices")
+def list_invoices(db: Session = Depends(get_db)) -> list[dict]:
+    invoices = db.scalars(
+        select(Invoice)
+        .where(Invoice.farm_id == DEFAULT_FARM_ID)
+        .options(*invoice_load_options())
+        .order_by(Invoice.issued_on.desc(), Invoice.id.desc())
+    ).all()
+    return [serialize_invoice(invoice) for invoice in invoices]
+
+
+@app.get("/api/invoices/{invoice_id}")
+def invoice_detail(invoice_id: int, db: Session = Depends(get_db)) -> dict:
+    return serialize_invoice(get_invoice(db, invoice_id))
+
+
+@app.post("/api/invoices", status_code=status.HTTP_201_CREATED)
+def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)) -> dict:
+    settings = get_sales_settings(db)
+    profile = get_invoice_profile(db)
+    if not settings.seller_name.strip() or not settings.seller_tax_number:
+        raise HTTPException(
+            status_code=422,
+            detail="Pred izdajo računa v prodajnih nastavitvah vpišite naziv in davčno številko prodajalca.",
+        )
+    if not profile.seller_address:
+        raise HTTPException(
+            status_code=422,
+            detail="Pred izdajo računa vpišite naslov prodajalca.",
+        )
+
+    if payload.source_type == "order":
+        source = db.scalar(
+            select(Order)
+            .where(Order.id == payload.source_id, Order.farm_id == DEFAULT_FARM_ID)
+            .options(*order_load_options())
+        )
+        if source is None:
+            raise HTTPException(status_code=404, detail="Naročilo ne obstaja.")
+        if source.invoice:
+            raise HTTPException(status_code=409, detail="Za naročilo je račun že izdan.")
+        if source.status != "fulfilled":
+            raise HTTPException(status_code=409, detail="Račun je mogoče izdati po dostavi.")
+        if not order_requires_invoice(source, settings):
+            raise HTTPException(status_code=409, detail="Za to naročilo račun ni predviden.")
+        customer = source.customer
+        supply_date = source.delivery_date
+        payment_method = payload.payment_method or "bank_transfer"
+        source_fields = {"order_id": source.id, "retail_sale_id": None}
+        source_items = source.items
+    else:
+        source = db.scalar(
+            select(RetailSale)
+            .where(
+                RetailSale.id == payload.source_id,
+                RetailSale.farm_id == DEFAULT_FARM_ID,
+            )
+            .options(*retail_sale_options())
+        )
+        if source is None:
+            raise HTTPException(status_code=404, detail="Prodaja ne obstaja.")
+        if source.invoice:
+            raise HTTPException(status_code=409, detail="Za prodajo je račun že izdan.")
+        if not retail_sale_requires_invoice(source, settings):
+            raise HTTPException(status_code=409, detail="Za to prodajo račun ni predviden.")
+        customer = source.customer
+        supply_date = source.sale_date
+        payment_method = payload.payment_method or source.payment_method
+        source_fields = {"order_id": None, "retail_sale_id": source.id}
+        source_items = source.items
+
+    if customer is None or not customer.address:
+        raise HTTPException(status_code=422, detail="Pred izdajo vpišite naslov kupca.")
+    customer_tax_number = customer.profile.tax_number if customer.profile else None
+    if not customer_tax_number:
+        raise HTTPException(status_code=422, detail="Pred izdajo vpišite davčno številko kupca.")
+    due_date = payload.due_date or payload.issued_on + timedelta(
+        days=profile.default_due_days
+    )
+    if due_date < payload.issued_on:
+        raise HTTPException(status_code=422, detail="Rok plačila ne sme biti pred datumom izdaje.")
+
+    invoice = Invoice(
+        farm_id=DEFAULT_FARM_ID,
+        **source_fields,
+        number=next_document_number(db, payload.issued_on, "invoice", profile),
+        issued_on=payload.issued_on,
+        supply_date=supply_date,
+        due_date=due_date,
+        status="issued",
+        payment_method=payment_method,
+        seller_name=settings.seller_name.strip(),
+        seller_address=profile.seller_address,
+        seller_tax_number=settings.seller_tax_number,
+        seller_iban=profile.seller_iban,
+        seller_registration_number=profile.seller_registration_number,
+        vat_note=profile.vat_note,
+        customer_name=customer.name,
+        customer_address=customer.address,
+        customer_tax_number=customer_tax_number,
+        total_eur=source.total_eur,
+        fiscal_confirmation_required=payment_method in {"cash", "card"},
+    )
+    invoice.lines = [
+        InvoiceLine(
+            description=(
+                f"{item.harvest.planting.crop.name} – "
+                f"{item.harvest.planting.variety.name}, kakovost {item.harvest.quality}"
+            ),
+            quantity=item.quantity_kg,
+            unit="kg",
+            unit_price_eur=item.price_per_kg_eur,
+            line_total_eur=item.line_total_eur,
+        )
+        for item in source_items
+    ]
+    db.add(invoice)
+    db.flush()
+    if not invoice.fiscal_confirmation_required:
+        invoice.pdf_data = build_invoice_pdf(invoice)
+        invoice.pdf_sha256 = hashlib.sha256(invoice.pdf_data).hexdigest()
+    db.commit()
+    invoice = get_invoice(db, invoice.id)
+    message = (
+        "Račun je arhiviran. Pred končnim PDF vpišite EOR davčne potrditve."
+        if invoice.fiscal_confirmation_required
+        else "Račun je izdan in arhiviran."
+    )
+    return {"message": message, **serialize_invoice(invoice)}
+
+
+@app.post("/api/invoices/{invoice_id}/fiscal-confirmation")
+def confirm_invoice_fiscalization(
+    invoice_id: int,
+    payload: FiscalConfirmationCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    invoice = get_invoice(db, invoice_id)
+    if not invoice.fiscal_confirmation_required:
+        raise HTTPException(status_code=409, detail="Ta račun ne potrebuje EOR.")
+    if invoice.eor:
+        raise HTTPException(status_code=409, detail="EOR je že arhiviran in ga ni mogoče zamenjati.")
+    invoice.eor = payload.eor.strip()
+    invoice.zoi = payload.zoi.strip() if payload.zoi else None
+    db.flush()
+    invoice.pdf_data = build_invoice_pdf(invoice)
+    invoice.pdf_sha256 = hashlib.sha256(invoice.pdf_data).hexdigest()
+    db.commit()
+    return {"message": "EOR je nespremenljivo shranjen.", **serialize_invoice(invoice)}
+
+
+@app.get("/api/invoices/{invoice_id}/pdf")
+def invoice_pdf(invoice_id: int, db: Session = Depends(get_db)) -> Response:
+    invoice = get_invoice(db, invoice_id)
+    if invoice.fiscal_confirmation_required and not invoice.eor:
+        raise HTTPException(
+            status_code=409,
+            detail="Končni PDF je na voljo po vpisu EOR davčne potrditve.",
+        )
+    if not invoice.pdf_data:
+        raise HTTPException(status_code=409, detail="Arhivski PDF še ni ustvarjen.")
+    return Response(
+        content=invoice.pdf_data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{invoice.number}.pdf"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@app.post(
+    "/api/invoices/{invoice_id}/credit-notes",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_credit_note(
+    invoice_id: int,
+    payload: CreditNoteCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    invoice = get_invoice(db, invoice_id)
+    if invoice.credit_note or invoice.status == "credited":
+        raise HTTPException(status_code=409, detail="Račun že ima dobropis.")
+    if payload.issued_on < invoice.issued_on:
+        raise HTTPException(status_code=422, detail="Dobropis ne sme biti starejši od računa.")
+    profile = get_invoice_profile(db)
+    credit_note = CreditNote(
+        farm_id=DEFAULT_FARM_ID,
+        invoice_id=invoice.id,
+        number=next_document_number(db, payload.issued_on, "credit_note", profile),
+        issued_on=payload.issued_on,
+        reason=payload.reason.strip(),
+        total_eur=invoice.total_eur,
+        fiscal_confirmation_required=invoice.fiscal_confirmation_required,
+    )
+    invoice.status = "credited"
+    db.add(credit_note)
+    db.flush()
+    if not credit_note.fiscal_confirmation_required:
+        credit_note.pdf_data = build_invoice_pdf(invoice, credit_note)
+        credit_note.pdf_sha256 = hashlib.sha256(credit_note.pdf_data).hexdigest()
+    db.commit()
+    db.refresh(credit_note)
+    message = (
+        "Dobropis je arhiviran. Pred končnim PDF vpišite njegov EOR."
+        if credit_note.fiscal_confirmation_required
+        else "Dobropis je izdan; prvotni račun ostaja v arhivu."
+    )
+    return {"message": message, **serialize_credit_note(credit_note)}
+
+
+@app.post("/api/credit-notes/{credit_note_id}/fiscal-confirmation")
+def confirm_credit_note_fiscalization(
+    credit_note_id: int,
+    payload: FiscalConfirmationCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    credit_note = db.scalar(
+        select(CreditNote)
+        .where(
+            CreditNote.id == credit_note_id,
+            CreditNote.farm_id == DEFAULT_FARM_ID,
+        )
+        .options(selectinload(CreditNote.invoice).selectinload(Invoice.lines))
+    )
+    if credit_note is None:
+        raise HTTPException(status_code=404, detail="Dobropis ne obstaja.")
+    if not credit_note.fiscal_confirmation_required:
+        raise HTTPException(status_code=409, detail="Ta dobropis ne potrebuje EOR.")
+    if credit_note.eor:
+        raise HTTPException(status_code=409, detail="EOR dobropisa je že arhiviran.")
+    credit_note.eor = payload.eor.strip()
+    credit_note.zoi = payload.zoi.strip() if payload.zoi else None
+    db.flush()
+    credit_note.pdf_data = build_invoice_pdf(credit_note.invoice, credit_note)
+    credit_note.pdf_sha256 = hashlib.sha256(credit_note.pdf_data).hexdigest()
+    db.commit()
+    return {
+        "message": "EOR dobropisa je nespremenljivo shranjen.",
+        **serialize_credit_note(credit_note),
+    }
+
+
+@app.get("/api/credit-notes/{credit_note_id}/pdf")
+def credit_note_pdf(credit_note_id: int, db: Session = Depends(get_db)) -> Response:
+    credit_note = db.scalar(
+        select(CreditNote)
+        .where(
+            CreditNote.id == credit_note_id,
+            CreditNote.farm_id == DEFAULT_FARM_ID,
+        )
+        .options(selectinload(CreditNote.invoice).selectinload(Invoice.lines))
+    )
+    if credit_note is None:
+        raise HTTPException(status_code=404, detail="Dobropis ne obstaja.")
+    if credit_note.fiscal_confirmation_required and not credit_note.eor:
+        raise HTTPException(
+            status_code=409,
+            detail="Končni PDF dobropisa je na voljo po vpisu EOR.",
+        )
+    if not credit_note.pdf_data:
+        raise HTTPException(status_code=409, detail="Arhivski PDF dobropisa še ni ustvarjen.")
+    return Response(
+        content=credit_note.pdf_data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{credit_note.number}.pdf"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @app.get("/api/retail-sales")
@@ -1552,6 +2044,11 @@ def retail_sale_document(
         raise HTTPException(
             status_code=409,
             detail="Za to prodajo končnemu potrošniku račun ni predviden.",
+        )
+    if document_type == "invoice":
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Sprotni račun je ukinjen. Izdajte nespremenljiv račun prek /api/invoices.",
         )
     return {
         "document_type": document_type,
@@ -1773,10 +2270,20 @@ def serialize_receivable(order: Order, as_of: date) -> dict:
         key=lambda item: (item.payment_date, item.id),
     )
     paid_eur = round(sum(payment.amount_eur for payment in payments), 2)
-    due_date = order.delivery_date + timedelta(days=PAYMENT_TERMS_DAYS)
-    outstanding_eur = round(max(0.0, order.total_eur - paid_eur), 2)
+    due_date = (
+        order.invoice.due_date
+        if order.invoice
+        else order.delivery_date + timedelta(days=PAYMENT_TERMS_DAYS)
+    )
+    outstanding_eur = (
+        0.0
+        if order.invoice and order.invoice.status == "credited"
+        else round(max(0.0, order.total_eur - paid_eur), 2)
+    )
     status_value = (
-        "paid"
+        "credited"
+        if order.invoice and order.invoice.status == "credited"
+        else "paid"
         if outstanding_eur <= 0
         else "overdue"
         if due_date < as_of
@@ -1786,7 +2293,12 @@ def serialize_receivable(order: Order, as_of: date) -> dict:
     )
     return {
         "order_id": order.id,
-        "invoice_number": f"R-{order.order_date.year}-{order.id:04d}",
+        "invoice_id": order.invoice.id if order.invoice else None,
+        "invoice_number": (
+            order.invoice.number
+            if order.invoice
+            else f"R-{order.order_date.year}-{order.id:04d}"
+        ),
         "customer": order.customer.name,
         "customer_type": (
             order.customer.profile.customer_type if order.customer.profile else "consumer"
@@ -1835,7 +2347,9 @@ def list_receivables(
     ]
     receivables = all_receivables
     if not include_paid:
-        receivables = [item for item in receivables if item["status"] != "paid"]
+        receivables = [
+            item for item in receivables if item["status"] not in {"paid", "credited"}
+        ]
     receivables.sort(
         key=lambda item: (
             item["status"] == "paid",
@@ -1897,6 +2411,8 @@ def record_order_payment(
             status_code=409,
             detail="Za to naročilo ni odprtega računa.",
         )
+    if order.invoice and order.invoice.status == "credited":
+        raise HTTPException(status_code=409, detail="Račun je dobropisan in nima odprte terjatve.")
     if payload.payment_date < order.order_date:
         raise HTTPException(
             status_code=422,

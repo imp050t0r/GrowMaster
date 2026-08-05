@@ -158,3 +158,31 @@ class SalesSettingsUpdate(BaseModel):
     basic_agriculture_invoice_exemption: bool = True
     seller_name: str = Field(min_length=1, max_length=160)
     seller_tax_number: str | None = Field(default=None, max_length=30)
+
+
+class InvoiceProfileUpdate(BaseModel):
+    seller_address: str = Field(min_length=1, max_length=1000)
+    seller_iban: str | None = Field(default=None, max_length=50)
+    seller_registration_number: str | None = Field(default=None, max_length=50)
+    vat_note: str | None = Field(default=None, max_length=240)
+    business_premise_code: str = Field(default="GM", min_length=1, max_length=20)
+    device_code: str = Field(default="01", min_length=1, max_length=20)
+    default_due_days: int = Field(default=14, ge=0, le=365)
+
+
+class InvoiceCreate(BaseModel):
+    source_type: Literal["order", "retail_sale"]
+    source_id: int
+    issued_on: date
+    due_date: date | None = None
+    payment_method: Literal["cash", "card", "bank_transfer"] | None = None
+
+
+class FiscalConfirmationCreate(BaseModel):
+    eor: str = Field(min_length=1, max_length=80)
+    zoi: str | None = Field(default=None, max_length=80)
+
+
+class CreditNoteCreate(BaseModel):
+    issued_on: date
+    reason: str = Field(min_length=3, max_length=500)
