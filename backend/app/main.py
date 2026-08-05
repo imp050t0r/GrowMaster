@@ -98,7 +98,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.6.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -826,6 +826,453 @@ def labor_report(
             "dobiček gredice, ni pa denarni odliv, dokler izplačilo ni posebej evidentirano."
         ),
     }
+
+
+def profitability_range(start: date | None, end: date | None) -> tuple[date, date]:
+    range_start = start or date(date.today().year, 1, 1)
+    range_end = end or date.today()
+    if range_end < range_start:
+        raise HTTPException(
+            status_code=422,
+            detail="Končni datum ne sme biti pred začetnim datumom.",
+        )
+    return range_start, range_end
+
+
+def profitability_credit_note_options() -> tuple:
+    return (
+        selectinload(CreditNote.invoice)
+        .selectinload(Invoice.order)
+        .selectinload(Order.items)
+        .selectinload(OrderItem.harvest)
+        .selectinload(Harvest.bed),
+        selectinload(CreditNote.invoice)
+        .selectinload(Invoice.order)
+        .selectinload(Order.items)
+        .selectinload(OrderItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.crop),
+        selectinload(CreditNote.invoice)
+        .selectinload(Invoice.retail_sale)
+        .selectinload(RetailSale.items)
+        .selectinload(RetailSaleItem.harvest)
+        .selectinload(Harvest.bed),
+        selectinload(CreditNote.invoice)
+        .selectinload(Invoice.retail_sale)
+        .selectinload(RetailSale.items)
+        .selectinload(RetailSaleItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.crop),
+    )
+
+
+def profitability_row(row: dict) -> dict:
+    area_m2 = row["area_m2"]
+    labor_hours = row["labor_minutes"] / 60
+    net_revenue_eur = row["gross_revenue_eur"] - row["credit_notes_eur"]
+    costs_eur = (
+        row["direct_costs_eur"]
+        + row["material_costs_eur"]
+        + row["labor_costs_eur"]
+    )
+    profit_eur = net_revenue_eur - costs_eur
+    return {
+        **{
+            key: value
+            for key, value in row.items()
+            if key not in {"labor_minutes", "planting_areas"}
+        },
+        "crops": sorted(row.get("crops", [])),
+        "area_m2": round(area_m2, 2),
+        "harvested_kg": round(row["harvested_kg"], 2),
+        "sold_kg": round(row["sold_kg"], 2),
+        "gross_revenue_eur": round(row["gross_revenue_eur"], 2),
+        "credit_notes_eur": round(row["credit_notes_eur"], 2),
+        "net_revenue_eur": round(net_revenue_eur, 2),
+        "direct_costs_eur": round(row["direct_costs_eur"], 2),
+        "material_costs_eur": round(row["material_costs_eur"], 2),
+        "labor_costs_eur": round(row["labor_costs_eur"], 2),
+        "costs_eur": round(costs_eur, 2),
+        "profit_eur": round(profit_eur, 2),
+        "margin_pct": round(profit_eur / net_revenue_eur * 100, 2)
+        if net_revenue_eur > 0
+        else None,
+        "labor_hours": round(labor_hours, 2),
+        "harvest_kg_m2": round(row["harvested_kg"] / area_m2, 2)
+        if area_m2 > 0
+        else None,
+        "revenue_eur_m2": round(net_revenue_eur / area_m2, 2)
+        if area_m2 > 0
+        else None,
+        "profit_eur_m2": round(profit_eur / area_m2, 2)
+        if area_m2 > 0
+        else None,
+        "profit_eur_per_labor_hour": round(profit_eur / labor_hours, 2)
+        if labor_hours > 0
+        else None,
+    }
+
+
+def build_profitability_report(
+    db: Session,
+    start: date | None,
+    end: date | None,
+) -> dict:
+    range_start, range_end = profitability_range(start, end)
+    beds = db.scalars(
+        select(Bed).where(Bed.farm_id == DEFAULT_FARM_ID).order_by(Bed.name)
+    ).all()
+    harvests = db.scalars(
+        select(Harvest)
+        .where(
+            Harvest.farm_id == DEFAULT_FARM_ID,
+            Harvest.harvest_date >= range_start,
+            Harvest.harvest_date <= range_end,
+        )
+        .options(
+            selectinload(Harvest.bed),
+            selectinload(Harvest.planting).selectinload(Planting.crop),
+        )
+    ).all()
+    sales = db.scalars(
+        select(Sale)
+        .where(
+            Sale.farm_id == DEFAULT_FARM_ID,
+            Sale.sale_date >= range_start,
+            Sale.sale_date <= range_end,
+        )
+        .options(
+            selectinload(Sale.harvest).selectinload(Harvest.bed),
+            selectinload(Sale.harvest)
+            .selectinload(Harvest.planting)
+            .selectinload(Planting.crop),
+        )
+    ).all()
+    costs = db.scalars(
+        select(Cost)
+        .where(
+            Cost.farm_id == DEFAULT_FARM_ID,
+            Cost.cost_date >= range_start,
+            Cost.cost_date <= range_end,
+        )
+        .options(
+            selectinload(Cost.bed),
+            selectinload(Cost.planting).selectinload(Planting.crop),
+        )
+    ).all()
+    usages = db.scalars(
+        select(SupplyUsage)
+        .where(
+            SupplyUsage.farm_id == DEFAULT_FARM_ID,
+            SupplyUsage.usage_date >= range_start,
+            SupplyUsage.usage_date <= range_end,
+        )
+        .options(
+            selectinload(SupplyUsage.bed),
+            selectinload(SupplyUsage.planting).selectinload(Planting.crop),
+        )
+    ).all()
+    labor_entries = db.scalars(
+        select(LaborEntry)
+        .where(
+            LaborEntry.farm_id == DEFAULT_FARM_ID,
+            LaborEntry.work_date >= range_start,
+            LaborEntry.work_date <= range_end,
+        )
+        .options(
+            selectinload(LaborEntry.bed),
+            selectinload(LaborEntry.planting).selectinload(Planting.crop),
+        )
+    ).all()
+    credit_notes = db.scalars(
+        select(CreditNote)
+        .where(
+            CreditNote.farm_id == DEFAULT_FARM_ID,
+            CreditNote.issued_on >= range_start,
+            CreditNote.issued_on <= range_end,
+        )
+        .options(*profitability_credit_note_options())
+    ).all()
+
+    def empty_row(**identity: object) -> dict:
+        return {
+            "area_m2": 0.0,
+            "crops": set(),
+            "harvested_kg": 0.0,
+            "sold_kg": 0.0,
+            "gross_revenue_eur": 0.0,
+            "credit_notes_eur": 0.0,
+            "direct_costs_eur": 0.0,
+            "material_costs_eur": 0.0,
+            "labor_costs_eur": 0.0,
+            "labor_minutes": 0,
+            "planting_areas": {},
+            **identity,
+        }
+
+    bed_rows = {
+        bed.id: empty_row(bed_id=bed.id, bed=bed.name, area_m2=bed.area_m2)
+        for bed in beds
+    }
+    crop_rows: dict[int, dict] = {}
+
+    def crop_row_for(planting: Planting, area_m2: float) -> dict:
+        row = crop_rows.setdefault(
+            planting.crop_id,
+            empty_row(crop_id=planting.crop_id, crop=planting.crop.name),
+        )
+        row["planting_areas"][planting.id] = area_m2
+        row["area_m2"] = sum(row["planting_areas"].values())
+        return row
+
+    def register_crop(bed_row: dict, planting: Planting) -> dict:
+        bed_row["crops"].add(planting.crop.name)
+        return crop_row_for(planting, bed_row["area_m2"])
+
+    for harvest in harvests:
+        bed_row = bed_rows[harvest.bed_id]
+        crop_row = register_crop(bed_row, harvest.planting)
+        bed_row["harvested_kg"] += harvest.quantity_kg
+        crop_row["harvested_kg"] += harvest.quantity_kg
+    for sale in sales:
+        harvest = sale.harvest
+        bed_row = bed_rows[harvest.bed_id]
+        crop_row = register_crop(bed_row, harvest.planting)
+        revenue = sale.quantity_kg * sale.price_per_kg_eur
+        bed_row["sold_kg"] += sale.quantity_kg
+        bed_row["gross_revenue_eur"] += revenue
+        crop_row["sold_kg"] += sale.quantity_kg
+        crop_row["gross_revenue_eur"] += revenue
+    for cost in costs:
+        bed_row = bed_rows[cost.bed_id]
+        bed_row["direct_costs_eur"] += cost.amount_eur
+        if cost.planting is not None:
+            register_crop(bed_row, cost.planting)["direct_costs_eur"] += cost.amount_eur
+    for usage in usages:
+        bed_row = bed_rows[usage.bed_id]
+        bed_row["material_costs_eur"] += usage.total_cost_eur
+        if usage.planting is not None:
+            register_crop(bed_row, usage.planting)["material_costs_eur"] += (
+                usage.total_cost_eur
+            )
+    for entry in labor_entries:
+        if entry.bed is not None:
+            bed_row = bed_rows[entry.bed_id]
+            bed_row["labor_costs_eur"] += entry.total_cost_eur
+            bed_row["labor_minutes"] += entry.duration_minutes
+            if entry.planting is not None:
+                crop_row = register_crop(bed_row, entry.planting)
+                crop_row["labor_costs_eur"] += entry.total_cost_eur
+                crop_row["labor_minutes"] += entry.duration_minutes
+
+    unallocated_credit_notes_eur = 0.0
+    for credit_note in credit_notes:
+        invoice = credit_note.invoice
+        source_items = (
+            invoice.order.items
+            if invoice.order is not None
+            else invoice.retail_sale.items
+            if invoice.retail_sale is not None
+            else []
+        )
+        source_total = sum(item.line_total_eur for item in source_items)
+        if source_total <= 0:
+            unallocated_credit_notes_eur += credit_note.total_eur
+            continue
+        for item in source_items:
+            adjustment = credit_note.total_eur * item.line_total_eur / source_total
+            harvest = item.harvest
+            bed_row = bed_rows[harvest.bed_id]
+            crop_row = register_crop(bed_row, harvest.planting)
+            bed_row["credit_notes_eur"] += adjustment
+            crop_row["credit_notes_eur"] += adjustment
+
+    def has_activity(row: dict) -> bool:
+        return any(
+            row[key]
+            for key in (
+                "harvested_kg",
+                "sold_kg",
+                "gross_revenue_eur",
+                "credit_notes_eur",
+                "direct_costs_eur",
+                "material_costs_eur",
+                "labor_costs_eur",
+                "labor_minutes",
+            )
+        )
+
+    finalized_beds = [
+        profitability_row(row)
+        for row in bed_rows.values()
+        if has_activity(row)
+    ]
+    finalized_crops = [
+        profitability_row(row)
+        for row in crop_rows.values()
+        if has_activity(row)
+    ]
+    finalized_beds.sort(key=lambda row: row["bed"])
+    finalized_crops.sort(key=lambda row: row["crop"])
+
+    direct_costs_eur = sum(cost.amount_eur for cost in costs)
+    material_costs_eur = sum(usage.total_cost_eur for usage in usages)
+    labor_costs_eur = sum(entry.total_cost_eur for entry in labor_entries)
+    gross_revenue_eur = sum(
+        sale.quantity_kg * sale.price_per_kg_eur for sale in sales
+    )
+    credit_notes_eur = sum(note.total_eur for note in credit_notes)
+    net_revenue_eur = gross_revenue_eur - credit_notes_eur
+    costs_eur = direct_costs_eur + material_costs_eur + labor_costs_eur
+    profit_eur = net_revenue_eur - costs_eur
+    labor_minutes = sum(entry.duration_minutes for entry in labor_entries)
+    labor_hours = labor_minutes / 60
+    active_area_m2 = sum(row["area_m2"] for row in finalized_beds)
+    unallocated_direct = sum(
+        cost.amount_eur for cost in costs if cost.planting_id is None
+    )
+    unallocated_material = sum(
+        usage.total_cost_eur for usage in usages if usage.planting_id is None
+    )
+    unallocated_labor = sum(
+        entry.total_cost_eur for entry in labor_entries if entry.planting_id is None
+    )
+    return {
+        "range": {"start": range_start, "end": range_end},
+        "summary": {
+            "active_area_m2": round(active_area_m2, 2),
+            "harvested_kg": round(sum(item.quantity_kg for item in harvests), 2),
+            "sold_kg": round(sum(item.quantity_kg for item in sales), 2),
+            "gross_revenue_eur": round(gross_revenue_eur, 2),
+            "credit_notes_eur": round(credit_notes_eur, 2),
+            "net_revenue_eur": round(net_revenue_eur, 2),
+            "direct_costs_eur": round(direct_costs_eur, 2),
+            "material_costs_eur": round(material_costs_eur, 2),
+            "labor_costs_eur": round(labor_costs_eur, 2),
+            "costs_eur": round(costs_eur, 2),
+            "profit_eur": round(profit_eur, 2),
+            "margin_pct": round(profit_eur / net_revenue_eur * 100, 2)
+            if net_revenue_eur > 0
+            else None,
+            "labor_hours": round(labor_hours, 2),
+            "harvest_kg_m2": round(
+                sum(item.quantity_kg for item in harvests) / active_area_m2,
+                2,
+            )
+            if active_area_m2 > 0
+            else None,
+            "revenue_eur_m2": round(net_revenue_eur / active_area_m2, 2)
+            if active_area_m2 > 0
+            else None,
+            "profit_eur_m2": round(profit_eur / active_area_m2, 2)
+            if active_area_m2 > 0
+            else None,
+            "profit_eur_per_labor_hour": round(profit_eur / labor_hours, 2)
+            if labor_hours > 0
+            else None,
+            "unallocated_direct_costs_eur": round(unallocated_direct, 2),
+            "unallocated_material_costs_eur": round(unallocated_material, 2),
+            "unallocated_labor_costs_eur": round(unallocated_labor, 2),
+            "unallocated_costs_eur": round(
+                unallocated_direct + unallocated_material + unallocated_labor,
+                2,
+            ),
+            "unallocated_credit_notes_eur": round(
+                unallocated_credit_notes_eur, 2
+            ),
+        },
+        "by_bed": finalized_beds,
+        "by_crop": finalized_crops,
+        "note": (
+            "Prihodki sledijo datumu prodaje, dobropisi datumu izdaje, stroški pa "
+            "datumu posameznega vnosa. Poročilo po kulturah vključuje samo stroške, "
+            "pripisane konkretni setvi; preostanek je prikazan kot nealokiran. "
+            "Dobiček je poslovni rezultat in ni enak denarnemu toku."
+        ),
+    }
+
+
+@app.get("/api/profitability-report")
+def profitability_report(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    return build_profitability_report(db, start, end)
+
+
+@app.get("/api/profitability-report/export.csv")
+def export_profitability_report(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> Response:
+    report = build_profitability_report(db, start, end)
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        [
+            "Vrsta",
+            "Naziv",
+            "Površina m2",
+            "Kulture",
+            "Žetev kg",
+            "Prodano kg",
+            "Bruto prihodki EUR",
+            "Dobropisi EUR",
+            "Neto prihodki EUR",
+            "Neposredni stroški EUR",
+            "Material EUR",
+            "Delo EUR",
+            "Skupni stroški EUR",
+            "Dobiček EUR",
+            "Marža %",
+            "Žetev kg/m2",
+            "Dobiček EUR/m2",
+            "Ure dela",
+            "Dobiček EUR/uro",
+        ]
+    )
+    for row_type, rows, name_key in (
+        ("Gredica", report["by_bed"], "bed"),
+        ("Kultura", report["by_crop"], "crop"),
+    ):
+        for row in rows:
+            writer.writerow(
+                [
+                    row_type,
+                    spreadsheet_cell(row[name_key]),
+                    row["area_m2"],
+                    spreadsheet_cell(", ".join(row["crops"])),
+                    row["harvested_kg"],
+                    row["sold_kg"],
+                    row["gross_revenue_eur"],
+                    row["credit_notes_eur"],
+                    row["net_revenue_eur"],
+                    row["direct_costs_eur"],
+                    row["material_costs_eur"],
+                    row["labor_costs_eur"],
+                    row["costs_eur"],
+                    row["profit_eur"],
+                    row["margin_pct"] if row["margin_pct"] is not None else "",
+                    row["harvest_kg_m2"]
+                    if row["harvest_kg_m2"] is not None
+                    else "",
+                    row["profit_eur_m2"]
+                    if row["profit_eur_m2"] is not None
+                    else "",
+                    row["labor_hours"],
+                    row["profit_eur_per_labor_hour"]
+                    if row["profit_eur_per_labor_hour"] is not None
+                    else "",
+                ]
+            )
+    filename = f"growmaster-dobickonosnost-{report['range']['start']}-{report['range']['end']}.csv"
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/harvests")
