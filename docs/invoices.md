@@ -11,10 +11,11 @@ GrowMaster izdani račun shrani kot nespremenljiv posnetek prodajalca, kupca, po
 5. Pri nakazilu je arhivski PDF na voljo takoj.
 6. Pri gotovini ali kartici račun čaka na EOR. Končni PDF je zaklenjen, dokler uporabnik ne vnese EOR, ki ga je vrnil zunanji postopek davčnega potrjevanja.
 7. Izdani račun se ne briše in ne spreminja. Celotni popravek se izvede z dobropisom `DB-{prostor}-{naprava}-{leto}-{zaporedje}`, ki ostane povezan s prvotnim računom.
+8. Dejanski denar se po potrjenem dobropisu evidentira kot eno ali več delnih vračil. Skupaj ni mogoče vrniti več od nižjega zneska med dobropisom in dejansko prejetimi plačili.
 
 ## Pomembna omejitev
 
-GrowMaster trenutno nima neposredne povezave s FURS in ne uporablja namenskega digitalnega potrdila. Aplikacija zato sama ne pošilja računa v davčno potrjevanje in ne ustvarja EOR ali ZOI. Vneseni EOR/ZOI mora izvirati iz dejanskega zunanjega postopka. Izdaja dobropisa prav tako ne pomeni, da je bilo kupcu že izvedeno vračilo denarja; denarni tok prikazuje samo dejansko evidentirana plačila in stroške.
+GrowMaster trenutno nima neposredne povezave s FURS in ne uporablja namenskega digitalnega potrdila. Aplikacija zato sama ne pošilja računa v davčno potrjevanje in ne ustvarja EOR ali ZOI. Vneseni EOR/ZOI mora izvirati iz dejanskega zunanjega postopka. Izdaja dobropisa sama še ne pomeni vračila denarja: vračilo se evidentira posebej in šele takrat postane odliv v denarnem toku. Vračilo ni poslovni strošek gredice.
 
 Klavzula o DDV je nastavljiva, ker je pravilno besedilo odvisno od davčnega položaja prodajalca. Pred produkcijsko uporabo naj podatke, klavzulo, način številčenja in interni akt pregleda računovodja ali davčni svetovalec.
 

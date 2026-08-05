@@ -38,6 +38,7 @@ class Farm(Base):
     invoice_profile: Mapped["InvoiceProfile | None"] = relationship(back_populates="farm")
     invoices: Mapped[list["Invoice"]] = relationship(back_populates="farm")
     credit_notes: Mapped[list["CreditNote"]] = relationship(back_populates="farm")
+    refunds: Mapped[list["Refund"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -424,6 +425,29 @@ class CreditNote(Base):
 
     farm: Mapped[Farm] = relationship(back_populates="credit_notes")
     invoice: Mapped[Invoice] = relationship(back_populates="credit_note")
+    refunds: Mapped[list["Refund"]] = relationship(
+        back_populates="credit_note", cascade="all, delete-orphan"
+    )
+
+
+class Refund(Base):
+    __tablename__ = "refunds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    credit_note_id: Mapped[int] = mapped_column(
+        ForeignKey("credit_notes.id", ondelete="RESTRICT"), index=True
+    )
+    refund_date: Mapped[date] = mapped_column(Date, index=True)
+    amount_eur: Mapped[float] = mapped_column(Float)
+    payment_method: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="refunds")
+    credit_note: Mapped[CreditNote] = relationship(back_populates="refunds")
 
 
 class RetailSale(Base):

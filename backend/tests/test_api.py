@@ -617,6 +617,8 @@ def test_bed_planting_and_task_workflow() -> None:
             "net_eur": -25,
             "inflow_count": 4,
             "outflow_count": 1,
+            "refund_eur": 0,
+            "refund_count": 0,
             "cash_eur": 2.8,
             "card_eur": 0.7,
             "bank_transfer_eur": 14,
@@ -661,9 +663,22 @@ def test_bed_planting_and_task_workflow() -> None:
         credit_note_data = credit_note.json()
         assert credit_note_data["number"] == "DB-GM-01-2026-0001"
         assert credit_note_data["fiscal_status"] == "pending"
+        assert credit_note_data["paid_eur"] == 0.7
+        assert credit_note_data["refunded_eur"] == 0
+        assert credit_note_data["refundable_eur"] == 0.7
+        assert credit_note_data["refunds"] == []
         assert client.get(
             f"/api/credit-notes/{credit_note_data['id']}/pdf"
         ).status_code == 409
+        pending_refund = client.post(
+            f"/api/credit-notes/{credit_note_data['id']}/refunds",
+            json={
+                "refund_date": "2026-09-23",
+                "amount_eur": 0.4,
+                "payment_method": "card",
+            },
+        )
+        assert pending_refund.status_code == 409
         credit_confirmation = client.post(
             f"/api/credit-notes/{credit_note_data['id']}/fiscal-confirmation",
             json={"eor": "EOR-DOBROPIS-001", "zoi": "ZOI-DOBROPIS-001"},
@@ -675,6 +690,81 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert credit_pdf.status_code == 200
         assert credit_pdf.content.startswith(b"%PDF")
+
+        partial_refund = client.post(
+            f"/api/credit-notes/{credit_note_data['id']}/refunds",
+            json={
+                "refund_date": "2026-09-23",
+                "amount_eur": 0.4,
+                "payment_method": "card",
+                "notes": "Delno vračilo",
+            },
+        )
+        assert partial_refund.status_code == 201
+        assert partial_refund.json()["credit_note"]["refunded_eur"] == 0.4
+        assert partial_refund.json()["credit_note"]["refundable_eur"] == 0.3
+
+        over_refund = client.post(
+            f"/api/credit-notes/{credit_note_data['id']}/refunds",
+            json={
+                "refund_date": "2026-09-23",
+                "amount_eur": 0.31,
+                "payment_method": "card",
+            },
+        )
+        assert over_refund.status_code == 409
+
+        final_refund = client.post(
+            f"/api/credit-notes/{credit_note_data['id']}/refunds",
+            json={
+                "refund_date": "2026-09-23",
+                "amount_eur": 0.3,
+                "payment_method": "card",
+            },
+        )
+        assert final_refund.status_code == 201
+        assert final_refund.json()["credit_note"]["refunded_eur"] == 0.7
+        assert final_refund.json()["credit_note"]["refundable_eur"] == 0
+        assert len(final_refund.json()["credit_note"]["refunds"]) == 2
+        assert client.post(
+            f"/api/credit-notes/{credit_note_data['id']}/refunds",
+            json={
+                "refund_date": "2026-09-24",
+                "amount_eur": 0.01,
+                "payment_method": "cash",
+            },
+        ).status_code == 409
+
+        refund_cash_flow = client.get(
+            "/api/cash-flow?start=2026-09-23&end=2026-09-23"
+        )
+        assert refund_cash_flow.status_code == 200
+        refund_flow = refund_cash_flow.json()
+        assert refund_flow["summary"] == {
+            "inflow_eur": 0,
+            "outflow_eur": 0.7,
+            "net_eur": -0.7,
+            "inflow_count": 0,
+            "outflow_count": 2,
+            "refund_eur": 0.7,
+            "refund_count": 2,
+            "cash_eur": 0,
+            "card_eur": 0,
+            "bank_transfer_eur": 0,
+            "costs_by_category": {},
+        }
+        assert len(refund_flow["entries"]) == 2
+        assert {entry["source"] for entry in refund_flow["entries"]} == {"refund"}
+        assert {entry["method"] for entry in refund_flow["entries"]} == {"card"}
+        assert {entry["reference"] for entry in refund_flow["entries"]} == {
+            "DB-GM-01-2026-0001"
+        }
+        refund_cash_flow_csv = client.get(
+            "/api/cash-flow/export.csv?start=2026-09-23&end=2026-09-23"
+        )
+        assert refund_cash_flow_csv.status_code == 200
+        assert "Vračilo po dobropisu" in refund_cash_flow_csv.text
+        assert "DB-GM-01-2026-0001" in refund_cash_flow_csv.text
         assert client.post(
             f"/api/invoices/{fiscal_invoice_data['id']}/credit-notes",
             json={"issued_on": "2026-09-23", "reason": "Drugi dobropis"},
@@ -689,4 +779,7 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert credited["status"] == "credited"
         assert credited["credit_note"]["number"] == "DB-GM-01-2026-0001"
+        assert credited["credit_note"]["refunded_eur"] == 0.7
+        assert credited["credit_note"]["refundable_eur"] == 0
+        assert len(credited["credit_note"]["refunds"]) == 2
         assert invalid_cash_flow.status_code == 422

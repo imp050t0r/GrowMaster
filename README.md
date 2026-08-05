@@ -25,14 +25,16 @@ GrowMaster is a local-first farm management application for professional market 
 - archived PDF invoices, configurable due dates and links to receivables and payments
 - EOR/ZOI recording for cash or card invoices before the final PDF is released
 - immutable full credit notes that preserve the original invoice history
+- partial or full refund records linked to confirmed credit notes
+- safeguards against refunding more than the customer actually paid
 - date-filtered sales register with daily totals by payment method
 - separate totals for final consumers, business customers and issued invoices
 - semicolon-delimited UTF-8 CSV sales export for spreadsheet use
 - open and overdue receivables for invoiced orders with a 14-day due date
 - partial and final payment records with cash, card or bank-transfer method
 - payment history and outstanding balance per business invoice
-- actual cash-flow view combining paid direct sales and received invoice payments
-- cost outflows, daily net movement and payment-method breakdown
+- actual cash-flow view combining paid direct sales, received invoice payments and refunds
+- separate cost and refund outflows, daily net movement and payment-method breakdown
 - date-filtered UTF-8 CSV cash-flow export
 - seasonal crop plans with succession sowings and activation into field work
 - calendar for sowing, transplanting, harvest, tasks and deliveries
@@ -58,6 +60,6 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete farm-to-season-plan, direct-sale, invoice/PDF/credit-note, sales-report, receivables and cash-flow API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete farm-to-season-plan, direct-sale, invoice/PDF/credit-note/refund, sales-report, receivables and cash-flow API workflow test and builds the production frontend.
 
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).

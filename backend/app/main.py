@@ -32,6 +32,7 @@ from app.models import (
     Planting,
     RetailSale,
     RetailSaleItem,
+    Refund,
     Sale,
     SalesSettings,
     Task,
@@ -54,6 +55,7 @@ from app.schemas import (
     OrderPaymentCreate,
     OrderStatusUpdate,
     RetailSaleCreate,
+    RefundCreate,
     PlantingCreate,
     RotationPreview,
     SaleCreate,
@@ -75,7 +77,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -1559,8 +1561,18 @@ def next_document_number(
 def invoice_load_options() -> tuple:
     return (
         selectinload(Invoice.lines),
-        selectinload(Invoice.credit_note),
+        selectinload(Invoice.credit_note).selectinload(CreditNote.refunds),
         selectinload(Invoice.order).selectinload(Order.payments),
+    )
+
+
+def credit_note_load_options() -> tuple:
+    return (
+        selectinload(CreditNote.refunds),
+        selectinload(CreditNote.invoice).selectinload(Invoice.lines),
+        selectinload(CreditNote.invoice)
+        .selectinload(Invoice.order)
+        .selectinload(Order.payments),
     )
 
 
@@ -1568,9 +1580,26 @@ def fiscal_status(required: bool, eor: str | None) -> str:
     return "confirmed" if required and eor else "pending" if required else "not_required"
 
 
-def serialize_credit_note(credit_note: CreditNote | None) -> dict | None:
+def invoice_paid_eur(invoice: Invoice) -> float:
+    return (
+        round(sum(payment.amount_eur for payment in invoice.order.payments), 2)
+        if invoice.order
+        else invoice.total_eur
+    )
+
+
+def serialize_credit_note(
+    credit_note: CreditNote | None,
+    invoice: Invoice | None = None,
+) -> dict | None:
     if credit_note is None:
         return None
+    invoice = invoice or credit_note.invoice
+    paid_eur = invoice_paid_eur(invoice)
+    refunded_eur = round(sum(refund.amount_eur for refund in credit_note.refunds), 2)
+    refundable_eur = round(
+        max(0.0, min(credit_note.total_eur, paid_eur) - refunded_eur), 2
+    )
     return {
         "id": credit_note.id,
         "number": credit_note.number,
@@ -1583,15 +1612,27 @@ def serialize_credit_note(credit_note: CreditNote | None) -> dict | None:
         "eor": credit_note.eor,
         "zoi": credit_note.zoi,
         "pdf_sha256": credit_note.pdf_sha256,
+        "paid_eur": paid_eur,
+        "refunded_eur": refunded_eur,
+        "refundable_eur": refundable_eur,
+        "refunds": [
+            {
+                "id": refund.id,
+                "refund_date": refund.refund_date,
+                "amount_eur": refund.amount_eur,
+                "payment_method": refund.payment_method,
+                "notes": refund.notes,
+            }
+            for refund in sorted(
+                credit_note.refunds,
+                key=lambda item: (item.refund_date, item.id),
+            )
+        ],
     }
 
 
 def serialize_invoice(invoice: Invoice) -> dict:
-    paid_eur = (
-        round(sum(payment.amount_eur for payment in invoice.order.payments), 2)
-        if invoice.order
-        else invoice.total_eur
-    )
+    paid_eur = invoice_paid_eur(invoice)
     return {
         "id": invoice.id,
         "number": invoice.number,
@@ -1639,7 +1680,7 @@ def serialize_invoice(invoice: Invoice) -> dict:
             }
             for line in invoice.lines
         ],
-        "credit_note": serialize_credit_note(invoice.credit_note),
+        "credit_note": serialize_credit_note(invoice.credit_note, invoice),
     }
 
 
@@ -1877,7 +1918,7 @@ def confirm_credit_note_fiscalization(
             CreditNote.id == credit_note_id,
             CreditNote.farm_id == DEFAULT_FARM_ID,
         )
-        .options(selectinload(CreditNote.invoice).selectinload(Invoice.lines))
+        .options(*credit_note_load_options())
     )
     if credit_note is None:
         raise HTTPException(status_code=404, detail="Dobropis ne obstaja.")
@@ -1905,7 +1946,7 @@ def credit_note_pdf(credit_note_id: int, db: Session = Depends(get_db)) -> Respo
             CreditNote.id == credit_note_id,
             CreditNote.farm_id == DEFAULT_FARM_ID,
         )
-        .options(selectinload(CreditNote.invoice).selectinload(Invoice.lines))
+        .options(*credit_note_load_options())
     )
     if credit_note is None:
         raise HTTPException(status_code=404, detail="Dobropis ne obstaja.")
@@ -1924,6 +1965,71 @@ def credit_note_pdf(credit_note_id: int, db: Session = Depends(get_db)) -> Respo
             "Cache-Control": "private, no-store",
         },
     )
+
+
+@app.post(
+    "/api/credit-notes/{credit_note_id}/refunds",
+    status_code=status.HTTP_201_CREATED,
+)
+def record_refund(
+    credit_note_id: int,
+    payload: RefundCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    credit_note = db.scalar(
+        select(CreditNote)
+        .where(
+            CreditNote.id == credit_note_id,
+            CreditNote.farm_id == DEFAULT_FARM_ID,
+        )
+        .options(*credit_note_load_options())
+        .with_for_update()
+    )
+    if credit_note is None:
+        raise HTTPException(status_code=404, detail="Dobropis ne obstaja.")
+    if credit_note.fiscal_confirmation_required and not credit_note.eor:
+        raise HTTPException(
+            status_code=409,
+            detail="Pred vračilom zaključite davčno potrditev dobropisa in vpišite EOR.",
+        )
+    if payload.refund_date < credit_note.issued_on:
+        raise HTTPException(
+            status_code=422,
+            detail="Datum vračila ne sme biti pred datumom dobropisa.",
+        )
+    current = serialize_credit_note(credit_note, credit_note.invoice)
+    refundable_eur = current["refundable_eur"]
+    if refundable_eur <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Po tem dobropisu ni več mogoče evidentirati vračila.",
+        )
+    if payload.amount_eur > refundable_eur + 0.005:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Največji še vračljivi znesek je {refundable_eur:.2f} €.",
+        )
+    refund = Refund(
+        farm_id=DEFAULT_FARM_ID,
+        credit_note_id=credit_note.id,
+        refund_date=payload.refund_date,
+        amount_eur=round(payload.amount_eur, 2),
+        payment_method=payload.payment_method,
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    credit_note.refunds.append(refund)
+    db.commit()
+    return {
+        "message": "Vračilo je evidentirano kot dejanski denarni odliv.",
+        "refund": {
+            "id": refund.id,
+            "refund_date": refund.refund_date,
+            "amount_eur": refund.amount_eur,
+            "payment_method": refund.payment_method,
+            "notes": refund.notes,
+        },
+        "credit_note": serialize_credit_note(credit_note, credit_note.invoice),
+    }
 
 
 @app.get("/api/retail-sales")
@@ -2484,6 +2590,17 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
         )
         .options(selectinload(Cost.bed))
     ).all()
+    refunds = db.scalars(
+        select(Refund)
+        .where(
+            Refund.farm_id == DEFAULT_FARM_ID,
+            Refund.refund_date >= range_start,
+            Refund.refund_date <= range_end,
+        )
+        .options(
+            selectinload(Refund.credit_note).selectinload(CreditNote.invoice)
+        )
+    ).all()
 
     entries = []
     for retail_sale in retail_sales:
@@ -2531,12 +2648,28 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
                 "amount_eur": round(cost.amount_eur, 2),
             }
         )
+    for refund in refunds:
+        entries.append(
+            {
+                "key": f"refund-{refund.id}",
+                "date": refund.refund_date,
+                "direction": "outflow",
+                "source": "refund",
+                "reference": refund.credit_note.number,
+                "party": refund.credit_note.invoice.customer_name,
+                "description": "Vračilo po dobropisu",
+                "method": refund.payment_method,
+                "category": None,
+                "amount_eur": round(refund.amount_eur, 2),
+            }
+        )
     entries.sort(key=lambda entry: (entry["date"], entry["key"]), reverse=True)
 
     inflows = [entry for entry in entries if entry["direction"] == "inflow"]
     outflows = [entry for entry in entries if entry["direction"] == "outflow"]
     inflow_eur = round(sum(entry["amount_eur"] for entry in inflows), 2)
     outflow_eur = round(sum(entry["amount_eur"] for entry in outflows), 2)
+    refund_entries = [entry for entry in entries if entry["source"] == "refund"]
     methods = ("cash", "card", "bank_transfer")
     categories = sorted({entry["category"] for entry in outflows if entry["category"]})
     daily = []
@@ -2575,6 +2708,10 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
             "net_eur": round(inflow_eur - outflow_eur, 2),
             "inflow_count": len(inflows),
             "outflow_count": len(outflows),
+            "refund_eur": round(
+                sum(entry["amount_eur"] for entry in refund_entries), 2
+            ),
+            "refund_count": len(refund_entries),
             **{
                 f"{method}_eur": round(
                     sum(
@@ -2602,7 +2739,8 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
         "entries": entries,
         "note": (
             "Denarni tok vključuje poravnane hitre prodaje, dejansko evidentirana "
-            "plačila računov in stroške, ki se štejejo kot odliv na datum stroška. "
+            "plačila računov, dejanska vračila po dobropisih in stroške. Vračilo "
+            "je odliv na datum vračila, vendar ni poslovni strošek gredice. "
             "Izdani računi brez plačila ter stare ročne prodaje brez načina plačila "
             "niso vključeni."
         ),
