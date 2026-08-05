@@ -1,6 +1,17 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, String, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -13,6 +24,7 @@ class Farm(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True)
 
     beds: Mapped[list["Bed"]] = relationship(back_populates="farm")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -41,6 +53,7 @@ class Variety(Base):
 
 class Bed(Base):
     __tablename__ = "beds"
+    __table_args__ = (UniqueConstraint("farm_id", "name", name="uq_bed_farm_name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
@@ -52,6 +65,7 @@ class Bed(Base):
 
     farm: Mapped[Farm] = relationship(back_populates="beds")
     plantings: Mapped[list["Planting"]] = relationship(back_populates="bed")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="bed")
 
     @property
     def area_m2(self) -> float:
@@ -75,3 +89,32 @@ class Planting(Base):
     bed: Mapped[Bed] = relationship(back_populates="plantings")
     crop: Mapped[Crop] = relationship()
     variety: Mapped[Variety] = relationship()
+    tasks: Mapped[list["Task"]] = relationship(back_populates="planting")
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    bed_id: Mapped[int | None] = mapped_column(
+        ForeignKey("beds.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    planting_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plantings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(160))
+    task_type: Mapped[str] = mapped_column(String(50), default="general")
+    due_date: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="planned", index=True)
+    priority: Mapped[str] = mapped_column(String(20), default="normal")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quantity_used: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="tasks")
+    bed: Mapped[Bed | None] = relationship(back_populates="tasks")
+    planting: Mapped[Planting | None] = relationship(back_populates="tasks")
