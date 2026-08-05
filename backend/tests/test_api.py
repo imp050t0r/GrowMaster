@@ -394,3 +394,44 @@ def test_bed_planting_and_task_workflow() -> None:
             item for item in retail_stock if item["harvest_id"] == harvest.json()["id"]
         )
         assert retail_stock["available_kg"] == 0
+
+        sales_report = client.get(
+            "/api/sales-report?start=2026-09-12&end=2026-09-20"
+        )
+        assert sales_report.status_code == 200
+        report = sales_report.json()
+        assert report["summary"] == {
+            "transactions": 3,
+            "total_eur": 17.5,
+            "cash_eur": 2.8,
+            "card_eur": 0.7,
+            "bank_transfer_eur": 0,
+            "invoice_eur": 14.7,
+            "unclassified_eur": 0,
+            "consumer_eur": 2.8,
+            "business_eur": 14.7,
+            "invoice_count": 2,
+        }
+        assert len(report["daily"]) == 2
+        assert report["daily"][0]["date"] == "2026-09-20"
+        assert {entry["source"] for entry in report["entries"]} == {
+            "retail_sale",
+            "order",
+        }
+        order_entry = next(
+            entry for entry in report["entries"] if entry["source"] == "order"
+        )
+        assert order_entry["payment_method"] == "invoice"
+
+        sales_csv = client.get(
+            "/api/sales-report/export.csv?start=2026-09-12&end=2026-09-20"
+        )
+        assert sales_csv.status_code == 200
+        assert sales_csv.headers["content-type"].startswith("text/csv")
+        assert "GM-2026" in sales_csv.text
+        assert "Končni potrošnik" in sales_csv.text
+
+        invalid_report = client.get(
+            "/api/sales-report?start=2026-09-21&end=2026-09-20"
+        )
+        assert invalid_report.status_code == 422
