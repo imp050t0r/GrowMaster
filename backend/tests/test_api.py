@@ -49,11 +49,35 @@ def test_bed_planting_and_task_workflow() -> None:
         ]
         assert len(planting_tasks) == 3
 
+        worker = client.post(
+            "/api/workers",
+            json={
+                "name": "Maja Kovač",
+                "role": "Pridelava",
+                "hourly_rate_eur": 12,
+            },
+        )
+        assert worker.status_code == 201
+        worker_data = worker.json()
+        assert worker_data["hourly_rate_eur"] == 12
+        assert client.post(
+            "/api/workers",
+            json={"name": "maja kovač", "hourly_rate_eur": 15},
+        ).status_code == 409
+        assert len(client.get("/api/workers").json()) == 1
+
+        invalid_labor_task = client.post(
+            f"/api/tasks/{planting_tasks[1]['id']}/complete",
+            json={"worker_id": worker_data["id"], "duration_minutes": 0},
+        )
+        assert invalid_labor_task.status_code == 422
+
         task = planting_tasks[0]
         completed = client.post(
             f"/api/tasks/{task['id']}/complete",
             json={
                 "duration_minutes": 25,
+                "worker_id": worker_data["id"],
                 "quantity_used": 120,
                 "unit": "L",
                 "notes": "Pregled in zalivanje zaključena.",
@@ -62,6 +86,53 @@ def test_bed_planting_and_task_workflow() -> None:
         assert completed.status_code == 200
         assert completed.json()["status"] == "completed"
         assert completed.json()["duration_minutes"] == 25
+        assert completed.json()["labor_worker"] == "Maja Kovač"
+        assert completed.json()["labor_cost_eur"] == 5
+
+        manual_labor = client.post(
+            "/api/labor-entries",
+            json={
+                "worker_id": worker_data["id"],
+                "work_date": "2026-09-12",
+                "duration_minutes": 90,
+                "hourly_rate_eur": 15,
+                "description": "Splošna priprava orodja",
+            },
+        )
+        assert manual_labor.status_code == 201
+        assert manual_labor.json()["bed"] is None
+        assert manual_labor.json()["hours"] == 1.5
+        assert manual_labor.json()["total_cost_eur"] == 22.5
+        assert client.post(
+            "/api/labor-entries",
+            json={
+                "worker_id": 999999,
+                "work_date": "2026-09-12",
+                "duration_minutes": 30,
+                "description": "Neveljaven izvajalec",
+            },
+        ).status_code == 404
+
+        labor_report = client.get(
+            "/api/labor-report?start=2026-08-01&end=2026-09-30"
+        )
+        assert labor_report.status_code == 200
+        labor_data = labor_report.json()
+        assert labor_data["summary"] == {
+            "entry_count": 2,
+            "duration_minutes": 115,
+            "hours": 1.92,
+            "cost_eur": 27.5,
+            "unallocated_hours": 1.5,
+            "unallocated_cost_eur": 22.5,
+        }
+        assert labor_data["by_worker"][0]["cost_eur"] == 27.5
+        assert labor_data["by_bed"][0]["bed"] == bed["name"]
+        assert labor_data["by_bed"][0]["cost_eur"] == 5
+        assert len(labor_data["entries"]) == 2
+        assert client.get(
+            "/api/labor-report?start=2026-10-01&end=2026-09-30"
+        ).status_code == 422
 
         finished = client.post(f"/api/plantings/{planting.json()['id']}/finish")
         assert finished.status_code == 200
@@ -126,9 +197,12 @@ def test_bed_planting_and_task_workflow() -> None:
         economics = client.get("/api/economics/by-bed").json()
         bed_economics = next(item for item in economics if item["bed_id"] == bed["id"])
         assert bed_economics["harvested_kg"] == 18.5
-        assert bed_economics["costs_eur"] == 42.5
+        assert bed_economics["direct_costs_eur"] == 42.5
+        assert bed_economics["material_costs_eur"] == 0
+        assert bed_economics["labor_costs_eur"] == 5
+        assert bed_economics["costs_eur"] == 47.5
         assert bed_economics["revenue_eur"] == 90
-        assert bed_economics["profit_eur"] == 47.5
+        assert bed_economics["profit_eur"] == 42.5
 
         customer = client.post(
             "/api/customers",
@@ -1130,8 +1204,9 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert economics_after_usage["direct_costs_eur"] == 42.5
         assert economics_after_usage["material_costs_eur"] == 6.75
-        assert economics_after_usage["costs_eur"] == 49.25
-        assert economics_after_usage["profit_eur"] == 59.25
+        assert economics_after_usage["labor_costs_eur"] == 5
+        assert economics_after_usage["costs_eur"] == 54.25
+        assert economics_after_usage["profit_eur"] == 54.25
 
         supplier_partial_payment = client.post(
             f"/api/purchase-orders/{purchase_data['id']}/payments",

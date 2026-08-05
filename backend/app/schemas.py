@@ -55,6 +55,7 @@ class TaskCreate(BaseModel):
 
 class TaskComplete(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=0, le=1440)
+    worker_id: int | None = None
     quantity_used: float | None = Field(default=None, ge=0)
     unit: str | None = Field(default=None, max_length=20)
     notes: str | None = Field(default=None, max_length=2000)
@@ -216,6 +217,22 @@ class SupplierPaymentCreate(BaseModel):
     amount_eur: float = Field(gt=0, le=1000000)
     payment_method: Literal["cash", "card", "bank_transfer"]
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class WorkerCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    role: str | None = Field(default=None, max_length=120)
+    hourly_rate_eur: float = Field(ge=0, le=100000)
+
+
+class LaborEntryCreate(BaseModel):
+    worker_id: int
+    bed_id: int | None = None
+    planting_id: int | None = None
+    work_date: date
+    duration_minutes: int = Field(gt=0, le=1440)
+    hourly_rate_eur: float | None = Field(default=None, ge=0, le=100000)
+    description: str = Field(min_length=1, max_length=200)
 
 
 class SalesSettingsUpdate(BaseModel):
