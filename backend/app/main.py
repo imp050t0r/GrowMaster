@@ -21,6 +21,7 @@ from app.models import (
     Harvest,
     Order,
     OrderItem,
+    OrderPayment,
     Planting,
     RetailSale,
     RetailSaleItem,
@@ -39,6 +40,7 @@ from app.schemas import (
     CustomerCreate,
     HarvestCreate,
     OrderCreate,
+    OrderPaymentCreate,
     OrderStatusUpdate,
     RetailSaleCreate,
     PlantingCreate,
@@ -61,7 +63,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="0.8.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -693,6 +695,17 @@ def serialize_customer(customer: Customer) -> dict:
 
 
 def serialize_order(order: Order) -> dict:
+    paid_eur = round(sum(payment.amount_eur for payment in order.payments), 2)
+    outstanding_eur = round(max(0.0, order.total_eur - paid_eur), 2)
+    payment_status = (
+        "paid"
+        if order.status == "fulfilled" and outstanding_eur <= 0
+        else "partial"
+        if paid_eur > 0
+        else "open"
+        if order.status == "fulfilled"
+        else "pending"
+    )
     return {
         "id": order.id,
         "number": f"GM-{order.order_date.year}-{order.id:04d}",
@@ -706,6 +719,19 @@ def serialize_order(order: Order) -> dict:
         "status": order.status,
         "notes": order.notes,
         "total_eur": order.total_eur,
+        "paid_eur": paid_eur,
+        "outstanding_eur": outstanding_eur,
+        "payment_status": payment_status,
+        "payments": [
+            {
+                "id": payment.id,
+                "payment_date": payment.payment_date,
+                "amount_eur": payment.amount_eur,
+                "payment_method": payment.payment_method,
+                "notes": payment.notes,
+            }
+            for payment in sorted(order.payments, key=lambda item: (item.payment_date, item.id))
+        ],
         "items": [
             {
                 "id": item.id,
@@ -726,6 +752,7 @@ def serialize_order(order: Order) -> dict:
 def order_load_options() -> tuple:
     return (
         selectinload(Order.customer).selectinload(Customer.profile),
+        selectinload(Order.payments),
         selectinload(Order.items)
         .selectinload(OrderItem.harvest)
         .selectinload(Harvest.bed),
@@ -939,11 +966,8 @@ def order_document(
     if document_type == "invoice":
         if order.status != "fulfilled":
             raise HTTPException(status_code=409, detail="Račun je na voljo po dostavi naročila.")
-        customer_type = (
-            order.customer.profile.customer_type if order.customer.profile else "consumer"
-        )
         settings = get_sales_settings(db)
-        if customer_type == "consumer" and settings.basic_agriculture_invoice_exemption:
+        if not order_requires_invoice(order, settings):
             raise HTTPException(
                 status_code=409,
                 detail="Za končnega potrošnika ob vključeni izjemi 81.a račun ni predviden.",
@@ -1344,6 +1368,11 @@ def retail_sale_requires_invoice(retail_sale: RetailSale, settings: SalesSetting
     return customer_type == "business" or not settings.basic_agriculture_invoice_exemption
 
 
+def order_requires_invoice(order: Order, settings: SalesSettings) -> bool:
+    customer_type = order.customer.profile.customer_type if order.customer.profile else "consumer"
+    return customer_type == "business" or not settings.basic_agriculture_invoice_exemption
+
+
 def serialize_retail_sale(retail_sale: RetailSale, settings: SalesSettings) -> dict:
     customer_type = (
         retail_sale.customer.profile.customer_type
@@ -1592,10 +1621,7 @@ def build_sales_report(db: Session, start: date | None, end: date | None) -> dic
         )
     for order in orders:
         customer_type = order.customer.profile.customer_type if order.customer.profile else "consumer"
-        invoice_required = (
-            customer_type == "business"
-            or not settings.basic_agriculture_invoice_exemption
-        )
+        invoice_required = order_requires_invoice(order, settings)
         entries.append(
             {
                 "key": f"order-{order.id}",
@@ -1736,3 +1762,173 @@ def export_sales_report(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+PAYMENT_TERMS_DAYS = 14
+
+
+def serialize_receivable(order: Order, as_of: date) -> dict:
+    payments = sorted(
+        (payment for payment in order.payments if payment.payment_date <= as_of),
+        key=lambda item: (item.payment_date, item.id),
+    )
+    paid_eur = round(sum(payment.amount_eur for payment in payments), 2)
+    due_date = order.delivery_date + timedelta(days=PAYMENT_TERMS_DAYS)
+    outstanding_eur = round(max(0.0, order.total_eur - paid_eur), 2)
+    status_value = (
+        "paid"
+        if outstanding_eur <= 0
+        else "overdue"
+        if due_date < as_of
+        else "partial"
+        if paid_eur > 0
+        else "open"
+    )
+    return {
+        "order_id": order.id,
+        "invoice_number": f"R-{order.order_date.year}-{order.id:04d}",
+        "customer": order.customer.name,
+        "customer_type": (
+            order.customer.profile.customer_type if order.customer.profile else "consumer"
+        ),
+        "delivery_date": order.delivery_date,
+        "due_date": due_date,
+        "total_eur": order.total_eur,
+        "paid_eur": paid_eur,
+        "outstanding_eur": outstanding_eur,
+        "status": status_value,
+        "days_overdue": max(0, (as_of - due_date).days) if outstanding_eur > 0 else 0,
+        "payments": [
+            {
+                "id": payment.id,
+                "payment_date": payment.payment_date,
+                "amount_eur": payment.amount_eur,
+                "payment_method": payment.payment_method,
+                "notes": payment.notes,
+            }
+            for payment in payments
+        ],
+    }
+
+
+@app.get("/api/receivables")
+def list_receivables(
+    as_of: date | None = None,
+    include_paid: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    target_date = as_of or date.today()
+    settings = get_sales_settings(db)
+    orders = db.scalars(
+        select(Order)
+        .where(
+            Order.farm_id == DEFAULT_FARM_ID,
+            Order.status == "fulfilled",
+            Order.delivery_date <= target_date,
+        )
+        .options(*order_load_options())
+    ).all()
+    all_receivables = [
+        serialize_receivable(order, target_date)
+        for order in orders
+        if order_requires_invoice(order, settings)
+    ]
+    receivables = all_receivables
+    if not include_paid:
+        receivables = [item for item in receivables if item["status"] != "paid"]
+    receivables.sort(
+        key=lambda item: (
+            item["status"] == "paid",
+            item["status"] != "overdue",
+            item["due_date"],
+            item["order_id"],
+        )
+    )
+    return {
+        "as_of": target_date,
+        "payment_terms_days": PAYMENT_TERMS_DAYS,
+        "summary": {
+            "invoice_count": len(all_receivables),
+            "open_count": sum(item["outstanding_eur"] > 0 for item in all_receivables),
+            "overdue_count": sum(item["status"] == "overdue" for item in all_receivables),
+            "invoiced_eur": round(sum(item["total_eur"] for item in all_receivables), 2),
+            "paid_eur": round(sum(item["paid_eur"] for item in all_receivables), 2),
+            "outstanding_eur": round(
+                sum(item["outstanding_eur"] for item in all_receivables), 2
+            ),
+            "overdue_eur": round(
+                sum(
+                    item["outstanding_eur"]
+                    for item in all_receivables
+                    if item["status"] == "overdue"
+                ),
+                2,
+            ),
+        },
+        "items": receivables,
+        "note": (
+            "Neposredne prodaje so poravnane ob prodaji. Terjatve vključujejo "
+            "dostavljena naročila, za katera je potreben račun."
+        ),
+    }
+
+
+@app.post("/api/orders/{order_id}/payments", status_code=status.HTTP_201_CREATED)
+def record_order_payment(
+    order_id: int,
+    payload: OrderPaymentCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    order = db.scalar(
+        select(Order)
+        .where(Order.id == order_id, Order.farm_id == DEFAULT_FARM_ID)
+        .options(*order_load_options())
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="Naročilo ne obstaja.")
+    if order.status != "fulfilled":
+        raise HTTPException(
+            status_code=409,
+            detail="Plačilo je mogoče evidentirati po dostavi naročila.",
+        )
+    settings = get_sales_settings(db)
+    if not order_requires_invoice(order, settings):
+        raise HTTPException(
+            status_code=409,
+            detail="Za to naročilo ni odprtega računa.",
+        )
+    if payload.payment_date < order.order_date:
+        raise HTTPException(
+            status_code=422,
+            detail="Datum plačila ne sme biti pred datumom naročila.",
+        )
+    outstanding_eur = serialize_order(order)["outstanding_eur"]
+    if outstanding_eur <= 0:
+        raise HTTPException(status_code=409, detail="Račun je že v celoti poravnan.")
+    if payload.amount_eur > outstanding_eur + 0.005:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Odprti znesek je {outstanding_eur:.2f} €.",
+        )
+    db.add(
+        OrderPayment(
+            farm_id=DEFAULT_FARM_ID,
+            order_id=order.id,
+            payment_date=payload.payment_date,
+            amount_eur=payload.amount_eur,
+            payment_method=payload.payment_method,
+            notes=payload.notes.strip() if payload.notes else None,
+        )
+    )
+    db.commit()
+    db.expire_all()
+    order = db.scalar(
+        select(Order).where(Order.id == order.id).options(*order_load_options())
+    )
+    receivable = serialize_receivable(order, payload.payment_date)
+    message = (
+        "Račun je v celoti poravnan."
+        if receivable["status"] == "paid"
+        else "Delno plačilo je evidentirano."
+    )
+    return {"message": message, **receivable}
