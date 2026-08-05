@@ -154,6 +154,11 @@ class RetailSaleCreate(BaseModel):
     items: list[RetailSaleItemCreate] = Field(min_length=1, max_length=100)
 
 
+class ProductPriceUpdate(BaseModel):
+    quality: Literal["A", "B"]
+    price_per_kg_eur: float = Field(gt=0, le=100000)
+
+
 class SalesSettingsUpdate(BaseModel):
     basic_agriculture_invoice_exemption: bool = True
     seller_name: str = Field(min_length=1, max_length=160)

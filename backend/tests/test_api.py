@@ -143,10 +143,31 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert customer.status_code == 201
 
+        price_a = client.put(
+            f"/api/price-list/{crop['id']}",
+            json={"quality": "A", "price_per_kg_eur": 7},
+        )
+        assert price_a.status_code == 200
+        assert price_a.json()["crop"] == "Rukola"
+        assert price_a.json()["price_per_kg_eur"] == 7
+        price_b = client.put(
+            f"/api/price-list/{crop['id']}",
+            json={"quality": "B", "price_per_kg_eur": 5},
+        )
+        assert price_b.status_code == 200
+        prices = client.get("/api/price-list")
+        assert prices.status_code == 200
+        assert [(item["quality"], item["price_per_kg_eur"]) for item in prices.json()] == [
+            ("A", 7),
+            ("B", 5),
+        ]
+
         inventory = client.get("/api/inventory").json()
         stock = next(item for item in inventory if item["harvest_id"] == harvest.json()["id"])
         assert stock["available_kg"] == 3.5
         assert stock["reserved_kg"] == 0
+        assert stock["crop_id"] == crop["id"]
+        assert stock["suggested_price_per_kg_eur"] == 7
 
         reserved_order = client.post(
             "/api/orders",
@@ -392,6 +413,24 @@ def test_bed_planting_and_task_workflow() -> None:
         assert settings.status_code == 200
         assert settings.json()["basic_agriculture_invoice_exemption"] is True
 
+        second_quality_harvest = client.post(
+            "/api/harvests",
+            json={
+                "planting_id": planting.json()["id"],
+                "harvest_date": "2026-09-20",
+                "quantity_kg": 1,
+                "quality": "B",
+                "notes": "Druga kakovost za tržnico.",
+            },
+        )
+        assert second_quality_harvest.status_code == 201
+        basket_inventory = client.get("/api/inventory").json()
+        second_stock = next(
+            item for item in basket_inventory
+            if item["harvest_id"] == second_quality_harvest.json()["id"]
+        )
+        assert second_stock["suggested_price_per_kg_eur"] == 5
+
         anonymous_sale = client.post(
             "/api/retail-sales",
             json={
@@ -402,7 +441,12 @@ def test_bed_planting_and_task_workflow() -> None:
                         "harvest_id": harvest.json()["id"],
                         "quantity_kg": 0.4,
                         "price_per_kg_eur": 7,
-                    }
+                    },
+                    {
+                        "harvest_id": second_quality_harvest.json()["id"],
+                        "quantity_kg": 0.2,
+                        "price_per_kg_eur": 5,
+                    },
                 ],
             },
         )
@@ -410,7 +454,8 @@ def test_bed_planting_and_task_workflow() -> None:
         assert anonymous_sale.json()["customer"] == "Končni potrošnik"
         assert anonymous_sale.json()["customer_type"] == "consumer"
         assert anonymous_sale.json()["invoice_required"] is False
-        assert anonymous_sale.json()["total_eur"] == 2.8
+        assert anonymous_sale.json()["total_eur"] == 3.8
+        assert len(anonymous_sale.json()["items"]) == 2
 
         receipt = client.get(
             f"/api/retail-sales/{anonymous_sale.json()['id']}/document?document_type=receipt"
@@ -492,13 +537,13 @@ def test_bed_planting_and_task_workflow() -> None:
         report = sales_report.json()
         assert report["summary"] == {
             "transactions": 3,
-            "total_eur": 17.5,
-            "cash_eur": 2.8,
+            "total_eur": 18.5,
+            "cash_eur": 3.8,
             "card_eur": 0.7,
             "bank_transfer_eur": 0,
             "invoice_eur": 14.7,
             "unclassified_eur": 0,
-            "consumer_eur": 2.8,
+            "consumer_eur": 3.8,
             "business_eur": 14.7,
             "invoice_count": 2,
         }
@@ -612,14 +657,14 @@ def test_bed_planting_and_task_workflow() -> None:
         assert cash_flow.status_code == 200
         flow = cash_flow.json()
         assert flow["summary"] == {
-            "inflow_eur": 17.5,
+            "inflow_eur": 18.5,
             "outflow_eur": 42.5,
-            "net_eur": -25,
+            "net_eur": -24,
             "inflow_count": 4,
             "outflow_count": 1,
             "refund_eur": 0,
             "refund_count": 0,
-            "cash_eur": 2.8,
+            "cash_eur": 3.8,
             "card_eur": 0.7,
             "bank_transfer_eur": 14,
             "costs_by_category": {"labor": 42.5},
@@ -636,7 +681,7 @@ def test_bed_planting_and_task_workflow() -> None:
             "2026-09-09",
         ]
         assert flow["daily"][0]["net_eur"] == 10
-        assert flow["daily"][1]["inflow_eur"] == 7.5
+        assert flow["daily"][1]["inflow_eur"] == 8.5
         assert flow["daily"][2]["net_eur"] == -42.5
 
         cash_flow_csv = client.get(

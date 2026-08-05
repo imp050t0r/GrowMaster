@@ -19,6 +19,8 @@ GrowMaster is a local-first farm management application for professional market 
 - customers and orders with stock reservation, fulfilment and cancellation
 - customer types for final consumers and business entities
 - quick market and farm-gate sales with anonymous final-consumer checkout
+- multi-item market basket with live totals and stock validation
+- reusable price list by crop and produce quality with automatic price suggestions
 - configurable Article 81.a basic-agriculture invoice exemption
 - printable internal sale confirmations and delivery notes
 - immutable business invoices with yearly sequential numbering and seller/customer snapshots
@@ -60,6 +62,6 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete farm-to-season-plan, direct-sale, invoice/PDF/credit-note/refund, sales-report, receivables and cash-flow API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete farm-to-season-plan, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables and cash-flow API workflow test and builds the production frontend.
 
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).

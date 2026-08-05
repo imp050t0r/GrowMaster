@@ -41,6 +41,7 @@ function App() {
   const [harvests, setHarvests] = useState([]);
   const [economics, setEconomics] = useState([]);
   const [inventory, setInventory] = useState([]);
+  const [priceList, setPriceList] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [orders, setOrders] = useState([]);
   const [document, setDocument] = useState(null);
@@ -97,6 +98,8 @@ function App() {
   const [orderForm, setOrderForm] = useState({ customer_id: "", harvest_id: "", order_date: today, delivery_date: today, quantity_kg: "", price_per_kg_eur: "", notes: "" });
   const [planForm, setPlanForm] = useState({ bed_id: "", crop_id: "", variety_id: "", sowing_date: today, transplant_date: "", expected_yield_kg: "", succession_count: "1", succession_interval_days: "14", notes: "" });
   const [quickSaleForm, setQuickSaleForm] = useState({ customer_id: "", harvest_id: "", sale_date: today, payment_method: "cash", quantity_kg: "", price_per_kg_eur: "" });
+  const [quickSaleCart, setQuickSaleCart] = useState([]);
+  const [priceForm, setPriceForm] = useState({ crop_id: "", quality: "A", price_per_kg_eur: "" });
   const [paymentForm, setPaymentForm] = useState({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" });
 
   const selectedCrop = useMemo(
@@ -109,7 +112,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -118,6 +121,7 @@ function App() {
       apiRequest("/api/harvests"),
       apiRequest("/api/economics/by-bed"),
       apiRequest("/api/inventory"),
+      apiRequest("/api/price-list"),
       apiRequest("/api/customers"),
       apiRequest("/api/orders"),
       apiRequest("/api/plans"),
@@ -139,6 +143,7 @@ function App() {
     setHarvests(harvestData);
     setEconomics(economicsData);
     setInventory(inventoryData);
+    setPriceList(priceData);
     setCustomers(customerData);
     setOrders(orderData);
     setPlans(planData);
@@ -159,7 +164,12 @@ function App() {
       customer_id: current.customer_id || customerData[0]?.id || "",
       harvest_id: current.harvest_id || inventoryData.find((item) => item.available_kg > 0)?.harvest_id || "",
     }));
-    setQuickSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || inventoryData.find((item) => item.available_kg > 0)?.harvest_id || "" }));
+    setQuickSaleForm((current) => {
+      const selected = inventoryData.find((item) => String(item.harvest_id) === String(current.harvest_id) && item.available_kg > 0) || inventoryData.find((item) => item.available_kg > 0);
+      const sameSelection = String(selected?.harvest_id || "") === String(current.harvest_id || "");
+      return { ...current, harvest_id: selected?.harvest_id || "", price_per_kg_eur: sameSelection && current.price_per_kg_eur ? current.price_per_kg_eur : selected?.suggested_price_per_kg_eur || "" };
+    });
+    setPriceForm((current) => ({ ...current, crop_id: current.crop_id || cropData[0]?.id || "" }));
     setPlanForm((current) => {
       const cropId = current.crop_id || cropData[0]?.id || "";
       const crop = cropData.find((item) => String(item.id) === String(cropId));
@@ -362,11 +372,54 @@ function App() {
     catch (requestError) { setError(requestError.message); }
   }
 
-  async function createQuickSale(event) {
+  function changeQuickSaleHarvest(event) {
+    const harvestId = event.target.value;
+    const item = inventory.find((entry) => String(entry.harvest_id) === String(harvestId));
+    setQuickSaleForm({ ...quickSaleForm, harvest_id: harvestId, price_per_kg_eur: item?.suggested_price_per_kg_eur || "" });
+  }
+
+  function addQuickSaleItem(event) {
+    event.preventDefault(); clearMessages();
+    const inventoryItem = inventory.find((item) => String(item.harvest_id) === String(quickSaleForm.harvest_id));
+    const quantity = Number(quickSaleForm.quantity_kg);
+    const price = Number(quickSaleForm.price_per_kg_eur);
+    if (!inventoryItem || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) {
+      setError("Izberite artikel ter vnesite veljavno količino in ceno."); return;
+    }
+    if (quickSaleCart.some((item) => item.harvest_id === inventoryItem.harvest_id)) {
+      setError("Ta zaloga je že v košarici. Postavko odstranite in jo dodajte znova."); return;
+    }
+    if (quantity > inventoryItem.available_kg) {
+      setError(`Na voljo je največ ${inventoryItem.available_kg.toFixed(2)} kg.`); return;
+    }
+    setQuickSaleCart([...quickSaleCart, {
+      harvest_id: inventoryItem.harvest_id,
+      crop: inventoryItem.crop,
+      variety: inventoryItem.variety,
+      bed: inventoryItem.bed,
+      quality: inventoryItem.quality,
+      quantity_kg: quantity,
+      price_per_kg_eur: price,
+      line_total_eur: Number((quantity * price).toFixed(2)),
+    }]);
+    setQuickSaleForm({ ...quickSaleForm, quantity_kg: "" });
+  }
+
+  async function createQuickSale() {
+    if (quickSaleCart.length === 0) { setError("V košarico dodajte vsaj en artikel."); return; }
+    clearMessages();
+    try {
+      const items = quickSaleCart.map(({ harvest_id, quantity_kg, price_per_kg_eur }) => ({ harvest_id, quantity_kg, price_per_kg_eur }));
+      const data = await apiRequest("/api/retail-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer_id: quickSaleForm.customer_id ? Number(quickSaleForm.customer_id) : null, sale_date: quickSaleForm.sale_date, payment_method: quickSaleForm.payment_method, items }) });
+      setQuickSaleCart([]); setQuickSaleForm({ ...quickSaleForm, quantity_kg: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function saveProductPrice(event) {
     event.preventDefault(); clearMessages();
     try {
-      const data = await apiRequest("/api/retail-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer_id: quickSaleForm.customer_id ? Number(quickSaleForm.customer_id) : null, sale_date: quickSaleForm.sale_date, payment_method: quickSaleForm.payment_method, items: [{ harvest_id: Number(quickSaleForm.harvest_id), quantity_kg: Number(quickSaleForm.quantity_kg), price_per_kg_eur: Number(quickSaleForm.price_per_kg_eur) }] }) });
-      setQuickSaleForm({ ...quickSaleForm, quantity_kg: "", price_per_kg_eur: "" }); setNotice(data.message); await loadData();
+      const data = await apiRequest(`/api/price-list/${priceForm.crop_id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quality: priceForm.quality, price_per_kg_eur: Number(priceForm.price_per_kg_eur) }) });
+      setPriceForm({ ...priceForm, price_per_kg_eur: "" }); setNotice(data.message); await loadData();
     } catch (requestError) { setError(requestError.message); }
   }
 
@@ -541,7 +594,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.1</span>
+        <span className="status-pill">MVP 1.2</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -613,13 +666,16 @@ function App() {
         />
       )}
       {view === "orders" && (
-        <OrdersView inventory={inventory} customers={customers} orders={orders}
+        <OrdersView inventory={inventory} crops={crops} customers={customers} orders={orders}
           customerForm={customerForm} setCustomerForm={setCustomerForm} createCustomer={createCustomer}
           orderForm={orderForm} setOrderForm={setOrderForm} createOrder={createOrder}
           changeOrderStatus={changeOrderStatus} openOrderDocument={openOrderDocument}
           issueInvoice={issueInvoice} openInvoicePdf={openInvoicePdf}
           document={document} setDocument={setDocument} retailSales={retailSales}
           quickSaleForm={quickSaleForm} setQuickSaleForm={setQuickSaleForm} createQuickSale={createQuickSale} openRetailDocument={openRetailDocument}
+          quickSaleCart={quickSaleCart} addQuickSaleItem={addQuickSaleItem} changeQuickSaleHarvest={changeQuickSaleHarvest}
+          removeQuickSaleItem={(harvestId) => setQuickSaleCart(quickSaleCart.filter((item) => item.harvest_id !== harvestId))}
+          priceList={priceList} priceForm={priceForm} setPriceForm={setPriceForm} saveProductPrice={saveProductPrice}
           salesSettings={salesSettings} setSalesSettings={setSalesSettings} saveSalesSettings={saveSalesSettings} />
       )}
       {view === "invoices" && (
@@ -813,23 +869,30 @@ function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setH
   </>;
 }
 
-function OrdersView({ inventory, customers, orders, customerForm, setCustomerForm, createCustomer, orderForm, setOrderForm, createOrder, changeOrderStatus, openOrderDocument, issueInvoice, openInvoicePdf, document, setDocument, retailSales, quickSaleForm, setQuickSaleForm, createQuickSale, openRetailDocument, salesSettings, setSalesSettings, saveSalesSettings }) {
+function OrdersView({ inventory, crops, customers, orders, customerForm, setCustomerForm, createCustomer, orderForm, setOrderForm, createOrder, changeOrderStatus, openOrderDocument, issueInvoice, openInvoicePdf, document, setDocument, retailSales, quickSaleForm, setQuickSaleForm, quickSaleCart, addQuickSaleItem, changeQuickSaleHarvest, removeQuickSaleItem, createQuickSale, openRetailDocument, priceList, priceForm, setPriceForm, saveProductPrice, salesSettings, setSalesSettings, saveSalesSettings }) {
   const available = inventory.filter((item) => item.available_kg > 0);
+  const cartTotal = quickSaleCart.reduce((sum, item) => sum + item.line_total_eur, 0);
   return <>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prodajna zaloga</p><h2>Na voljo</h2></div><span>{available.reduce((sum, item) => sum + item.available_kg, 0).toFixed(1)} kg</span></div>
       <div className="inventory-grid">{inventory.map((item) => <article key={item.harvest_id}><strong>{item.crop} {item.variety}</strong><span>Gredica {item.bed} · kakovost {item.quality}</span><div><b>{item.available_kg} kg na voljo</b><small>{item.reserved_kg} kg rezervirano · {item.sold_kg} kg prodano</small></div></article>)}</div>
     </section>
     <section className="quick-sale-grid">
-      <form className="panel quick-sale-form" onSubmit={createQuickSale}><div><p className="eyebrow">Tržnica in prodaja na domu</p><h2>Hitra prodaja</h2><span className="exemption-note">Končni potrošnik je privzet · račun ni predviden ob vključeni izjemi 81.a</span></div>
+      <div className="panel quick-sale-form"><div><p className="eyebrow">Tržnica in prodaja na domu</p><h2>Košarica hitre prodaje</h2><span className="exemption-note">Več pridelkov v eni prodaji · končni potrošnik je privzet</span></div>
         <label>Kupec<select value={quickSaleForm.customer_id} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, customer_id: e.target.value })}><option value="">Končni potrošnik (brez osebnih podatkov)</option>{customers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.customer_type === "business" ? "poslovni" : "končni"}</option>)}</select></label>
-        <label>Artikel<select value={quickSaleForm.harvest_id} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, harvest_id: e.target.value })} required>{available.map((item) => <option key={item.harvest_id} value={item.harvest_id}>{item.crop} {item.variety} · {item.available_kg} kg</option>)}</select></label>
-        <label>Količina (kg)<input type="number" min="0.01" step="0.01" value={quickSaleForm.quantity_kg} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, quantity_kg: e.target.value })} required /></label>
-        <label>Cena/kg (€)<input type="number" min="0.01" step="0.01" value={quickSaleForm.price_per_kg_eur} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, price_per_kg_eur: e.target.value })} required /></label>
+        <label>Datum<input type="date" value={quickSaleForm.sale_date} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, sale_date: e.target.value })} required /></label>
         <label>Plačilo<select value={quickSaleForm.payment_method} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, payment_method: e.target.value })}><option value="cash">Gotovina</option><option value="card">Kartica</option><option value="bank_transfer">Nakazilo</option></select></label>
-        <button className="primary-button">ZABELEŽI PRODAJO</button>
-      </form>
+        <form className="quick-sale-line-form" onSubmit={addQuickSaleItem}>
+          <label>Artikel<select value={quickSaleForm.harvest_id} onChange={changeQuickSaleHarvest} required>{available.map((item) => <option key={item.harvest_id} value={item.harvest_id}>{item.crop} {item.variety} · kakovost {item.quality} · {item.available_kg} kg{item.suggested_price_per_kg_eur ? ` · ${item.suggested_price_per_kg_eur.toFixed(2)} €/kg` : ""}</option>)}</select></label>
+          <label>Količina (kg)<input type="number" min="0.01" step="0.01" value={quickSaleForm.quantity_kg} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, quantity_kg: e.target.value })} required /></label>
+          <label>Cena/kg (€)<input type="number" min="0.01" step="0.01" value={quickSaleForm.price_per_kg_eur} onChange={(e) => setQuickSaleForm({ ...quickSaleForm, price_per_kg_eur: e.target.value })} required /></label>
+          <button className="secondary-button">DODAJ V KOŠARICO</button>
+        </form>
+        <div className="quick-sale-cart">{quickSaleCart.length === 0 ? <p className="empty-state">Košarica je prazna.</p> : quickSaleCart.map((item) => <article key={item.harvest_id}><div><strong>{item.crop} {item.variety}</strong><span>Gredica {item.bed} · kakovost {item.quality} · {item.quantity_kg.toFixed(2)} kg × {item.price_per_kg_eur.toFixed(2)} €</span></div><strong>{item.line_total_eur.toFixed(2)} €</strong><button className="icon-button" type="button" onClick={() => removeQuickSaleItem(item.harvest_id)}>✕</button></article>)}</div>
+        <div className="quick-sale-checkout"><span>Skupaj</span><strong>{cartTotal.toFixed(2)} €</strong><button className="primary-button" type="button" disabled={!quickSaleCart.length} onClick={createQuickSale}>ZABELEŽI PRODAJO</button></div>
+      </div>
       {salesSettings && <form className="panel compact-form" onSubmit={saveSalesSettings}><h2>Nastavitve prodaje</h2><label className="check-label"><input type="checkbox" checked={salesSettings.basic_agriculture_invoice_exemption} onChange={(e) => setSalesSettings({ ...salesSettings, basic_agriculture_invoice_exemption: e.target.checked })} /> Izjema osnovne kmetijske dejavnosti po 81.a</label><label>Naziv kmetije<input value={salesSettings.seller_name} onChange={(e) => setSalesSettings({ ...salesSettings, seller_name: e.target.value })} required /></label><label>Davčna številka<input value={salesSettings.seller_tax_number || ""} onChange={(e) => setSalesSettings({ ...salesSettings, seller_tax_number: e.target.value || null })} /></label><button className="secondary-button">SHRANI NASTAVITVE</button></form>}
     </section>
+    <form className="panel price-list-form" onSubmit={saveProductPrice}><div className="section-heading"><div><p className="eyebrow">Privzete cene</p><h2>Cenik po kakovosti</h2><p className="muted">Cena se samodejno predlaga v košarici, posamezno prodajo pa jo lahko še vedno spremeniš.</p></div><button className="secondary-button">SHRANI CENO</button></div><label>Kultura<select value={priceForm.crop_id} onChange={(e) => setPriceForm({ ...priceForm, crop_id: e.target.value })} required>{crops.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Kakovost<select value={priceForm.quality} onChange={(e) => setPriceForm({ ...priceForm, quality: e.target.value })}><option value="A">A – prva</option><option value="B">B – druga</option></select></label><label>Cena/kg (€)<input type="number" min="0.01" step="0.01" value={priceForm.price_per_kg_eur} onChange={(e) => setPriceForm({ ...priceForm, price_per_kg_eur: e.target.value })} required /></label><div className="price-list-chips">{priceList.map((item) => <span key={item.id}><strong>{item.crop} · {item.quality}</strong>{item.price_per_kg_eur.toFixed(2)} €/kg</span>)}{priceList.length === 0 && <p className="empty-state">Cenik še nima vnosov.</p>}</div></form>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Neposredna prodaja</p><h2>Zadnje hitre prodaje</h2></div><span>{retailSales.length} zapisov</span></div><div className="retail-sales-list">{retailSales.map((sale) => <article key={sale.id}><div><strong>{sale.number} · {sale.customer}</strong><span>{sale.sale_date} · {sale.total_eur.toFixed(2)} € · {sale.payment_method === "cash" ? "gotovina" : sale.payment_method === "card" ? "kartica" : "nakazilo"}</span></div><div className="order-actions"><button className="text-button" onClick={() => openRetailDocument(sale.id, "receipt")}>POTRDILO</button>{sale.invoice_required && !sale.invoice && <button className="secondary-button" onClick={() => issueInvoice("retail_sale", sale.id)}>IZDAJ RAČUN</button>}{sale.invoice && sale.invoice.fiscal_status !== "pending" && <button className="secondary-button" onClick={() => openInvoicePdf(sale.invoice.id)}>PDF RAČUNA</button>}{sale.invoice?.fiscal_status === "pending" && <span className="fiscal-badge pending">MANJKA EOR</span>}</div></article>)}</div></section>
     <section className="order-entry-grid">
       <form className="panel compact-form" onSubmit={createCustomer}><h2>Nov kupec</h2>
