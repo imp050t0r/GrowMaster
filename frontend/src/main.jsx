@@ -75,7 +75,7 @@ function App() {
   const [farmExpenses, setFarmExpenses] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
-  const [dataSafety, setDataSafety] = useState({ automatic_backups: [] });
+  const [dataSafety, setDataSafety] = useState({ daily_backups: [], automatic_backups: [] });
   const [account, setAccount] = useState({ display_name: "", active_sessions: 0, session_days: 30 });
   const [farmProfile, setFarmProfile] = useState({ farm_name: "", basic_agriculture_invoice_exemption: true, seller_tax_number: null, seller_address: "", seller_iban: null, seller_registration_number: null, vat_note: null, business_premise_code: "GM", device_code: "01", default_due_days: 14, business_documents_ready: false });
   const [reportStart, setReportStart] = useState(today);
@@ -957,7 +957,7 @@ function App() {
           <p>{farmProfile.farm_name ? `${farmProfile.farm_name} · gredice, setve in dnevno delo.` : "Gredice, setve in dnevno delo na enem mestu."}</p>
         </div>
         <div className="account-summary">
-          <span className="status-pill">MVP 1.12</span>
+          <span className="status-pill">MVP 1.13</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
           <button type="button" onClick={logout}>ODJAVA</button>
         </div>
@@ -1694,16 +1694,22 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
 
 function DataSafetyView({ status, restoreFile, setRestoreFile, confirmation, setConfirmation, restoreData }) {
   const backups = status.automatic_backups || [];
+  const dailyBackups = status.daily_backups || [];
   const sizeLabel = (bytes) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return <>
     <section className="panel data-safety-heading">
-      <div><p className="eyebrow">Varnost podatkov</p><h2>Varnostne kopije in obnovitev</h2><p className="muted">Celotno stanje kmetije lahko shraniš v eno prenosljivo datoteko. Pred vsako obnovitvijo GrowMaster samodejno ohrani trenutno stanje, zato se lahko vrneš nazaj.</p></div>
+      <div><p className="eyebrow">Varnost podatkov</p><h2>Varnostne kopije in obnovitev</h2><p className="muted">GrowMaster vsak dan med delovanjem shrani novo prenosljivo kopijo. Pred vsako obnovitvijo dodatno ohrani trenutno stanje, zato se lahko vrneš nazaj.</p></div>
       <span className="data-safe-badge">✓ BAZA PRIPRAVLJENA</span>
     </section>
     <section className="metric-grid data-safety-metrics">
       <article className="metric-card"><span>Različica podatkov</span><strong>{status.schema_revision?.split("_")[0] || "—"}</strong><small>nadgradnje se izvedejo samodejno in samo enkrat</small></article>
       <article className="metric-card"><span>Vsi zapisi</span><strong>{status.record_count || 0}</strong><small>v {status.table_count || 0} povezanih podatkovnih sklopih</small></article>
+      <article className="metric-card"><span>Dnevne kopije</span><strong>{dailyBackups.length}</strong><small>samodejno se ohrani zadnjih {status.daily_backup_retention || 14} dni</small></article>
       <article className="metric-card"><span>Povratne kopije</span><strong>{backups.length}</strong><small>samodejno se ohrani zadnjih 10 obnovitev</small></article>
+    </section>
+    <section className="panel">
+      <div className="section-heading"><div><p className="eyebrow">Vsakodnevna zaščita</p><h2>Samodejne dnevne kopije</h2><p className="muted">Nova kopija nastane ob zagonu in nato enkrat na dan, dokler GrowMaster deluje. Vsebuje poslovne podatke, ne pa gesla ali aktivnih prijav.</p></div><span>{dailyBackups.length} shranjenih</span></div>
+      {dailyBackups.length === 0 ? <p className="empty-state">Prva dnevna kopija bo ustvarjena ob naslednjem zagonu GrowMasterja.</p> : <div className="automatic-backup-list">{dailyBackups.map((backup) => <article key={backup.filename}><div><strong>{new Date(`${backup.backup_date}T12:00:00`).toLocaleDateString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><a className="secondary-button" href={`${API_URL}/api/system/backups/daily/${encodeURIComponent(backup.filename)}`}>PRENESI</a></article>)}</div>}
     </section>
     <section className="data-safety-grid">
       <section className="panel backup-export-card">

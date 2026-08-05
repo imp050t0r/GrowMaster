@@ -15,6 +15,7 @@ services:
 
   backend:
     build: ./backend
+    restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://growmaster:change-me@database:5432/growmaster}
       BACKUP_DIR: ${BACKUP_DIR:-/data/backups}

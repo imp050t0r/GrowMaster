@@ -25,6 +25,10 @@ AUTOMATIC_BACKUP_RETENTION = 10
 AUTOMATIC_BACKUP_PATTERN = re.compile(
     r"^growmaster-auto-\d{8}T\d{6}Z-[0-9a-f]{8}\.json$"
 )
+DAILY_BACKUP_RETENTION = 14
+DAILY_BACKUP_PATTERN = re.compile(
+    r"^growmaster-daily-(\d{8})-[0-9a-f]{8}\.json$"
+)
 
 
 class BackupValidationError(ValueError):
@@ -281,6 +285,93 @@ def list_automatic_backups() -> list[dict]:
 
 def automatic_backup_path(filename: str) -> Path | None:
     if not AUTOMATIC_BACKUP_PATTERN.fullmatch(filename):
+        return None
+    path = backup_directory() / filename
+    return path if path.is_file() else None
+
+
+def _daily_backup_files() -> list[Path]:
+    directory = backup_directory()
+    if not directory.exists():
+        return []
+    return sorted(
+        (
+            path
+            for path in directory.glob("growmaster-daily-*.json")
+            if DAILY_BACKUP_PATTERN.fullmatch(path.name)
+        ),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+
+
+def _write_daily_backup(
+    content: bytes,
+    checksum: str,
+    now: datetime | None = None,
+) -> str:
+    created_on = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    date_key = created_on.strftime("%Y%m%d")
+    directory = backup_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    filename = f"growmaster-daily-{date_key}-{checksum[:8]}.json"
+    target = directory / filename
+    temporary = directory / f".{filename}.tmp"
+    temporary.write_bytes(content)
+    temporary.replace(target)
+
+    for path in _daily_backup_files():
+        match = DAILY_BACKUP_PATTERN.fullmatch(path.name)
+        if match and match.group(1) == date_key and path.name != filename:
+            path.unlink(missing_ok=True)
+    for old_backup in _daily_backup_files()[DAILY_BACKUP_RETENTION:]:
+        old_backup.unlink(missing_ok=True)
+    return filename
+
+
+def refresh_daily_backup(db: Session, now: datetime | None = None) -> str:
+    """Replace today's scheduled business-data snapshot with the current state."""
+    content, summary = create_backup_bytes(db)
+    return _write_daily_backup(
+        content,
+        summary["checksum_sha256"],
+        now=now,
+    )
+
+
+def ensure_daily_backup(db: Session, now: datetime | None = None) -> str:
+    """Create at most one scheduled snapshot for the given UTC calendar day."""
+    created_on = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    date_key = created_on.strftime("%Y%m%d")
+    for path in _daily_backup_files():
+        match = DAILY_BACKUP_PATTERN.fullmatch(path.name)
+        if match and match.group(1) == date_key:
+            return path.name
+    return refresh_daily_backup(db, now=created_on)
+
+
+def list_daily_backups() -> list[dict]:
+    backups = []
+    for path in _daily_backup_files():
+        stat = path.stat()
+        match = DAILY_BACKUP_PATTERN.fullmatch(path.name)
+        backups.append(
+            {
+                "filename": path.name,
+                "backup_date": datetime.strptime(
+                    match.group(1), "%Y%m%d"
+                ).date().isoformat(),
+                "size_bytes": stat.st_size,
+                "created_at": datetime.fromtimestamp(
+                    stat.st_mtime, timezone.utc
+                ).isoformat(),
+            }
+        )
+    return backups
+
+
+def daily_backup_path(filename: str) -> Path | None:
+    if not DAILY_BACKUP_PATTERN.fullmatch(filename):
         return None
     path = backup_directory() / filename
     return path if path.is_file() else None

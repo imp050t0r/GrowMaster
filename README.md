@@ -62,6 +62,7 @@ GrowMaster is a local-first farm management application for professional market 
 - general expenses included in profitability, cash flow and immutable daily closing
 - automatic database schema revisions that safely adopt existing installations
 - portable full-data backups with schema version, record counts and SHA-256 verification
+- automatic daily business-data backups with one copy per day and 14-day retention
 - transactional restore with automatic pre-restore recovery copies and sequence repair
 - separate persistent Docker volume retaining the ten newest recovery copies
 - first-use administrator setup with a locally hashed password
@@ -99,7 +100,7 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete farm-to-season-plan, task/labor-cost, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing, supplier-purchasing, material-usage, supplier-payment, general-farm-expense, seasonal-profitability and full backup/restore API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete farm-to-season-plan, task/labor-cost, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing, supplier-purchasing, material-usage, supplier-payment, general-farm-expense, seasonal-profitability and daily/full backup/restore API workflow test and builds the production frontend.
 
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).
 Database upgrades, portable backups and recovery behavior are documented in [docs/data-safety.md](docs/data-safety.md).
