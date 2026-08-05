@@ -621,5 +621,3 @@ def economics_by_bed(db: Session = Depends(get_db)) -> list[dict]:
             }
         )
     return result
-    HarvestCreate,
-    SaleCreate,
