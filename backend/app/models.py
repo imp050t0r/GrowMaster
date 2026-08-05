@@ -44,6 +44,10 @@ class Farm(Base):
     suppliers: Mapped[list["Supplier"]] = relationship(back_populates="farm")
     supply_items: Mapped[list["SupplyItem"]] = relationship(back_populates="farm")
     purchase_orders: Mapped[list["PurchaseOrder"]] = relationship(back_populates="farm")
+    supply_usages: Mapped[list["SupplyUsage"]] = relationship(back_populates="farm")
+    supplier_payments: Mapped[list["SupplierPayment"]] = relationship(
+        back_populates="farm"
+    )
 
 
 class Crop(Base):
@@ -89,6 +93,7 @@ class Bed(Base):
     harvests: Mapped[list["Harvest"]] = relationship(back_populates="bed")
     costs: Mapped[list["Cost"]] = relationship(back_populates="bed")
     crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="bed")
+    supply_usages: Mapped[list["SupplyUsage"]] = relationship(back_populates="bed")
 
     @property
     def area_m2(self) -> float:
@@ -115,6 +120,9 @@ class Planting(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="planting")
     harvests: Mapped[list["Harvest"]] = relationship(back_populates="planting")
     costs: Mapped[list["Cost"]] = relationship(back_populates="planting")
+    supply_usages: Mapped[list["SupplyUsage"]] = relationship(
+        back_populates="planting"
+    )
 
 
 class Harvest(Base):
@@ -342,6 +350,7 @@ class SupplyItem(Base):
     purchase_order_items: Mapped[list["PurchaseOrderItem"]] = relationship(
         back_populates="supply_item"
     )
+    usages: Mapped[list["SupplyUsage"]] = relationship(back_populates="supply_item")
 
 
 class PurchaseOrder(Base):
@@ -365,6 +374,9 @@ class PurchaseOrder(Base):
     farm: Mapped[Farm] = relationship(back_populates="purchase_orders")
     supplier: Mapped[Supplier] = relationship(back_populates="purchase_orders")
     items: Mapped[list["PurchaseOrderItem"]] = relationship(
+        back_populates="purchase_order", cascade="all, delete-orphan"
+    )
+    payments: Mapped[list["SupplierPayment"]] = relationship(
         back_populates="purchase_order", cascade="all, delete-orphan"
     )
 
@@ -394,6 +406,58 @@ class PurchaseOrderItem(Base):
     @property
     def line_total_eur(self) -> float:
         return round(self.quantity * self.unit_price_eur, 2)
+
+
+class SupplyUsage(Base):
+    __tablename__ = "supply_usages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    supply_item_id: Mapped[int] = mapped_column(
+        ForeignKey("supply_items.id", ondelete="RESTRICT"), index=True
+    )
+    bed_id: Mapped[int] = mapped_column(
+        ForeignKey("beds.id", ondelete="RESTRICT"), index=True
+    )
+    planting_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plantings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    usage_date: Mapped[date] = mapped_column(Date, index=True)
+    quantity: Mapped[float] = mapped_column(Float)
+    unit_cost_eur: Mapped[float] = mapped_column(Float)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="supply_usages")
+    supply_item: Mapped[SupplyItem] = relationship(back_populates="usages")
+    bed: Mapped[Bed] = relationship(back_populates="supply_usages")
+    planting: Mapped[Planting | None] = relationship(back_populates="supply_usages")
+
+    @property
+    def total_cost_eur(self) -> float:
+        return round(self.quantity * self.unit_cost_eur, 2)
+
+
+class SupplierPayment(Base):
+    __tablename__ = "supplier_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"), index=True
+    )
+    payment_date: Mapped[date] = mapped_column(Date, index=True)
+    amount_eur: Mapped[float] = mapped_column(Float)
+    payment_method: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="supplier_payments")
+    purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="payments")
 
 
 class ProductPrice(Base):
@@ -452,6 +516,29 @@ class DayClose(Base):
     closed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     farm: Mapped[Farm] = relationship(back_populates="day_closes")
+    supplier_payment_snapshot: Mapped["DayCloseSupplierPaymentSnapshot | None"] = (
+        relationship(
+            back_populates="day_close",
+            cascade="all, delete-orphan",
+            uselist=False,
+        )
+    )
+
+
+class DayCloseSupplierPaymentSnapshot(Base):
+    __tablename__ = "day_close_supplier_payment_snapshots"
+
+    day_close_id: Mapped[int] = mapped_column(
+        ForeignKey("day_closes.id", ondelete="CASCADE"), primary_key=True
+    )
+    cash_out_eur: Mapped[float] = mapped_column(Float, default=0)
+    card_out_eur: Mapped[float] = mapped_column(Float, default=0)
+    bank_transfer_out_eur: Mapped[float] = mapped_column(Float, default=0)
+    payment_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    day_close: Mapped[DayClose] = relationship(
+        back_populates="supplier_payment_snapshot"
+    )
 
 
 class SalesSettings(Base):
