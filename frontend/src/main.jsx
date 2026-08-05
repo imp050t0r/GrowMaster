@@ -66,6 +66,7 @@ function App() {
   const [farmExpenses, setFarmExpenses] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
+  const [dataSafety, setDataSafety] = useState({ automatic_backups: [] });
   const [reportStart, setReportStart] = useState(today);
   const [reportEnd, setReportEnd] = useState(today);
   const [receivablesAsOf, setReceivablesAsOf] = useState(today);
@@ -128,6 +129,8 @@ function App() {
   const [workerForm, setWorkerForm] = useState({ name: "", role: "", hourly_rate_eur: "" });
   const [laborForm, setLaborForm] = useState({ worker_id: "", bed_id: "", planting_id: "", work_date: today, duration_minutes: "", hourly_rate_eur: "", description: "" });
   const [farmExpenseForm, setFarmExpenseForm] = useState({ expense_date: today, category: "fuel", amount_eur: "", payment_method: "cash", supplier: "", reference: "", description: "" });
+  const [restoreFile, setRestoreFile] = useState(null);
+  const [restoreConfirmation, setRestoreConfirmation] = useState("");
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -254,6 +257,13 @@ function App() {
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
   }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd, laborStart, laborEnd, profitabilityStart, profitabilityEnd]);
+
+  useEffect(() => {
+    if (view !== "data") return;
+    apiRequest("/api/system/data-safety")
+      .then(setDataSafety)
+      .catch((loadError) => setError(loadError.message));
+  }, [view]);
 
   useEffect(() => {
     const openingCash = Number(dayCloseForm.opening_cash_eur);
@@ -654,6 +664,23 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
+  async function restoreData(event) {
+    event.preventDefault(); clearMessages();
+    if (!restoreFile) { setError("Najprej izberite GrowMaster varnostno kopijo."); return; }
+    if (restoreConfirmation !== "OBNOVI") { setError('Za potrditev vpišite "OBNOVI".'); return; }
+    if (!window.confirm("Obnovim podatke iz izbrane kopije? Trenutno stanje bo pred tem samodejno varnostno shranjeno.")) return;
+    try {
+      const response = await fetch(`${API_URL}/api/system/backups/restore?confirmation=OBNOVI`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: await restoreFile.text(),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Obnovitev ni uspela.");
+      setRestoreFile(null); setRestoreConfirmation(""); setNotice(`${data.message} Povratna kopija: ${data.safety_backup}`); await loadData(); setDataSafety(await apiRequest("/api/system/data-safety"));
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   async function createSupplier(event) {
     event.preventDefault(); clearMessages();
     try {
@@ -804,6 +831,7 @@ function App() {
     ["closing", "Zaključek", "✓"],
     ["purchasing", "Nabava", "↓"],
     ["planning", "Plan", "◫"],
+    ["data", "Podatki", "⬇"],
   ];
 
   return (
@@ -814,7 +842,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.8</span>
+        <span className="status-pill">MVP 1.9</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -948,6 +976,10 @@ function App() {
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
           form={planForm} setForm={setPlanForm} selectedCrop={selectedPlanCrop} changeCrop={changePlanCrop} createPlan={createPlan}
           activatePlan={activatePlan} cancelPlan={cancelPlan} start={planStart} setStart={setPlanStart} end={planEnd} setEnd={setPlanEnd} />
+      )}
+      {view === "data" && (
+        <DataSafetyView status={dataSafety} restoreFile={restoreFile} setRestoreFile={setRestoreFile}
+          confirmation={restoreConfirmation} setConfirmation={setRestoreConfirmation} restoreData={restoreData} />
       )}
     </main>
   );
@@ -1534,6 +1566,40 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
       <div className="panel"><div className="section-heading"><div><p className="eyebrow">Ponudba in povpraševanje</p><h2>Napoved pridelka</h2></div></div>{forecast.warnings.map((warning) => <div className="forecast-warning" key={warning}>⚠ {warning}</div>)}<div className="forecast-list">{forecast.rows.map((row) => <article key={row.crop_id}><div><strong>{row.crop}</strong><span>Zaloga {row.current_stock_kg} kg + načrt {row.planned_yield_kg} kg − naročila {row.confirmed_demand_kg} kg</span></div><b className={row.shortage ? "negative" : "positive"}>{row.projected_balance_kg} kg</b></article>)}</div></div>
     </section>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prihodnje setve</p><h2>Načrtovane gredice</h2></div><span>{plans.length} zapisov</span></div><div className="plan-grid">{plans.map((plan) => <article key={plan.id}><div><span className={`plan-state ${plan.status}`}>{plan.status === "planned" ? "Načrtovano" : "Aktivirano"}</span><strong>{plan.crop} {plan.variety}</strong><span>Gredica {plan.bed} · setev {plan.sowing_date}</span><span>Žetev {plan.expected_harvest_date} · {plan.expected_yield_kg} kg</span></div>{plan.status === "planned" && <div className="order-actions"><button className="secondary-button" onClick={() => activatePlan(plan.id)}>AKTIVIRAJ</button><button className="text-button danger-text" onClick={() => cancelPlan(plan.id)}>PREKLIČI</button></div>}</article>)}</div></section>
+  </>;
+}
+
+function DataSafetyView({ status, restoreFile, setRestoreFile, confirmation, setConfirmation, restoreData }) {
+  const backups = status.automatic_backups || [];
+  const sizeLabel = (bytes) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return <>
+    <section className="panel data-safety-heading">
+      <div><p className="eyebrow">Varnost podatkov</p><h2>Varnostne kopije in obnovitev</h2><p className="muted">Celotno stanje kmetije lahko shraniš v eno prenosljivo datoteko. Pred vsako obnovitvijo GrowMaster samodejno ohrani trenutno stanje, zato se lahko vrneš nazaj.</p></div>
+      <span className="data-safe-badge">✓ BAZA PRIPRAVLJENA</span>
+    </section>
+    <section className="metric-grid data-safety-metrics">
+      <article className="metric-card"><span>Različica podatkov</span><strong>{status.schema_revision?.split("_")[0] || "—"}</strong><small>nadgradnje se izvedejo samodejno in samo enkrat</small></article>
+      <article className="metric-card"><span>Vsi zapisi</span><strong>{status.record_count || 0}</strong><small>v {status.table_count || 0} povezanih podatkovnih sklopih</small></article>
+      <article className="metric-card"><span>Povratne kopije</span><strong>{backups.length}</strong><small>samodejno se ohrani zadnjih 10 obnovitev</small></article>
+    </section>
+    <section className="data-safety-grid">
+      <section className="panel backup-export-card">
+        <div><p className="eyebrow">Shrani zunaj aplikacije</p><h2>Nova varnostna kopija</h2><p className="muted">Datoteka vsebuje gredice, pridelke, prodajo, račune, dokumente, zalogo in finančne zapise. Shrani jo na varen disk ali v svojo oblačno mapo.</p></div>
+        <a className="primary-button backup-download" href={`${API_URL}/api/system/backups/export`}>PRENESI CELOTNO KOPIJO</a>
+      </section>
+      <form className="panel restore-form" onSubmit={restoreData}>
+        <div><p className="eyebrow">Nadzorovana obnovitev</p><h2>Obnovi iz datoteke</h2><p className="muted">Datoteka se pred obnovitvijo preveri. Če je poškodovana ali iz druge različice, se podatki ne spremenijo.</p></div>
+        <label>GrowMaster kopija<input type="file" accept="application/json,.json" onChange={(e) => setRestoreFile(e.target.files?.[0] || null)} required /></label>
+        {restoreFile && <span className="selected-backup">Izbrano: {restoreFile.name} · {sizeLabel(restoreFile.size)}</span>}
+        <label>Za potrditev vpiši OBNOVI<input value={confirmation} onChange={(e) => setConfirmation(e.target.value)} autoComplete="off" /></label>
+        <button className="danger-button restore-button" disabled={!restoreFile || confirmation !== "OBNOVI"}>OBNOVI PODATKE</button>
+      </form>
+    </section>
+    <section className="panel">
+      <div className="section-heading"><div><p className="eyebrow">Samodejna zaščita</p><h2>Povratne kopije pred obnovitvijo</h2></div><span>{backups.length} shranjenih</span></div>
+      {backups.length === 0 ? <p className="empty-state">Povratna kopija bo ustvarjena tik pred prvo obnovitvijo.</p> : <div className="automatic-backup-list">{backups.map((backup) => <article key={backup.filename}><div><strong>{new Date(backup.created_at).toLocaleString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><a className="secondary-button" href={`${API_URL}/api/system/backups/automatic/${encodeURIComponent(backup.filename)}`}>PRENESI</a></article>)}</div>}
+      <p className="backup-privacy-note">Varnostne kopije lahko vsebujejo osebne in finančne podatke kupcev. Hrani jih na mestu, do katerega nima dostopa nepooblaščena oseba.</p>
+    </section>
   </>;
 }
 
