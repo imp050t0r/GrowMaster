@@ -301,3 +301,13 @@ class AuthSetup(BaseModel):
 
 class AuthLogin(BaseModel):
     password: str = Field(min_length=1, max_length=256)
+
+
+class AccountUpdate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+    current_password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)

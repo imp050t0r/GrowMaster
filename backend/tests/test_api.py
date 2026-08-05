@@ -38,6 +38,10 @@ def test_bed_planting_and_task_workflow() -> None:
             "/api/auth/setup",
             json={"display_name": "Nosilec kmetije", "password": "prekratko"},
         ).status_code == 422
+        assert client.post(
+            "/api/auth/setup",
+            json={"display_name": "   ", "password": "Zelo varno geslo 2026!"},
+        ).status_code == 422
         setup = client.post(
             "/api/auth/setup",
             json={
@@ -1773,3 +1777,66 @@ def test_bed_planting_and_task_workflow() -> None:
         assert login.status_code == 200
         assert login.json()["display_name"] == "Nosilec kmetije"
         assert client.get("/api/beds").status_code == 200
+
+        account = client.get("/api/auth/account")
+        assert account.status_code == 200
+        assert account.json()["display_name"] == "Nosilec kmetije"
+        assert account.json()["active_sessions"] == 1
+        assert client.put(
+            "/api/auth/account",
+            json={
+                "display_name": "Vodja kmetije",
+                "current_password": "Napačno geslo 2026!",
+            },
+        ).status_code == 401
+        renamed = client.put(
+            "/api/auth/account",
+            json={
+                "display_name": "  Vodja kmetije  ",
+                "current_password": "Zelo varno geslo 2026!",
+            },
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["display_name"] == "Vodja kmetije"
+        first_session_token = client.cookies.get("growmaster_session")
+
+        second_login = client.post(
+            "/api/auth/login", json={"password": "Zelo varno geslo 2026!"}
+        )
+        assert second_login.status_code == 200
+        assert client.get("/api/auth/account").json()["active_sessions"] == 2
+        assert client.post(
+            "/api/auth/change-password",
+            json={
+                "current_password": "Zelo varno geslo 2026!",
+                "new_password": "Zelo varno geslo 2026!",
+            },
+        ).status_code == 422
+        changed_password = client.post(
+            "/api/auth/change-password",
+            json={
+                "current_password": "Zelo varno geslo 2026!",
+                "new_password": "Novo varno geslo 2027!",
+            },
+        )
+        assert changed_password.status_code == 200
+        assert changed_password.json()["active_sessions"] == 1
+        replacement_token = client.cookies.get("growmaster_session")
+        assert replacement_token != first_session_token
+
+        client.cookies.clear()
+        client.cookies.set("growmaster_session", first_session_token)
+        assert client.get("/api/beds").status_code == 401
+        client.cookies.clear()
+        client.cookies.set("growmaster_session", replacement_token)
+        assert client.get("/api/beds").status_code == 200
+
+        assert client.post("/api/auth/logout").status_code == 200
+        assert client.post(
+            "/api/auth/login", json={"password": "Zelo varno geslo 2026!"}
+        ).status_code == 401
+        new_login = client.post(
+            "/api/auth/login", json={"password": "Novo varno geslo 2027!"}
+        )
+        assert new_login.status_code == 200
+        assert new_login.json()["display_name"] == "Vodja kmetije"

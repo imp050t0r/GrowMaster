@@ -14,6 +14,12 @@ Successful setup or login creates a cryptographically random token. Only its SHA
 
 Five failed login attempts from the same client trigger a five-minute cooldown. Login errors do not expose password hashes or session tokens.
 
+## Account settings
+
+The **Nastavitve** screen shows the administrator name, active-session count and session lifetime. Changing the display name requires the current password. Changing the password requires the current password plus a different strong password.
+
+A password change deletes every existing session before creating one replacement session for the current browser. Other browsers and devices immediately lose access. The same five-attempt cooldown protects current-password confirmation.
+
 ## Local HTTP and HTTPS
 
 The default Docker setup is intended for the same computer and uses `COOKIE_SECURE=false` because `http://localhost` has no TLS. Do not publish ports 3000, 8000 or 5432 directly to the internet.

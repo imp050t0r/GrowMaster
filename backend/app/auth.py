@@ -6,7 +6,7 @@ import secrets
 from threading import Lock
 import time
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.models import AdminCredential, AuthSession
@@ -126,6 +126,34 @@ def create_session(db: Session, credential: AdminCredential) -> tuple[str, AuthS
     if len(session_ids) > 10:
         db.execute(delete(AuthSession).where(AuthSession.id.in_(session_ids[10:])))
     return token, session
+
+
+def active_session_count(db: Session, credential: AdminCredential) -> int:
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(AuthSession)
+            .where(
+                AuthSession.credential_id == credential.id,
+                AuthSession.expires_at > utc_now(),
+            )
+        )
+        or 0
+    )
+
+
+def replace_password(
+    db: Session, credential: AdminCredential, new_password: str
+) -> tuple[str, AuthSession]:
+    salt = secrets.token_bytes(16)
+    credential.password_hash = hash_password(new_password, salt)
+    credential.password_salt = salt
+    credential.password_algorithm = PASSWORD_ALGORITHM
+    credential.updated_at = utc_now()
+    db.execute(
+        delete(AuthSession).where(AuthSession.credential_id == credential.id)
+    )
+    return create_session(db, credential)
 
 
 def authenticated_credential(db: Session, token: str | None) -> AdminCredential | None:
