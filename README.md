@@ -12,9 +12,13 @@ GrowMaster is a local-first farm management application for professional market 
 - crop-rotation warning with an explicit user override
 - three automatic follow-up tasks for every sowing
 - daily task center with date, priority, bed, duration, material use and notes
+- workers and family/owner labor with reusable hourly rates
+- automatic labor-cost entry when a daily task is completed by a selected worker
+- manual labor entries for work outside the task list, with optional bed and planting allocation
+- date-filtered labor report by worker and bed, including unallocated hours
 - completion of a crop cycle releases the bed and updates rotation history
 - harvest records with quantity, quality and remaining sellable stock
-- costs, sales and automatic profit per bed
+- direct, material and labor costs with automatic profit per bed
 - live inventory with sold, reserved and available harvest quantities
 - customers and orders with stock reservation, fulfilment and cancellation
 - customer types for final consumers and business entities
@@ -75,6 +79,6 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete farm-to-season-plan, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing, supplier-purchasing, material-usage and supplier-payment API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete farm-to-season-plan, task/labor-cost, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing, supplier-purchasing, material-usage and supplier-payment API workflow test and builds the production frontend.
 
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).

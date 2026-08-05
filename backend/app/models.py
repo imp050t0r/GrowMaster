@@ -48,6 +48,8 @@ class Farm(Base):
     supplier_payments: Mapped[list["SupplierPayment"]] = relationship(
         back_populates="farm"
     )
+    workers: Mapped[list["Worker"]] = relationship(back_populates="farm")
+    labor_entries: Mapped[list["LaborEntry"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -94,6 +96,7 @@ class Bed(Base):
     costs: Mapped[list["Cost"]] = relationship(back_populates="bed")
     crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="bed")
     supply_usages: Mapped[list["SupplyUsage"]] = relationship(back_populates="bed")
+    labor_entries: Mapped[list["LaborEntry"]] = relationship(back_populates="bed")
 
     @property
     def area_m2(self) -> float:
@@ -121,6 +124,9 @@ class Planting(Base):
     harvests: Mapped[list["Harvest"]] = relationship(back_populates="planting")
     costs: Mapped[list["Cost"]] = relationship(back_populates="planting")
     supply_usages: Mapped[list["SupplyUsage"]] = relationship(
+        back_populates="planting"
+    )
+    labor_entries: Mapped[list["LaborEntry"]] = relationship(
         back_populates="planting"
     )
 
@@ -460,6 +466,71 @@ class SupplierPayment(Base):
     purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="payments")
 
 
+class Worker(Base):
+    __tablename__ = "workers"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "name", name="uq_worker_farm_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    role: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    hourly_rate_eur: Mapped[float] = mapped_column(Float, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="workers")
+    labor_entries: Mapped[list["LaborEntry"]] = relationship(
+        back_populates="worker"
+    )
+
+
+class LaborEntry(Base):
+    __tablename__ = "labor_entries"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_labor_entry_task"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    worker_id: Mapped[int] = mapped_column(
+        ForeignKey("workers.id", ondelete="RESTRICT"), index=True
+    )
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    bed_id: Mapped[int | None] = mapped_column(
+        ForeignKey("beds.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    planting_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plantings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    work_date: Mapped[date] = mapped_column(Date, index=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer)
+    hourly_rate_eur: Mapped[float] = mapped_column(Float)
+    description: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="labor_entries")
+    worker: Mapped[Worker] = relationship(back_populates="labor_entries")
+    task: Mapped["Task | None"] = relationship(back_populates="labor_entries")
+    bed: Mapped[Bed | None] = relationship(back_populates="labor_entries")
+    planting: Mapped[Planting | None] = relationship(back_populates="labor_entries")
+
+    @property
+    def hours(self) -> float:
+        return round(self.duration_minutes / 60, 2)
+
+    @property
+    def total_cost_eur(self) -> float:
+        return round(self.duration_minutes / 60 * self.hourly_rate_eur, 2)
+
+
 class ProductPrice(Base):
     __tablename__ = "product_prices"
     __table_args__ = (
@@ -773,3 +844,4 @@ class Task(Base):
     farm: Mapped[Farm] = relationship(back_populates="tasks")
     bed: Mapped[Bed | None] = relationship(back_populates="tasks")
     planting: Mapped[Planting | None] = relationship(back_populates="tasks")
+    labor_entries: Mapped[list[LaborEntry]] = relationship(back_populates="task")

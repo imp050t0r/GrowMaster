@@ -28,6 +28,7 @@ from app.models import (
     Invoice,
     InvoiceLine,
     InvoiceProfile,
+    LaborEntry,
     Order,
     OrderItem,
     OrderPayment,
@@ -46,6 +47,7 @@ from app.models import (
     SupplyUsage,
     Task,
     Variety,
+    Worker,
 )
 from app.schemas import (
     BedCreate,
@@ -61,6 +63,7 @@ from app.schemas import (
     HarvestCreate,
     InvoiceCreate,
     InvoiceProfileUpdate,
+    LaborEntryCreate,
     OrderCreate,
     OrderPaymentCreate,
     OrderStatusUpdate,
@@ -79,6 +82,7 @@ from app.schemas import (
     SupplyUsageCreate,
     TaskComplete,
     TaskCreate,
+    WorkerCreate,
 )
 from app.seed import seed_database
 from app.invoice_pdf import build_invoice_pdf
@@ -94,7 +98,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.5.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -140,7 +144,43 @@ def serialize_planting(planting: Planting) -> dict:
     }
 
 
+def serialize_worker(worker: Worker) -> dict:
+    return {
+        "id": worker.id,
+        "name": worker.name,
+        "role": worker.role,
+        "hourly_rate_eur": worker.hourly_rate_eur,
+        "active": worker.active,
+    }
+
+
+def serialize_labor_entry(entry: LaborEntry) -> dict:
+    return {
+        "id": entry.id,
+        "worker_id": entry.worker_id,
+        "worker": entry.worker.name,
+        "task_id": entry.task_id,
+        "bed_id": entry.bed_id,
+        "bed": entry.bed.name if entry.bed else None,
+        "planting_id": entry.planting_id,
+        "work_date": entry.work_date,
+        "duration_minutes": entry.duration_minutes,
+        "hours": entry.hours,
+        "hourly_rate_eur": entry.hourly_rate_eur,
+        "total_cost_eur": entry.total_cost_eur,
+        "description": entry.description,
+    }
+
+
+def task_load_options() -> tuple:
+    return (
+        selectinload(Task.bed),
+        selectinload(Task.labor_entries).selectinload(LaborEntry.worker),
+    )
+
+
 def serialize_task(task: Task) -> dict:
+    labor_entry = task.labor_entries[0] if task.labor_entries else None
     return {
         "id": task.id,
         "title": task.title,
@@ -153,6 +193,9 @@ def serialize_task(task: Task) -> dict:
         "planting_id": task.planting_id,
         "completed_at": task.completed_at,
         "duration_minutes": task.duration_minutes,
+        "labor_worker_id": labor_entry.worker_id if labor_entry else None,
+        "labor_worker": labor_entry.worker.name if labor_entry else None,
+        "labor_cost_eur": labor_entry.total_cost_eur if labor_entry else 0,
         "quantity_used": task.quantity_used,
         "unit": task.unit,
         "notes": task.notes,
@@ -215,7 +258,7 @@ def dashboard(
     tasks = db.scalars(
         select(Task)
         .where(Task.farm_id == DEFAULT_FARM_ID, Task.due_date == target_date)
-        .options(selectinload(Task.bed))
+        .options(*task_load_options())
         .order_by(Task.status, Task.priority.desc(), Task.id)
     ).all()
     active_plantings = db.scalars(
@@ -307,7 +350,7 @@ def bed_detail(bed_id: int, db: Session = Depends(get_db)) -> dict:
     tasks = db.scalars(
         select(Task)
         .where(Task.bed_id == bed.id)
-        .options(selectinload(Task.bed))
+        .options(*task_load_options())
         .order_by(Task.due_date.desc(), Task.id.desc())
         .limit(20)
     ).all()
@@ -479,7 +522,7 @@ def list_tasks(
     statement = (
         select(Task)
         .where(Task.farm_id == DEFAULT_FARM_ID, Task.due_date == target_date)
-        .options(selectinload(Task.bed))
+        .options(*task_load_options())
         .order_by(Task.status, Task.priority.desc(), Task.id)
     )
     if not include_completed:
@@ -522,12 +565,32 @@ def complete_task(task_id: int, payload: TaskComplete, db: Session = Depends(get
     task = db.scalar(
         select(Task)
         .where(Task.id == task_id, Task.farm_id == DEFAULT_FARM_ID)
-        .options(selectinload(Task.bed))
+        .options(*task_load_options())
     )
     if task is None:
         raise HTTPException(status_code=404, detail="Opravilo ne obstaja.")
     if task.status == "completed":
         raise HTTPException(status_code=409, detail="Opravilo je že zaključeno.")
+
+    worker = None
+    if payload.worker_id is not None:
+        if not payload.duration_minutes:
+            raise HTTPException(
+                status_code=422,
+                detail="Za obračun dela vnesite trajanje, daljše od nič minut.",
+            )
+        worker = db.scalar(
+            select(Worker).where(
+                Worker.id == payload.worker_id,
+                Worker.farm_id == DEFAULT_FARM_ID,
+                Worker.active.is_(True),
+            )
+        )
+        if worker is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Izbrani izvajalec ne obstaja ali ni aktiven.",
+            )
 
     task.status = "completed"
     task.completed_at = datetime.now()
@@ -535,9 +598,234 @@ def complete_task(task_id: int, payload: TaskComplete, db: Session = Depends(get
     task.quantity_used = payload.quantity_used
     task.unit = payload.unit.strip() if payload.unit else None
     task.notes = payload.notes.strip() if payload.notes else None
+    if worker is not None:
+        task.labor_entries.append(
+            LaborEntry(
+                farm_id=DEFAULT_FARM_ID,
+                worker_id=worker.id,
+                bed_id=task.bed_id,
+                planting_id=task.planting_id,
+                work_date=task.due_date,
+                duration_minutes=payload.duration_minutes,
+                hourly_rate_eur=worker.hourly_rate_eur,
+                description=task.title,
+            )
+        )
     db.commit()
-    db.refresh(task)
+    task = db.scalar(
+        select(Task)
+        .where(Task.id == task.id)
+        .options(*task_load_options())
+    )
     return {"message": "Opravilo je zaključeno.", **serialize_task(task)}
+
+
+def labor_entry_load_options() -> tuple:
+    return (
+        selectinload(LaborEntry.worker),
+        selectinload(LaborEntry.bed),
+    )
+
+
+@app.get("/api/workers")
+def list_workers(db: Session = Depends(get_db)) -> list[dict]:
+    workers = db.scalars(
+        select(Worker)
+        .where(Worker.farm_id == DEFAULT_FARM_ID)
+        .order_by(Worker.active.desc(), Worker.name)
+    ).all()
+    return [serialize_worker(worker) for worker in workers]
+
+
+@app.post("/api/workers", status_code=status.HTTP_201_CREATED)
+def create_worker(payload: WorkerCreate, db: Session = Depends(get_db)) -> dict:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Ime izvajalca je obvezno.")
+    duplicate = db.scalar(
+        select(Worker).where(
+            Worker.farm_id == DEFAULT_FARM_ID,
+            func.lower(Worker.name) == name.lower(),
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Izvajalec s tem imenom že obstaja.",
+        )
+    worker = Worker(
+        farm_id=DEFAULT_FARM_ID,
+        name=name,
+        role=payload.role.strip() if payload.role else None,
+        hourly_rate_eur=round(payload.hourly_rate_eur, 2),
+    )
+    db.add(worker)
+    db.commit()
+    db.refresh(worker)
+    return {
+        "message": "Izvajalec in njegova urna postavka sta shranjena.",
+        **serialize_worker(worker),
+    }
+
+
+@app.post("/api/labor-entries", status_code=status.HTTP_201_CREATED)
+def create_labor_entry(
+    payload: LaborEntryCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    worker = db.scalar(
+        select(Worker).where(
+            Worker.id == payload.worker_id,
+            Worker.farm_id == DEFAULT_FARM_ID,
+            Worker.active.is_(True),
+        )
+    )
+    if worker is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Izbrani izvajalec ne obstaja ali ni aktiven.",
+        )
+    bed = None
+    if payload.bed_id is not None:
+        bed = db.scalar(
+            select(Bed).where(
+                Bed.id == payload.bed_id,
+                Bed.farm_id == DEFAULT_FARM_ID,
+            )
+        )
+        if bed is None:
+            raise HTTPException(status_code=404, detail="Gredica ne obstaja.")
+    planting = None
+    if payload.planting_id is not None:
+        planting = db.scalar(
+            select(Planting).where(
+                Planting.id == payload.planting_id,
+                Planting.farm_id == DEFAULT_FARM_ID,
+            )
+        )
+        if planting is None:
+            raise HTTPException(status_code=404, detail="Setev ne obstaja.")
+        if bed is not None and planting.bed_id != bed.id:
+            raise HTTPException(
+                status_code=422,
+                detail="Setev ne pripada izbrani gredici.",
+            )
+        if bed is None:
+            bed = db.get(Bed, planting.bed_id)
+    hourly_rate_eur = (
+        payload.hourly_rate_eur
+        if payload.hourly_rate_eur is not None
+        else worker.hourly_rate_eur
+    )
+    description = payload.description.strip()
+    if not description:
+        raise HTTPException(status_code=422, detail="Opis dela je obvezen.")
+    entry = LaborEntry(
+        farm_id=DEFAULT_FARM_ID,
+        worker_id=worker.id,
+        bed_id=bed.id if bed else None,
+        planting_id=planting.id if planting else None,
+        work_date=payload.work_date,
+        duration_minutes=payload.duration_minutes,
+        hourly_rate_eur=round(hourly_rate_eur, 2),
+        description=description,
+    )
+    db.add(entry)
+    db.commit()
+    entry = db.scalar(
+        select(LaborEntry)
+        .where(LaborEntry.id == entry.id)
+        .options(*labor_entry_load_options())
+    )
+    return {
+        "message": "Delovne ure so evidentirane.",
+        **serialize_labor_entry(entry),
+    }
+
+
+@app.get("/api/labor-report")
+def labor_report(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    range_start = start or date(date.today().year, 1, 1)
+    range_end = end or date.today()
+    if range_end < range_start:
+        raise HTTPException(
+            status_code=422,
+            detail="Končni datum ne sme biti pred začetnim datumom.",
+        )
+    entries = db.scalars(
+        select(LaborEntry)
+        .where(
+            LaborEntry.farm_id == DEFAULT_FARM_ID,
+            LaborEntry.work_date >= range_start,
+            LaborEntry.work_date <= range_end,
+        )
+        .options(*labor_entry_load_options())
+        .order_by(LaborEntry.work_date.desc(), LaborEntry.id.desc())
+    ).all()
+    worker_rows: dict[int, dict] = {}
+    bed_rows: dict[int, dict] = {}
+    for entry in entries:
+        worker_row = worker_rows.setdefault(
+            entry.worker_id,
+            {
+                "worker_id": entry.worker_id,
+                "worker": entry.worker.name,
+                "duration_minutes": 0,
+                "cost_eur": 0.0,
+                "entry_count": 0,
+            },
+        )
+        worker_row["duration_minutes"] += entry.duration_minutes
+        worker_row["cost_eur"] += entry.total_cost_eur
+        worker_row["entry_count"] += 1
+        if entry.bed is not None:
+            bed_row = bed_rows.setdefault(
+                entry.bed_id,
+                {
+                    "bed_id": entry.bed_id,
+                    "bed": entry.bed.name,
+                    "duration_minutes": 0,
+                    "cost_eur": 0.0,
+                    "entry_count": 0,
+                },
+            )
+            bed_row["duration_minutes"] += entry.duration_minutes
+            bed_row["cost_eur"] += entry.total_cost_eur
+            bed_row["entry_count"] += 1
+    for row in [*worker_rows.values(), *bed_rows.values()]:
+        row["hours"] = round(row["duration_minutes"] / 60, 2)
+        row["cost_eur"] = round(row["cost_eur"], 2)
+    total_minutes = sum(entry.duration_minutes for entry in entries)
+    total_cost_eur = round(sum(entry.total_cost_eur for entry in entries), 2)
+    unallocated = [entry for entry in entries if entry.bed_id is None]
+    return {
+        "range": {"start": range_start, "end": range_end},
+        "summary": {
+            "entry_count": len(entries),
+            "duration_minutes": total_minutes,
+            "hours": round(total_minutes / 60, 2),
+            "cost_eur": total_cost_eur,
+            "unallocated_hours": round(
+                sum(entry.duration_minutes for entry in unallocated) / 60,
+                2,
+            ),
+            "unallocated_cost_eur": round(
+                sum(entry.total_cost_eur for entry in unallocated),
+                2,
+            ),
+        },
+        "by_worker": sorted(worker_rows.values(), key=lambda row: row["worker"]),
+        "by_bed": sorted(bed_rows.values(), key=lambda row: row["bed"]),
+        "entries": [serialize_labor_entry(entry) for entry in entries],
+        "note": (
+            "Strošek dela uporablja urno postavko, shranjeno ob vnosu. Vpliva na "
+            "dobiček gredice, ni pa denarni odliv, dokler izplačilo ni posebej evidentirano."
+        ),
+    }
 
 
 @app.get("/api/harvests")
@@ -678,7 +966,23 @@ def economics_by_bed(db: Session = Depends(get_db)) -> list[dict]:
                 )
             ).where(SupplyUsage.bed_id == bed.id)
         )
-        costs_eur = float(direct_costs_eur or 0) + float(material_costs_eur or 0)
+        labor_costs_eur = db.scalar(
+            select(
+                func.coalesce(
+                    func.sum(
+                        LaborEntry.duration_minutes
+                        / 60.0
+                        * LaborEntry.hourly_rate_eur
+                    ),
+                    0.0,
+                )
+            ).where(LaborEntry.bed_id == bed.id)
+        )
+        costs_eur = (
+            float(direct_costs_eur or 0)
+            + float(material_costs_eur or 0)
+            + float(labor_costs_eur or 0)
+        )
         revenue_eur = db.scalar(
             select(func.coalesce(func.sum(Sale.quantity_kg * Sale.price_per_kg_eur), 0.0))
             .join(Harvest, Sale.harvest_id == Harvest.id)
@@ -692,6 +996,7 @@ def economics_by_bed(db: Session = Depends(get_db)) -> list[dict]:
                 "harvested_kg": round(float(harvested_kg or 0), 2),
                 "direct_costs_eur": round(float(direct_costs_eur or 0), 2),
                 "material_costs_eur": round(float(material_costs_eur or 0), 2),
+                "labor_costs_eur": round(float(labor_costs_eur or 0), 2),
                 "costs_eur": round(costs_eur, 2),
                 "revenue_eur": round(float(revenue_eur or 0), 2),
                 "profit_eur": round(float(revenue_eur or 0) - costs_eur, 2),

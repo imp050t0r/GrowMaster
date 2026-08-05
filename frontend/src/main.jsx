@@ -59,6 +59,8 @@ function App() {
   const [supplyItems, setSupplyItems] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [supplyUsages, setSupplyUsages] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [laborReport, setLaborReport] = useState({ summary: {}, by_worker: [], by_bed: [], entries: [], note: "" });
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [reportStart, setReportStart] = useState(today);
@@ -67,6 +69,8 @@ function App() {
   const [includePaidReceivables, setIncludePaidReceivables] = useState(false);
   const [cashFlowStart, setCashFlowStart] = useState(monthStart);
   const [cashFlowEnd, setCashFlowEnd] = useState(today);
+  const [laborStart, setLaborStart] = useState(monthStart);
+  const [laborEnd, setLaborEnd] = useState(today);
   const [paymentOrderId, setPaymentOrderId] = useState(null);
   const [planStart, setPlanStart] = useState(today);
   const [planEnd, setPlanEnd] = useState(inDays(90));
@@ -93,6 +97,7 @@ function App() {
   });
   const [completion, setCompletion] = useState({
     duration_minutes: "",
+    worker_id: "",
     quantity_used: "",
     unit: "",
     notes: "",
@@ -115,6 +120,8 @@ function App() {
   const [supplyUsageForm, setSupplyUsageForm] = useState({ supply_item_id: "", bed_id: "", planting_id: "", usage_date: today, quantity: "", unit_cost_eur: "", notes: "" });
   const [supplierPaymentOrderId, setSupplierPaymentOrderId] = useState(null);
   const [supplierPaymentForm, setSupplierPaymentForm] = useState({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" });
+  const [workerForm, setWorkerForm] = useState({ name: "", role: "", hourly_rate_eur: "" });
+  const [laborForm, setLaborForm] = useState({ worker_id: "", bed_id: "", planting_id: "", work_date: today, duration_minutes: "", hourly_rate_eur: "", description: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -126,7 +133,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -151,6 +158,8 @@ function App() {
       apiRequest("/api/supply-items"),
       apiRequest("/api/purchase-orders"),
       apiRequest("/api/supply-usages"),
+      apiRequest("/api/workers"),
+      apiRequest(`/api/labor-report?start=${laborStart}&end=${laborEnd}`),
       apiRequest("/api/invoices"),
       apiRequest("/api/invoice-profile"),
     ]);
@@ -178,6 +187,8 @@ function App() {
     setSupplyItems(supplyItemData);
     setPurchaseOrders(purchaseOrderData);
     setSupplyUsages(supplyUsageData);
+    setWorkers(workerData);
+    setLaborReport(laborData);
     setInvoices(invoiceData);
     setInvoiceProfile(invoiceProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
@@ -204,6 +215,15 @@ function App() {
       supply_item_id: current.supply_item_id || supplyItemData[0]?.id || "",
       bed_id: current.bed_id || bedData[0]?.id || "",
     }));
+    setCompletion((current) => ({
+      ...current,
+      worker_id: current.worker_id || workerData.find((item) => item.active)?.id || "",
+    }));
+    setLaborForm((current) => ({
+      ...current,
+      worker_id: current.worker_id || workerData.find((item) => item.active)?.id || "",
+      bed_id: current.bed_id || bedData[0]?.id || "",
+    }));
     setPlanForm((current) => {
       const cropId = current.crop_id || cropData[0]?.id || "";
       const crop = cropData.find((item) => String(item.id) === String(cropId));
@@ -223,7 +243,7 @@ function App() {
 
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
-  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd]);
+  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd, laborStart, laborEnd]);
 
   useEffect(() => {
     const openingCash = Number(dayCloseForm.opening_cash_eur);
@@ -357,13 +377,14 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           duration_minutes: completion.duration_minutes ? Number(completion.duration_minutes) : null,
+          worker_id: completion.worker_id ? Number(completion.worker_id) : null,
           quantity_used: completion.quantity_used ? Number(completion.quantity_used) : null,
           unit: completion.unit || null,
           notes: completion.notes || null,
         }),
       });
       setCompletionTaskId(null);
-      setCompletion({ duration_minutes: "", quantity_used: "", unit: "", notes: "" });
+      setCompletion({ duration_minutes: "", worker_id: completion.worker_id, quantity_used: "", unit: "", notes: "" });
       setNotice(data.message);
       await loadData();
       if (selectedBed?.id) await openBed(selectedBed.id);
@@ -688,6 +709,22 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
+  async function createWorker(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/workers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: workerForm.name, role: workerForm.role || null, hourly_rate_eur: Number(workerForm.hourly_rate_eur) }) });
+      setWorkerForm({ name: "", role: "", hourly_rate_eur: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function createLaborEntry(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/labor-entries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worker_id: Number(laborForm.worker_id), bed_id: laborForm.bed_id ? Number(laborForm.bed_id) : null, planting_id: laborForm.planting_id ? Number(laborForm.planting_id) : null, work_date: laborForm.work_date, duration_minutes: Number(laborForm.duration_minutes), hourly_rate_eur: laborForm.hourly_rate_eur === "" ? null : Number(laborForm.hourly_rate_eur), description: laborForm.description }) });
+      setLaborForm({ ...laborForm, duration_minutes: "", hourly_rate_eur: "", description: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   function changePlanCrop(event) {
     const cropId = event.target.value;
     const crop = crops.find((item) => String(item.id) === String(cropId));
@@ -727,6 +764,7 @@ function App() {
     ["beds", "Gredice", "▦"],
     ["planting", "Setev", "+"],
     ["tasks", "Opravila", "✓"],
+    ["labor", "Delo", "◷"],
     ["economics", "Žetev €", "€"],
     ["orders", "Naročila", "▤"],
     ["invoices", "Računi", "R"],
@@ -746,7 +784,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.5</span>
+        <span className="status-pill">MVP 1.6</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -796,6 +834,7 @@ function App() {
         <TasksView
           tasks={tasks}
           beds={beds}
+          workers={workers}
           taskDate={taskDate}
           setTaskDate={setTaskDate}
           taskForm={taskForm}
@@ -807,6 +846,12 @@ function App() {
           setCompletion={setCompletion}
           completeTask={completeTask}
         />
+      )}
+      {view === "labor" && (
+        <LaborView workers={workers} beds={beds} plantings={plantings} data={laborReport}
+          start={laborStart} setStart={setLaborStart} end={laborEnd} setEnd={setLaborEnd}
+          workerForm={workerForm} setWorkerForm={setWorkerForm} createWorker={createWorker}
+          laborForm={laborForm} setLaborForm={setLaborForm} createLaborEntry={createLaborEntry} />
       )}
       {view === "economics" && (
         <EconomicsView
@@ -952,7 +997,7 @@ function PlantingView({ crops, beds, plantings, form, setForm, selectedCrop, cha
   );
 }
 
-function TasksView({ tasks, beds, taskDate, setTaskDate, taskForm, setTaskForm, createTask, completionTaskId, setCompletionTaskId, completion, setCompletion, completeTask }) {
+function TasksView({ tasks, beds, workers, taskDate, setTaskDate, taskForm, setTaskForm, createTask, completionTaskId, setCompletionTaskId, completion, setCompletion, completeTask }) {
   return (
     <>
       <section className="panel">
@@ -976,14 +1021,15 @@ function TasksView({ tasks, beds, taskDate, setTaskDate, taskForm, setTaskForm, 
               {task.status !== "completed" && completionTaskId !== task.id && <button className="secondary-button" onClick={() => setCompletionTaskId(task.id)}>ZAKLJUČI</button>}
               {completionTaskId === task.id && (
                 <form className="completion-form" onSubmit={(event) => completeTask(event, task.id)}>
-                  <label>Trajanje (min)<input type="number" min="0" value={completion.duration_minutes} onChange={(event) => setCompletion({ ...completion, duration_minutes: event.target.value })} /></label>
+                  <label>Trajanje (min)<input type="number" min={completion.worker_id ? "1" : "0"} value={completion.duration_minutes} onChange={(event) => setCompletion({ ...completion, duration_minutes: event.target.value })} required={Boolean(completion.worker_id)} /></label>
+                  <label>Izvajalec<select value={completion.worker_id} onChange={(event) => setCompletion({ ...completion, worker_id: event.target.value })}><option value="">Brez obračuna dela</option>{workers.filter((worker) => worker.active).map((worker) => <option key={worker.id} value={worker.id}>{worker.name} · {worker.hourly_rate_eur.toFixed(2)} €/h</option>)}</select></label>
                   <label>Poraba<input type="number" min="0" step="0.01" value={completion.quantity_used} onChange={(event) => setCompletion({ ...completion, quantity_used: event.target.value })} /></label>
                   <label>Enota<input value={completion.unit} onChange={(event) => setCompletion({ ...completion, unit: event.target.value })} placeholder="L, kg, kos" /></label>
                   <label className="wide">Opomba<input value={completion.notes} onChange={(event) => setCompletion({ ...completion, notes: event.target.value })} placeholder="Kaj je bilo narejeno?" /></label>
                   <div className="completion-actions"><button type="button" className="text-button" onClick={() => setCompletionTaskId(null)}>PREKLIČI</button><button className="primary-button" type="submit">POTRDI OPRAVLJENO</button></div>
                 </form>
               )}
-              {task.status === "completed" && <div className="completion-summary">{task.duration_minutes != null && <span>{task.duration_minutes} min</span>}{task.quantity_used != null && <span>{task.quantity_used} {task.unit || ""}</span>}{task.notes && <span>{task.notes}</span>}</div>}
+              {task.status === "completed" && <div className="completion-summary">{task.duration_minutes != null && <span>{task.duration_minutes} min</span>}{task.labor_worker && <span>{task.labor_worker} · {task.labor_cost_eur.toFixed(2)} € dela</span>}{task.quantity_used != null && <span>{task.quantity_used} {task.unit || ""}</span>}{task.notes && <span>{task.notes}</span>}</div>}
             </article>
           ))}
           {!tasks.length && <p className="empty-state">Za izbrani datum ni opravil.</p>}
@@ -995,6 +1041,53 @@ function TasksView({ tasks, beds, taskDate, setTaskDate, taskForm, setTaskForm, 
 
 function TaskSummary({ task }) {
   return <div className={`task-summary ${task.status}`}><span className={`priority-dot ${task.priority}`}></span><div><strong>{task.title}</strong><small>{task.bed ? `Gredica ${task.bed}` : taskTypeLabels[task.task_type] || "Splošno"}</small></div><span>{task.status === "completed" ? "✓" : task.due_date}</span></div>;
+}
+
+function LaborView({ workers, beds, plantings, data, start, setStart, end, setEnd, workerForm, setWorkerForm, createWorker, laborForm, setLaborForm, createLaborEntry }) {
+  const summary = data.summary || {};
+  const selectedBed = beds.find((item) => String(item.id) === String(laborForm.bed_id));
+  const matchingPlantings = plantings.filter((item) => !selectedBed || item.bed === selectedBed.name);
+  const money = (amount) => `${(amount || 0).toFixed(2)} €`;
+  return <>
+    <section className="metric-grid labor-metrics">
+      <article className="metric-card"><span>Delovne ure</span><strong>{(summary.hours || 0).toFixed(2)} h</strong><small>{summary.entry_count || 0} evidenc dela</small></article>
+      <article className="metric-card"><span>Strošek dela</span><strong>{money(summary.cost_eur)}</strong><small>po shranjenih urnih postavkah</small></article>
+      <article className="metric-card"><span>Brez gredice</span><strong className={summary.unallocated_hours ? "negative" : "positive"}>{(summary.unallocated_hours || 0).toFixed(2)} h</strong><small>{money(summary.unallocated_cost_eur)} še ni razporejeno</small></article>
+    </section>
+    <section className="labor-entry-grid">
+      <form className="panel compact-form worker-form" onSubmit={createWorker}>
+        <div className="section-heading"><div><p className="eyebrow">Ekipa in lastno delo</p><h2>Nov izvajalec</h2><p className="muted">Urna postavka je lahko tudi vrednost lastnega ali družinskega dela.</p></div></div>
+        <label>Ime<input value={workerForm.name} onChange={(e) => setWorkerForm({ ...workerForm, name: e.target.value })} required /></label>
+        <label>Vloga<input value={workerForm.role} onChange={(e) => setWorkerForm({ ...workerForm, role: e.target.value })} placeholder="Npr. pridelava" /></label>
+        <label>Urna postavka (€)<input type="number" min="0" step="0.01" value={workerForm.hourly_rate_eur} onChange={(e) => setWorkerForm({ ...workerForm, hourly_rate_eur: e.target.value })} required /></label>
+        <button className="secondary-button">DODAJ IZVAJALCA</button>
+        <div className="worker-list">{workers.map((worker) => <span key={worker.id}><strong>{worker.name}</strong>{worker.role || "Brez vloge"} · {worker.hourly_rate_eur.toFixed(2)} €/h</span>)}{workers.length === 0 && <p className="empty-state">Izvajalec še ni dodan.</p>}</div>
+      </form>
+      <form className="panel labor-entry-form" onSubmit={createLaborEntry}>
+        <div className="section-heading"><div><p className="eyebrow">Delo brez opravila</p><h2>Ročni vnos delovnih ur</h2><p className="muted">Za zaključena dnevna opravila se ure knjižijo že v obrazcu Opravila.</p></div></div>
+        <label>Izvajalec<select value={laborForm.worker_id} onChange={(e) => setLaborForm({ ...laborForm, worker_id: e.target.value })} required><option value="">Izberi</option>{workers.filter((worker) => worker.active).map((worker) => <option key={worker.id} value={worker.id}>{worker.name} · {worker.hourly_rate_eur.toFixed(2)} €/h</option>)}</select></label>
+        <label>Gredica<select value={laborForm.bed_id} onChange={(e) => setLaborForm({ ...laborForm, bed_id: e.target.value, planting_id: "" })}><option value="">Splošno / brez gredice</option>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name}</option>)}</select></label>
+        <label>Setev (neobvezno)<select value={laborForm.planting_id} onChange={(e) => setLaborForm({ ...laborForm, planting_id: e.target.value })}><option value="">Brez setve</option>{matchingPlantings.map((item) => <option key={item.id} value={item.id}>{item.crop} {item.variety}</option>)}</select></label>
+        <label>Datum<input type="date" value={laborForm.work_date} onChange={(e) => setLaborForm({ ...laborForm, work_date: e.target.value })} required /></label>
+        <label>Trajanje (min)<input type="number" min="1" max="1440" value={laborForm.duration_minutes} onChange={(e) => setLaborForm({ ...laborForm, duration_minutes: e.target.value })} required /></label>
+        <label>Druga urna postavka (€)<input type="number" min="0" step="0.01" value={laborForm.hourly_rate_eur} onChange={(e) => setLaborForm({ ...laborForm, hourly_rate_eur: e.target.value })} placeholder="Privzeta izvajalčeva" /></label>
+        <label className="wide">Opis<input value={laborForm.description} onChange={(e) => setLaborForm({ ...laborForm, description: e.target.value })} placeholder="Npr. priprava gredice in zastirka" required /></label>
+        <button className="primary-button" disabled={!workers.length}>SHRANI DELO</button>
+      </form>
+    </section>
+    <section className="panel labor-report-panel">
+      <div className="section-heading"><div><p className="eyebrow">Obdobje in razporeditev</p><h2>Poročilo o delu</h2></div><div className="labor-range"><label>Od<input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Do<input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></label></div></div>
+      <div className="labor-breakdown-grid">
+        <div><h3>Po izvajalcih</h3>{data.by_worker.length === 0 ? <p className="empty-state">V obdobju ni dela.</p> : data.by_worker.map((row) => <article key={row.worker_id}><div><strong>{row.worker}</strong><span>{row.entry_count} evidenc</span></div><div><strong>{row.hours.toFixed(2)} h</strong><span>{money(row.cost_eur)}</span></div></article>)}</div>
+        <div><h3>Po gredicah</h3>{data.by_bed.length === 0 ? <p className="empty-state">Delo še ni razporejeno na gredice.</p> : data.by_bed.map((row) => <article key={row.bed_id}><div><strong>Gredica {row.bed}</strong><span>{row.entry_count} evidenc</span></div><div><strong>{row.hours.toFixed(2)} h</strong><span>{money(row.cost_eur)}</span></div></article>)}</div>
+      </div>
+      <p className="labor-note">{data.note}</p>
+    </section>
+    <section className="panel">
+      <div className="section-heading"><div><p className="eyebrow">Dnevnik</p><h2>Evidentirano delo</h2></div><span>{data.entries.length} zapisov</span></div>
+      {data.entries.length === 0 ? <p className="empty-state">Za izbrano obdobje ni evidenc.</p> : <div className="labor-history">{data.entries.map((entry) => <article key={entry.id}><time>{entry.work_date}</time><div><strong>{entry.description}</strong><span>{entry.worker}{entry.bed ? ` · gredica ${entry.bed}` : " · brez gredice"}{entry.task_id ? " · iz opravila" : ""}</span></div><div><strong>{entry.hours.toFixed(2)} h</strong><span>{money(entry.total_cost_eur)}</span></div></article>)}</div>}
+    </section>
+  </>;
 }
 
 function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setHarvestForm, costForm, setCostForm, saleForm, setSaleForm, submit }) {
@@ -1017,7 +1110,7 @@ function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setH
       <form className="panel compact-form" onSubmit={(event) => submit(event, "/api/costs", { ...costForm, bed_id: Number(costForm.bed_id), planting_id: costForm.planting_id ? Number(costForm.planting_id) : null, amount_eur: Number(costForm.amount_eur) }, () => setCostForm({ ...costForm, amount_eur: "", description: "" }))}>
         <h2>Dodaj strošek</h2>
         <label>Gredica<select value={costForm.bed_id} onChange={(e) => setCostForm({ ...costForm, bed_id: e.target.value })} required>{beds.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
-        <label>Kategorija<select value={costForm.category} onChange={(e) => setCostForm({ ...costForm, category: e.target.value })}><option value="labor">Delo</option><option value="seed">Seme</option><option value="fertilizer">Gnojilo</option><option value="water">Voda</option><option value="packaging">Embalaža</option><option value="other">Drugo</option></select></label>
+        <label>Kategorija<select value={costForm.category} onChange={(e) => setCostForm({ ...costForm, category: e.target.value })}><option value="labor">Delo – ročni strošek</option><option value="seed">Seme</option><option value="fertilizer">Gnojilo</option><option value="water">Voda</option><option value="packaging">Embalaža</option><option value="other">Drugo</option></select></label>
         <label>Znesek (€)<input type="number" min="0.01" step="0.01" value={costForm.amount_eur} onChange={(e) => setCostForm({ ...costForm, amount_eur: e.target.value })} required /></label>
         <label>Opis<input value={costForm.description} onChange={(e) => setCostForm({ ...costForm, description: e.target.value })} required /></label>
         <button className="primary-button">SHRANI STROŠEK</button>
@@ -1031,7 +1124,7 @@ function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setH
         <button className="primary-button">SHRANI PRODAJO</button>
       </form>
     </section>
-    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Rezultat na površino</p><h2>Dobiček po gredicah</h2></div></div><div className="economics-table"><strong>Gredica</strong><strong>Žetev</strong><strong>Stroški</strong><strong>Prihodki</strong><strong>Dobiček</strong>{economics.map((item) => <React.Fragment key={item.bed_id}><span>{item.bed}</span><span>{item.harvested_kg} kg</span><span className="economics-cost">{item.costs_eur.toFixed(2)} €<small>{item.material_costs_eur.toFixed(2)} € material</small></span><span>{item.revenue_eur.toFixed(2)} €</span><strong className={item.profit_eur >= 0 ? "positive" : "negative"}>{item.profit_eur.toFixed(2)} €</strong></React.Fragment>)}</div></section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Rezultat na površino</p><h2>Dobiček po gredicah</h2><p className="muted">Čas iz modula Delo se obračuna samodejno; istega dela ne vnesi še enkrat kot ročni strošek.</p></div></div><div className="economics-table"><strong>Gredica</strong><strong>Žetev</strong><strong>Stroški</strong><strong>Prihodki</strong><strong>Dobiček</strong>{economics.map((item) => <React.Fragment key={item.bed_id}><span>{item.bed}</span><span>{item.harvested_kg} kg</span><span className="economics-cost">{item.costs_eur.toFixed(2)} €<small>{item.material_costs_eur.toFixed(2)} € material</small><small>{item.labor_costs_eur.toFixed(2)} € delo</small></span><span>{item.revenue_eur.toFixed(2)} €</span><strong className={item.profit_eur >= 0 ? "positive" : "negative"}>{item.profit_eur.toFixed(2)} €</strong></React.Fragment>)}</div></section>
   </>;
 }
 
