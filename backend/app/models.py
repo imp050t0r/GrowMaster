@@ -31,6 +31,8 @@ class Farm(Base):
     customers: Mapped[list["Customer"]] = relationship(back_populates="farm")
     orders: Mapped[list["Order"]] = relationship(back_populates="farm")
     crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="farm")
+    sales_settings: Mapped["SalesSettings | None"] = relationship(back_populates="farm")
+    retail_sales: Mapped[list["RetailSale"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -121,6 +123,7 @@ class Harvest(Base):
     planting: Mapped[Planting] = relationship(back_populates="harvests")
     sales: Mapped[list["Sale"]] = relationship(back_populates="harvest")
     order_items: Mapped[list["OrderItem"]] = relationship(back_populates="harvest")
+    retail_sale_items: Mapped[list["RetailSaleItem"]] = relationship(back_populates="harvest")
 
 
 class Cost(Base):
@@ -176,6 +179,20 @@ class Customer(Base):
 
     farm: Mapped[Farm] = relationship(back_populates="customers")
     orders: Mapped[list["Order"]] = relationship(back_populates="customer")
+    profile: Mapped["CustomerProfile | None"] = relationship(back_populates="customer")
+    retail_sales: Mapped[list["RetailSale"]] = relationship(back_populates="customer")
+
+
+class CustomerProfile(Base):
+    __tablename__ = "customer_profiles"
+
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True
+    )
+    customer_type: Mapped[str] = mapped_column(String(20), default="consumer", index=True)
+    tax_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    customer: Mapped[Customer] = relationship(back_populates="profile")
 
 
 class Order(Base):
@@ -243,6 +260,64 @@ class CropPlan(Base):
     crop: Mapped[Crop] = relationship()
     variety: Mapped[Variety] = relationship()
     planting: Mapped[Planting | None] = relationship()
+
+
+class SalesSettings(Base):
+    __tablename__ = "sales_settings"
+
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True
+    )
+    basic_agriculture_invoice_exemption: Mapped[bool] = mapped_column(Boolean, default=True)
+    seller_name: Mapped[str] = mapped_column(String(160), default="GrowMaster kmetija")
+    seller_tax_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    farm: Mapped[Farm] = relationship(back_populates="sales_settings")
+
+
+class RetailSale(Base):
+    __tablename__ = "retail_sales"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    sale_date: Mapped[date] = mapped_column(Date, index=True)
+    payment_method: Mapped[str] = mapped_column(String(20), default="cash")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="retail_sales")
+    customer: Mapped[Customer | None] = relationship(back_populates="retail_sales")
+    items: Mapped[list["RetailSaleItem"]] = relationship(
+        back_populates="retail_sale", cascade="all, delete-orphan"
+    )
+
+    @property
+    def total_eur(self) -> float:
+        return round(sum(item.line_total_eur for item in self.items), 2)
+
+
+class RetailSaleItem(Base):
+    __tablename__ = "retail_sale_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    retail_sale_id: Mapped[int] = mapped_column(
+        ForeignKey("retail_sales.id", ondelete="CASCADE"), index=True
+    )
+    harvest_id: Mapped[int] = mapped_column(
+        ForeignKey("harvests.id", ondelete="RESTRICT"), index=True
+    )
+    quantity_kg: Mapped[float] = mapped_column(Float)
+    price_per_kg_eur: Mapped[float] = mapped_column(Float)
+
+    retail_sale: Mapped[RetailSale] = relationship(back_populates="items")
+    harvest: Mapped[Harvest] = relationship(back_populates="retail_sale_items")
+
+    @property
+    def line_total_eur(self) -> float:
+        return round(self.quantity_kg * self.price_per_kg_eur, 2)
 
 
 class Task(Base):
