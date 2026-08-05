@@ -25,6 +25,9 @@ class Farm(Base):
 
     beds: Mapped[list["Bed"]] = relationship(back_populates="farm")
     tasks: Mapped[list["Task"]] = relationship(back_populates="farm")
+    harvests: Mapped[list["Harvest"]] = relationship(back_populates="farm")
+    costs: Mapped[list["Cost"]] = relationship(back_populates="farm")
+    sales: Mapped[list["Sale"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -66,6 +69,8 @@ class Bed(Base):
     farm: Mapped[Farm] = relationship(back_populates="beds")
     plantings: Mapped[list["Planting"]] = relationship(back_populates="bed")
     tasks: Mapped[list["Task"]] = relationship(back_populates="bed")
+    harvests: Mapped[list["Harvest"]] = relationship(back_populates="bed")
+    costs: Mapped[list["Cost"]] = relationship(back_populates="bed")
 
     @property
     def area_m2(self) -> float:
@@ -90,6 +95,65 @@ class Planting(Base):
     crop: Mapped[Crop] = relationship()
     variety: Mapped[Variety] = relationship()
     tasks: Mapped[list["Task"]] = relationship(back_populates="planting")
+    harvests: Mapped[list["Harvest"]] = relationship(back_populates="planting")
+    costs: Mapped[list["Cost"]] = relationship(back_populates="planting")
+
+
+class Harvest(Base):
+    __tablename__ = "harvests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"), index=True)
+    planting_id: Mapped[int] = mapped_column(ForeignKey("plantings.id", ondelete="RESTRICT"), index=True)
+    harvest_date: Mapped[date] = mapped_column(Date, index=True)
+    quantity_kg: Mapped[float] = mapped_column(Float)
+    quality: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="harvests")
+    bed: Mapped[Bed] = relationship(back_populates="harvests")
+    planting: Mapped[Planting] = relationship(back_populates="harvests")
+    sales: Mapped[list["Sale"]] = relationship(back_populates="harvest")
+
+
+class Cost(Base):
+    __tablename__ = "costs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"), index=True)
+    planting_id: Mapped[int | None] = mapped_column(ForeignKey("plantings.id", ondelete="SET NULL"), nullable=True, index=True)
+    cost_date: Mapped[date] = mapped_column(Date, index=True)
+    category: Mapped[str] = mapped_column(String(40))
+    amount_eur: Mapped[float] = mapped_column(Float)
+    description: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="costs")
+    bed: Mapped[Bed] = relationship(back_populates="costs")
+    planting: Mapped[Planting | None] = relationship(back_populates="costs")
+
+
+class Sale(Base):
+    __tablename__ = "sales"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    harvest_id: Mapped[int] = mapped_column(ForeignKey("harvests.id", ondelete="RESTRICT"), index=True)
+    sale_date: Mapped[date] = mapped_column(Date, index=True)
+    quantity_kg: Mapped[float] = mapped_column(Float)
+    price_per_kg_eur: Mapped[float] = mapped_column(Float)
+    customer: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="sales")
+    harvest: Mapped[Harvest] = relationship(back_populates="sales")
+
+    @property
+    def revenue_eur(self) -> float:
+        return round(self.quantity_kg * self.price_per_kg_eur, 2)
 
 
 class Task(Base):

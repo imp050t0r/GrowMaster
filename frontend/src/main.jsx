@@ -33,6 +33,8 @@ function App() {
   const [plantings, setPlantings] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [dashboard, setDashboard] = useState(null);
+  const [harvests, setHarvests] = useState([]);
+  const [economics, setEconomics] = useState([]);
   const [taskDate, setTaskDate] = useState(today);
   const [selectedBed, setSelectedBed] = useState(null);
   const [notice, setNotice] = useState("");
@@ -60,6 +62,9 @@ function App() {
     unit: "",
     notes: "",
   });
+  const [harvestForm, setHarvestForm] = useState({ planting_id: "", harvest_date: today, quantity_kg: "", quality: "A", notes: "" });
+  const [costForm, setCostForm] = useState({ bed_id: "", planting_id: "", cost_date: today, category: "labor", amount_eur: "", description: "" });
+  const [saleForm, setSaleForm] = useState({ harvest_id: "", sale_date: today, quantity_kg: "", price_per_kg_eur: "", customer: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -67,18 +72,25 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
       apiRequest(`/api/tasks?date=${taskDate}`),
       apiRequest(`/api/dashboard?date=${today}`),
+      apiRequest("/api/harvests"),
+      apiRequest("/api/economics/by-bed"),
     ]);
     setCrops(cropData);
     setBeds(bedData);
     setPlantings(plantingData);
     setTasks(taskData);
     setDashboard(dashboardData);
+    setHarvests(harvestData);
+    setEconomics(economicsData);
+    setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
+    setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
+    setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
     setPlantingForm((current) => {
       const cropId = current.crop_id || cropData[0]?.id || "";
       const crop = cropData.find((item) => String(item.id) === String(cropId));
@@ -234,11 +246,23 @@ function App() {
     }
   }
 
+  async function submitEconomics(event, path, payload, reset) {
+    event.preventDefault();
+    clearMessages();
+    try {
+      const data = await apiRequest(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      setNotice(data.message);
+      reset();
+      await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
   const navigation = [
     ["dashboard", "Domov", "⌂"],
     ["beds", "Gredice", "▦"],
     ["planting", "Setev", "+"],
     ["tasks", "Opravila", "✓"],
+    ["economics", "Žetev €", "€"],
   ];
 
   return (
@@ -249,7 +273,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 0.2</span>
+        <span className="status-pill">MVP 0.3</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -309,6 +333,15 @@ function App() {
           completion={completion}
           setCompletion={setCompletion}
           completeTask={completeTask}
+        />
+      )}
+      {view === "economics" && (
+        <EconomicsView
+          beds={beds} plantings={plantings} harvests={harvests} economics={economics}
+          harvestForm={harvestForm} setHarvestForm={setHarvestForm}
+          costForm={costForm} setCostForm={setCostForm}
+          saleForm={saleForm} setSaleForm={setSaleForm}
+          submit={submitEconomics}
         />
       )}
     </main>
@@ -442,6 +475,44 @@ function TasksView({ tasks, beds, taskDate, setTaskDate, taskForm, setTaskForm, 
 
 function TaskSummary({ task }) {
   return <div className={`task-summary ${task.status}`}><span className={`priority-dot ${task.priority}`}></span><div><strong>{task.title}</strong><small>{task.bed ? `Gredica ${task.bed}` : taskTypeLabels[task.task_type] || "Splošno"}</small></div><span>{task.status === "completed" ? "✓" : task.due_date}</span></div>;
+}
+
+function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setHarvestForm, costForm, setCostForm, saleForm, setSaleForm, submit }) {
+  const availableHarvests = harvests.filter((item) => item.available_kg > 0);
+  return <>
+    <section className="metric-grid economics-grid">
+      <article className="metric-card"><span>Skupaj pridelano</span><strong>{economics.reduce((sum, item) => sum + item.harvested_kg, 0).toFixed(1)} kg</strong><small>evidentirana žetev</small></article>
+      <article className="metric-card"><span>Prihodki</span><strong>{economics.reduce((sum, item) => sum + item.revenue_eur, 0).toFixed(2)} €</strong><small>zabeležena prodaja</small></article>
+      <article className="metric-card"><span>Dobiček</span><strong>{economics.reduce((sum, item) => sum + item.profit_eur, 0).toFixed(2)} €</strong><small>prihodki − stroški</small></article>
+    </section>
+    <section className="economics-forms">
+      <form className="panel compact-form" onSubmit={(event) => submit(event, "/api/harvests", { ...harvestForm, planting_id: Number(harvestForm.planting_id), quantity_kg: Number(harvestForm.quantity_kg) }, () => setHarvestForm({ ...harvestForm, quantity_kg: "", notes: "" }))}>
+        <h2>Zabeleži žetev</h2>
+        <label>Aktivna setev<select value={harvestForm.planting_id} onChange={(e) => setHarvestForm({ ...harvestForm, planting_id: e.target.value })} required>{plantings.map((p) => <option key={p.id} value={p.id}>{p.bed} · {p.crop} {p.variety}</option>)}</select></label>
+        <label>Datum<input type="date" value={harvestForm.harvest_date} onChange={(e) => setHarvestForm({ ...harvestForm, harvest_date: e.target.value })} required /></label>
+        <label>Količina (kg)<input type="number" min="0.01" step="0.01" value={harvestForm.quantity_kg} onChange={(e) => setHarvestForm({ ...harvestForm, quantity_kg: e.target.value })} required /></label>
+        <label>Kakovost<select value={harvestForm.quality} onChange={(e) => setHarvestForm({ ...harvestForm, quality: e.target.value })}><option value="A">A – prva</option><option value="B">B – druga</option><option value="waste">Odpad</option></select></label>
+        <button className="primary-button">SHRANI ŽETEV</button>
+      </form>
+      <form className="panel compact-form" onSubmit={(event) => submit(event, "/api/costs", { ...costForm, bed_id: Number(costForm.bed_id), planting_id: costForm.planting_id ? Number(costForm.planting_id) : null, amount_eur: Number(costForm.amount_eur) }, () => setCostForm({ ...costForm, amount_eur: "", description: "" }))}>
+        <h2>Dodaj strošek</h2>
+        <label>Gredica<select value={costForm.bed_id} onChange={(e) => setCostForm({ ...costForm, bed_id: e.target.value })} required>{beds.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+        <label>Kategorija<select value={costForm.category} onChange={(e) => setCostForm({ ...costForm, category: e.target.value })}><option value="labor">Delo</option><option value="seed">Seme</option><option value="fertilizer">Gnojilo</option><option value="water">Voda</option><option value="packaging">Embalaža</option><option value="other">Drugo</option></select></label>
+        <label>Znesek (€)<input type="number" min="0.01" step="0.01" value={costForm.amount_eur} onChange={(e) => setCostForm({ ...costForm, amount_eur: e.target.value })} required /></label>
+        <label>Opis<input value={costForm.description} onChange={(e) => setCostForm({ ...costForm, description: e.target.value })} required /></label>
+        <button className="primary-button">SHRANI STROŠEK</button>
+      </form>
+      <form className="panel compact-form" onSubmit={(event) => submit(event, "/api/sales", { ...saleForm, harvest_id: Number(saleForm.harvest_id), quantity_kg: Number(saleForm.quantity_kg), price_per_kg_eur: Number(saleForm.price_per_kg_eur) }, () => setSaleForm({ ...saleForm, quantity_kg: "", price_per_kg_eur: "", customer: "" }))}>
+        <h2>Zabeleži prodajo</h2>
+        <label>Žetev<select value={saleForm.harvest_id} onChange={(e) => setSaleForm({ ...saleForm, harvest_id: e.target.value })} required>{availableHarvests.map((h) => <option key={h.id} value={h.id}>{h.bed} · {h.crop} · {h.available_kg} kg na voljo</option>)}</select></label>
+        <label>Količina (kg)<input type="number" min="0.01" step="0.01" value={saleForm.quantity_kg} onChange={(e) => setSaleForm({ ...saleForm, quantity_kg: e.target.value })} required /></label>
+        <label>Cena/kg (€)<input type="number" min="0.01" step="0.01" value={saleForm.price_per_kg_eur} onChange={(e) => setSaleForm({ ...saleForm, price_per_kg_eur: e.target.value })} required /></label>
+        <label>Kupec<input value={saleForm.customer} onChange={(e) => setSaleForm({ ...saleForm, customer: e.target.value })} /></label>
+        <button className="primary-button">SHRANI PRODAJO</button>
+      </form>
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Rezultat na površino</p><h2>Dobiček po gredicah</h2></div></div><div className="economics-table"><strong>Gredica</strong><strong>Žetev</strong><strong>Stroški</strong><strong>Prihodki</strong><strong>Dobiček</strong>{economics.map((item) => <React.Fragment key={item.bed_id}><span>{item.bed}</span><span>{item.harvested_kg} kg</span><span>{item.costs_eur.toFixed(2)} €</span><span>{item.revenue_eur.toFixed(2)} €</span><strong className={item.profit_eur >= 0 ? "positive" : "negative"}>{item.profit_eur.toFixed(2)} €</strong></React.Fragment>)}</div></section>
+  </>;
 }
 
 createRoot(document.getElementById("root")).render(<React.StrictMode><App /></React.StrictMode>);

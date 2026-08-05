@@ -68,3 +68,64 @@ def test_bed_planting_and_task_workflow() -> None:
         refreshed_bed = client.get(f"/api/beds/{bed['id']}").json()
         assert refreshed_bed["status"] == "empty"
         assert refreshed_bed["last_crop_family"] == "Brassicaceae"
+
+        harvest = client.post(
+            "/api/harvests",
+            json={
+                "planting_id": planting.json()["id"],
+                "harvest_date": "2026-09-10",
+                "quantity_kg": 18.5,
+                "quality": "A",
+                "notes": "Prva kakovost.",
+            },
+        )
+        assert harvest.status_code == 201
+        assert harvest.json()["available_kg"] == 18.5
+
+        cost = client.post(
+            "/api/costs",
+            json={
+                "bed_id": bed["id"],
+                "planting_id": planting.json()["id"],
+                "cost_date": "2026-09-09",
+                "category": "labor",
+                "amount_eur": 42.5,
+                "description": "Pobiranje in pakiranje",
+            },
+        )
+        assert cost.status_code == 201
+
+        sale = client.post(
+            "/api/sales",
+            json={
+                "harvest_id": harvest.json()["id"],
+                "sale_date": "2026-09-10",
+                "quantity_kg": 15,
+                "price_per_kg_eur": 6,
+                "customer": "Tržnica",
+            },
+        )
+        assert sale.status_code == 201
+        assert sale.json()["revenue_eur"] == 90
+
+        oversold = client.post(
+            "/api/sales",
+            json={
+                "harvest_id": harvest.json()["id"],
+                "sale_date": "2026-09-10",
+                "quantity_kg": 4,
+                "price_per_kg_eur": 6,
+            },
+        )
+        assert oversold.status_code == 409
+
+        harvest_summary = client.get("/api/harvests").json()[0]
+        assert harvest_summary["sold_kg"] == 15
+        assert harvest_summary["available_kg"] == 3.5
+
+        economics = client.get("/api/economics/by-bed").json()
+        bed_economics = next(item for item in economics if item["bed_id"] == bed["id"])
+        assert bed_economics["harvested_kg"] == 18.5
+        assert bed_economics["costs_eur"] == 42.5
+        assert bed_economics["revenue_eur"] == 90
+        assert bed_economics["profit_eur"] == 47.5
