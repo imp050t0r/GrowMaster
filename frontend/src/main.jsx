@@ -6,6 +6,7 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const now = new Date();
 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 const monthStart = `${today.slice(0, 7)}-01`;
+const yearStart = `${today.slice(0, 4)}-01-01`;
 const inDays = (days) => {
   const value = new Date(now); value.setDate(value.getDate() + days);
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
@@ -61,6 +62,7 @@ function App() {
   const [supplyUsages, setSupplyUsages] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [laborReport, setLaborReport] = useState({ summary: {}, by_worker: [], by_bed: [], entries: [], note: "" });
+  const [profitabilityReport, setProfitabilityReport] = useState({ summary: {}, by_bed: [], by_crop: [], note: "" });
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [reportStart, setReportStart] = useState(today);
@@ -71,6 +73,8 @@ function App() {
   const [cashFlowEnd, setCashFlowEnd] = useState(today);
   const [laborStart, setLaborStart] = useState(monthStart);
   const [laborEnd, setLaborEnd] = useState(today);
+  const [profitabilityStart, setProfitabilityStart] = useState(yearStart);
+  const [profitabilityEnd, setProfitabilityEnd] = useState(today);
   const [paymentOrderId, setPaymentOrderId] = useState(null);
   const [planStart, setPlanStart] = useState(today);
   const [planEnd, setPlanEnd] = useState(inDays(90));
@@ -133,7 +137,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, profitabilityData, invoiceData, invoiceProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -160,6 +164,7 @@ function App() {
       apiRequest("/api/supply-usages"),
       apiRequest("/api/workers"),
       apiRequest(`/api/labor-report?start=${laborStart}&end=${laborEnd}`),
+      apiRequest(`/api/profitability-report?start=${profitabilityStart}&end=${profitabilityEnd}`),
       apiRequest("/api/invoices"),
       apiRequest("/api/invoice-profile"),
     ]);
@@ -189,6 +194,7 @@ function App() {
     setSupplyUsages(supplyUsageData);
     setWorkers(workerData);
     setLaborReport(laborData);
+    setProfitabilityReport(profitabilityData);
     setInvoices(invoiceData);
     setInvoiceProfile(invoiceProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
@@ -243,7 +249,7 @@ function App() {
 
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
-  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd, laborStart, laborEnd]);
+  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd, laborStart, laborEnd, profitabilityStart, profitabilityEnd]);
 
   useEffect(() => {
     const openingCash = Number(dayCloseForm.opening_cash_eur);
@@ -766,6 +772,7 @@ function App() {
     ["tasks", "Opravila", "✓"],
     ["labor", "Delo", "◷"],
     ["economics", "Žetev €", "€"],
+    ["profitability", "Analitika", "◎"],
     ["orders", "Naročila", "▤"],
     ["invoices", "Računi", "R"],
     ["reports", "Prodaja", "Σ"],
@@ -784,7 +791,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.6</span>
+        <span className="status-pill">MVP 1.7</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -861,6 +868,11 @@ function App() {
           saleForm={saleForm} setSaleForm={setSaleForm}
           submit={submitEconomics}
         />
+      )}
+      {view === "profitability" && (
+        <ProfitabilityView data={profitabilityReport}
+          start={profitabilityStart} setStart={setProfitabilityStart}
+          end={profitabilityEnd} setEnd={setProfitabilityEnd} />
       )}
       {view === "orders" && (
         <OrdersView inventory={inventory} crops={crops} customers={customers} orders={orders}
@@ -1125,6 +1137,49 @@ function EconomicsView({ beds, plantings, harvests, economics, harvestForm, setH
       </form>
     </section>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Rezultat na površino</p><h2>Dobiček po gredicah</h2><p className="muted">Čas iz modula Delo se obračuna samodejno; istega dela ne vnesi še enkrat kot ročni strošek.</p></div></div><div className="economics-table"><strong>Gredica</strong><strong>Žetev</strong><strong>Stroški</strong><strong>Prihodki</strong><strong>Dobiček</strong>{economics.map((item) => <React.Fragment key={item.bed_id}><span>{item.bed}</span><span>{item.harvested_kg} kg</span><span className="economics-cost">{item.costs_eur.toFixed(2)} €<small>{item.material_costs_eur.toFixed(2)} € material</small><small>{item.labor_costs_eur.toFixed(2)} € delo</small></span><span>{item.revenue_eur.toFixed(2)} €</span><strong className={item.profit_eur >= 0 ? "positive" : "negative"}>{item.profit_eur.toFixed(2)} €</strong></React.Fragment>)}</div></section>
+  </>;
+}
+
+function ProfitabilityTable({ rows, nameKey }) {
+  const money = (value) => `${Number(value || 0).toFixed(2)} €`;
+  const ratio = (value, suffix) => value == null ? "—" : `${Number(value).toFixed(2)} ${suffix}`;
+  if (rows.length === 0) return <p className="empty-state">V izbranem obdobju ni podatkov.</p>;
+  return <div className="profitability-table">
+    <b>Naziv</b><b>Površina</b><b>Žetev</b><b>Prodano</b><b>Neto prihodek</b><b>Stroški</b><b>Dobiček</b><b>Marža</b><b>Na m²</b>
+    {rows.map((row) => <React.Fragment key={`${nameKey}-${row[`${nameKey}_id`]}`}>
+      <span><strong>{row[nameKey]}</strong>{row.crops?.length > 0 && <small>{row.crops.join(", ")}</small>}</span>
+      <span>{row.area_m2.toFixed(2)} m²</span>
+      <span>{row.harvested_kg.toFixed(2)} kg<small>{ratio(row.harvest_kg_m2, "kg/m²")}</small></span>
+      <span>{row.sold_kg.toFixed(2)} kg</span>
+      <span>{money(row.net_revenue_eur)}<small>bruto {money(row.gross_revenue_eur)} · dobropisi {money(row.credit_notes_eur)}</small></span>
+      <span>{money(row.costs_eur)}<small>{money(row.direct_costs_eur)} neposredno · {money(row.material_costs_eur)} material · {money(row.labor_costs_eur)} delo</small></span>
+      <strong className={row.profit_eur >= 0 ? "positive" : "negative"}>{money(row.profit_eur)}<small>{ratio(row.profit_eur_per_labor_hour, "€/h")}</small></strong>
+      <span>{ratio(row.margin_pct, "%")}</span>
+      <span>{ratio(row.profit_eur_m2, "€/m²")}<small>prihodek {ratio(row.revenue_eur_m2, "€/m²")}</small></span>
+    </React.Fragment>)}
+  </div>;
+}
+
+function ProfitabilityView({ data, start, setStart, end, setEnd }) {
+  const summary = data.summary || {};
+  const money = (value) => `${Number(value || 0).toFixed(2)} €`;
+  const ratio = (value, suffix) => value == null ? "—" : `${Number(value).toFixed(2)} ${suffix}`;
+  return <>
+    <section className="panel report-heading">
+      <div><p className="eyebrow">Sezonski rezultat</p><h2>Dobičkonosnost pridelave</h2><p className="muted">{data.note}</p></div>
+      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/profitability-report/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div>
+    </section>
+    <section className="metric-grid profitability-metrics">
+      <article className="metric-card"><span>Dobiček</span><strong className={Number(summary.profit_eur || 0) >= 0 ? "positive" : "negative"}>{money(summary.profit_eur)}</strong><small>marža {ratio(summary.margin_pct, "%")}</small></article>
+      <article className="metric-card"><span>Neto prihodki</span><strong>{money(summary.net_revenue_eur)}</strong><small>bruto {money(summary.gross_revenue_eur)} · dobropisi {money(summary.credit_notes_eur)}</small></article>
+      <article className="metric-card"><span>Skupni stroški</span><strong>{money(summary.costs_eur)}</strong><small>{money(summary.direct_costs_eur)} neposredno · {money(summary.material_costs_eur)} material · {money(summary.labor_costs_eur)} delo</small></article>
+      <article className="metric-card"><span>Žetev</span><strong>{Number(summary.harvested_kg || 0).toFixed(2)} kg</strong><small>{Number(summary.sold_kg || 0).toFixed(2)} kg prodano · {ratio(summary.harvest_kg_m2, "kg/m²")}</small></article>
+      <article className="metric-card"><span>Rezultat na površino</span><strong>{ratio(summary.profit_eur_m2, "€/m²")}</strong><small>{Number(summary.active_area_m2 || 0).toFixed(2)} m² aktivnih · prihodek {ratio(summary.revenue_eur_m2, "€/m²")}</small></article>
+      <article className="metric-card"><span>Učinek dela</span><strong>{ratio(summary.profit_eur_per_labor_hour, "€/h")}</strong><small>{Number(summary.labor_hours || 0).toFixed(2)} ur evidentiranega dela</small></article>
+    </section>
+    {Number(summary.unallocated_costs_eur || 0) > 0 && <aside className="allocation-note"><strong>{money(summary.unallocated_costs_eur)} stroškov ni pripisanih setvi.</strong><span>V skupnem rezultatu so vključeni, pri kulturah pa ne; pri gredicah se pokažejo, kadar je bila gredica izbrana. Od tega {money(summary.unallocated_direct_costs_eur)} neposrednih, {money(summary.unallocated_material_costs_eur)} materiala in {money(summary.unallocated_labor_costs_eur)} dela.</span></aside>}
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Po površinah</p><h2>Rezultat po gredicah</h2></div><span>{data.by_bed.length} aktivnih</span></div><ProfitabilityTable rows={data.by_bed} nameKey="bed" /></section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Po pridelkih</p><h2>Rezultat po kulturah</h2><p className="muted">Površina iste setve se pri kulturi upošteva samo enkrat, tudi če ima več žetev ali prodaj.</p></div><span>{data.by_crop.length} kultur</span></div><ProfitabilityTable rows={data.by_crop} nameKey="crop" /></section>
   </>;
 }
 

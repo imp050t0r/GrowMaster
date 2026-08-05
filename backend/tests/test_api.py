@@ -1313,3 +1313,183 @@ def test_bed_planting_and_task_workflow() -> None:
         assert "Plačilo dobavitelju" in supplier_cash_flow_csv.text
         assert "Agro oskrba" in supplier_cash_flow_csv.text
         assert len(client.get("/api/day-closes").json()) == 3
+
+        analytics_bed = client.post(
+            "/api/beds",
+            json={"name": "Z9", "width_m": 0.8, "length_m": 10},
+        )
+        assert analytics_bed.status_code == 201
+        analytics_planting = client.post(
+            "/api/plantings",
+            json={
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "bed_id": analytics_bed.json()["id"],
+                "sowing_date": "2027-01-01",
+            },
+        )
+        assert analytics_planting.status_code == 201
+        analytics_harvest = client.post(
+            "/api/harvests",
+            json={
+                "planting_id": analytics_planting.json()["id"],
+                "harvest_date": "2027-02-01",
+                "quantity_kg": 10,
+                "quality": "A",
+            },
+        )
+        assert analytics_harvest.status_code == 201
+        assert client.post(
+            "/api/costs",
+            json={
+                "bed_id": analytics_bed.json()["id"],
+                "planting_id": analytics_planting.json()["id"],
+                "cost_date": "2027-02-01",
+                "category": "other",
+                "amount_eur": 10,
+                "description": "Neposredni strošek setve",
+            },
+        ).status_code == 201
+        assert client.post(
+            "/api/costs",
+            json={
+                "bed_id": analytics_bed.json()["id"],
+                "cost_date": "2027-02-01",
+                "category": "other",
+                "amount_eur": 5,
+                "description": "Splošni strošek gredice",
+            },
+        ).status_code == 201
+        analytics_usage = client.post(
+            "/api/supply-usages",
+            json={
+                "supply_item_id": seed_supply.json()["id"],
+                "bed_id": analytics_bed.json()["id"],
+                "planting_id": analytics_planting.json()["id"],
+                "usage_date": "2027-02-01",
+                "quantity": 0.5,
+            },
+        )
+        assert analytics_usage.status_code == 201
+        assert analytics_usage.json()["total_cost_eur"] == 2.25
+        analytics_labor = client.post(
+            "/api/labor-entries",
+            json={
+                "worker_id": worker_data["id"],
+                "bed_id": analytics_bed.json()["id"],
+                "planting_id": analytics_planting.json()["id"],
+                "work_date": "2027-02-01",
+                "duration_minutes": 60,
+                "description": "Žetev in priprava",
+            },
+        )
+        assert analytics_labor.status_code == 201
+        assert analytics_labor.json()["total_cost_eur"] == 12
+        assert client.post(
+            "/api/sales",
+            json={
+                "harvest_id": analytics_harvest.json()["id"],
+                "sale_date": "2027-02-02",
+                "quantity_kg": 6,
+                "price_per_kg_eur": 8,
+                "customer": "Tržnica",
+            },
+        ).status_code == 201
+        analytics_order = client.post(
+            "/api/orders",
+            json={
+                "customer_id": customer.json()["id"],
+                "order_date": "2027-02-03",
+                "delivery_date": "2027-02-03",
+                "items": [
+                    {
+                        "harvest_id": analytics_harvest.json()["id"],
+                        "quantity_kg": 2,
+                        "price_per_kg_eur": 8,
+                    }
+                ],
+            },
+        )
+        assert analytics_order.status_code == 201
+        assert client.post(
+            f"/api/orders/{analytics_order.json()['id']}/status",
+            json={"status": "fulfilled"},
+        ).status_code == 200
+        analytics_invoice = client.post(
+            "/api/invoices",
+            json={
+                "source_type": "order",
+                "source_id": analytics_order.json()["id"],
+                "issued_on": "2027-02-03",
+                "payment_method": "bank_transfer",
+            },
+        )
+        assert analytics_invoice.status_code == 201
+        analytics_credit_note = client.post(
+            f"/api/invoices/{analytics_invoice.json()['id']}/credit-notes",
+            json={
+                "issued_on": "2027-02-04",
+                "reason": "Test sezonskega poročila",
+            },
+        )
+        assert analytics_credit_note.status_code == 201
+        assert analytics_credit_note.json()["total_eur"] == 16
+
+        profitability = client.get(
+            "/api/profitability-report?start=2027-01-01&end=2027-02-28"
+        )
+        assert profitability.status_code == 200
+        profitability_data = profitability.json()
+        assert profitability_data["summary"] == {
+            "active_area_m2": 8,
+            "harvested_kg": 10,
+            "sold_kg": 8,
+            "gross_revenue_eur": 64,
+            "credit_notes_eur": 16,
+            "net_revenue_eur": 48,
+            "direct_costs_eur": 15,
+            "material_costs_eur": 2.25,
+            "labor_costs_eur": 12,
+            "costs_eur": 29.25,
+            "profit_eur": 18.75,
+            "margin_pct": 39.06,
+            "labor_hours": 1,
+            "harvest_kg_m2": 1.25,
+            "revenue_eur_m2": 6,
+            "profit_eur_m2": 2.34,
+            "profit_eur_per_labor_hour": 18.75,
+            "unallocated_direct_costs_eur": 5,
+            "unallocated_material_costs_eur": 0,
+            "unallocated_labor_costs_eur": 0,
+            "unallocated_costs_eur": 5,
+            "unallocated_credit_notes_eur": 0,
+        }
+        assert profitability_data["range"] == {
+            "start": "2027-01-01",
+            "end": "2027-02-28",
+        }
+        assert len(profitability_data["by_bed"]) == 1
+        bed_profitability = profitability_data["by_bed"][0]
+        assert bed_profitability["bed"] == "Z9"
+        assert bed_profitability["net_revenue_eur"] == 48
+        assert bed_profitability["costs_eur"] == 29.25
+        assert bed_profitability["profit_eur"] == 18.75
+        assert bed_profitability["crops"] == ["Rukola"]
+        assert len(profitability_data["by_crop"]) == 1
+        crop_profitability = profitability_data["by_crop"][0]
+        assert crop_profitability["crop"] == "Rukola"
+        assert crop_profitability["net_revenue_eur"] == 48
+        assert crop_profitability["costs_eur"] == 24.25
+        assert crop_profitability["profit_eur"] == 23.75
+        assert crop_profitability["margin_pct"] == 49.48
+        assert crop_profitability["profit_eur_m2"] == 2.97
+        assert crop_profitability["profit_eur_per_labor_hour"] == 23.75
+        profitability_csv = client.get(
+            "/api/profitability-report/export.csv?start=2027-01-01&end=2027-02-28"
+        )
+        assert profitability_csv.status_code == 200
+        assert "Gredica;Z9" in profitability_csv.text
+        assert "Kultura;Rukola" in profitability_csv.text
+        assert client.get(
+            "/api/profitability-report?start=2027-03-01&end=2027-02-28"
+        ).status_code == 422

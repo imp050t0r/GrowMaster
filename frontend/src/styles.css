@@ -37,7 +37,7 @@ button { cursor: pointer; }
   top: 10px;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(14, 1fr);
+  grid-template-columns: repeat(15, 1fr);
   gap: 8px;
   margin-top: 14px;
   padding: 8px;
@@ -196,6 +196,15 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .economics-table .negative { color: #a1372b; }
 .economics-cost { display: grid; gap: 2px; }
 .economics-cost small { color: #6a7e75; font-size: 0.72rem; }
+.profitability-metrics .positive, .profitability-table .positive { color: #17603f; }
+.profitability-metrics .negative, .profitability-table .negative { color: #a1372b; }
+.allocation-note { display: grid; gap: 4px; margin-top: 18px; padding: 14px 16px; color: #684b18; background: #fff7df; border: 1px solid #ead69b; border-radius: 14px; }
+.allocation-note span { font-size: 0.84rem; line-height: 1.45; }
+.profitability-table { display: grid; grid-template-columns: 1.25fr repeat(8, minmax(125px, 1fr)); overflow-x: auto; }
+.profitability-table > * { min-width: 125px; padding: 11px 9px; border-bottom: 1px solid #e5ece7; }
+.profitability-table > :nth-child(9n + 5), .profitability-table > :nth-child(9n + 6), .profitability-table > :nth-child(9n + 7), .profitability-table > :nth-child(9n + 8), .profitability-table > :nth-child(9n) { text-align: right; }
+.profitability-table span, .profitability-table strong { display: grid; align-content: center; gap: 3px; }
+.profitability-table small { color: #6f8179; font-size: 0.72rem; font-weight: 500; line-height: 1.35; }
 .inventory-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .inventory-grid article { display: grid; gap: 5px; padding: 15px; background: #f8fbf9; border: 1px solid #dce7df; border-radius: 13px; }
 .inventory-grid article > span, .inventory-grid small { color: #647a70; font-size: 0.82rem; }
@@ -486,7 +495,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .task-main { grid-template-columns: auto 1fr; }
   .task-state { grid-column: 2; justify-self: start; }
   .completion-actions { flex-direction: column-reverse; }
-  .main-nav { overflow-x: auto; grid-template-columns: repeat(14, minmax(68px, 1fr)); }
+  .main-nav { overflow-x: auto; grid-template-columns: repeat(15, minmax(68px, 1fr)); }
   .calendar-list article { grid-template-columns: 82px 1fr; }
   .event-type { grid-column: 2; justify-self: start; }
 }
