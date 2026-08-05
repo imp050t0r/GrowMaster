@@ -49,8 +49,12 @@ function App() {
   const [retailSales, setRetailSales] = useState([]);
   const [salesSettings, setSalesSettings] = useState(null);
   const [salesReport, setSalesReport] = useState({ summary: {}, daily: [], entries: [], note: "" });
+  const [receivables, setReceivables] = useState({ summary: {}, items: [], note: "" });
   const [reportStart, setReportStart] = useState(today);
   const [reportEnd, setReportEnd] = useState(today);
+  const [receivablesAsOf, setReceivablesAsOf] = useState(today);
+  const [includePaidReceivables, setIncludePaidReceivables] = useState(false);
+  const [paymentOrderId, setPaymentOrderId] = useState(null);
   const [planStart, setPlanStart] = useState(today);
   const [planEnd, setPlanEnd] = useState(inDays(90));
   const [taskDate, setTaskDate] = useState(today);
@@ -87,6 +91,7 @@ function App() {
   const [orderForm, setOrderForm] = useState({ customer_id: "", harvest_id: "", order_date: today, delivery_date: today, quantity_kg: "", price_per_kg_eur: "", notes: "" });
   const [planForm, setPlanForm] = useState({ bed_id: "", crop_id: "", variety_id: "", sowing_date: today, transplant_date: "", expected_yield_kg: "", succession_count: "1", succession_interval_days: "14", notes: "" });
   const [quickSaleForm, setQuickSaleForm] = useState({ customer_id: "", harvest_id: "", sale_date: today, payment_method: "cash", quantity_kg: "", price_per_kg_eur: "" });
+  const [paymentForm, setPaymentForm] = useState({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" });
 
   const selectedCrop = useMemo(
     () => crops.find((crop) => String(crop.id) === String(plantingForm.crop_id)),
@@ -98,7 +103,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -115,6 +120,7 @@ function App() {
       apiRequest("/api/retail-sales"),
       apiRequest("/api/sales-settings"),
       apiRequest(`/api/sales-report?start=${reportStart}&end=${reportEnd}`),
+      apiRequest(`/api/receivables?as_of=${receivablesAsOf}&include_paid=${includePaidReceivables}`),
     ]);
     setCrops(cropData);
     setBeds(bedData);
@@ -132,6 +138,7 @@ function App() {
     setRetailSales(retailSaleData);
     setSalesSettings(salesSettingsData);
     setSalesReport(salesReportData);
+    setReceivables(receivablesData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
     setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
     setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
@@ -160,7 +167,7 @@ function App() {
 
   useEffect(() => {
     loadData().catch((loadError) => setError(loadError.message));
-  }, [taskDate, planStart, planEnd, reportStart, reportEnd]);
+  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables]);
 
   function clearMessages() {
     setNotice("");
@@ -363,6 +370,20 @@ function App() {
     catch (requestError) { setError(requestError.message); }
   }
 
+  async function recordPayment(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest(`/api/orders/${paymentOrderId}/payments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...paymentForm, amount_eur: Number(paymentForm.amount_eur) }) });
+      setPaymentOrderId(null); setPaymentForm({ payment_date: today, amount_eur: "", payment_method: "bank_transfer", notes: "" }); setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  function beginPayment(item) {
+    clearMessages();
+    setPaymentOrderId(item.order_id);
+    setPaymentForm({ payment_date: today < item.delivery_date ? item.delivery_date : today, amount_eur: item.outstanding_eur.toFixed(2), payment_method: "bank_transfer", notes: "" });
+  }
+
   function changePlanCrop(event) {
     const cropId = event.target.value;
     const crop = crops.find((item) => String(item.id) === String(cropId));
@@ -405,6 +426,7 @@ function App() {
     ["economics", "Žetev €", "€"],
     ["orders", "Naročila", "▤"],
     ["reports", "Prodaja", "Σ"],
+    ["receivables", "Terjatve", "↔"],
     ["planning", "Plan", "◫"],
   ];
 
@@ -416,7 +438,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 0.7</span>
+        <span className="status-pill">MVP 0.8</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -498,6 +520,9 @@ function App() {
       )}
       {view === "reports" && (
         <SalesReportView report={salesReport} start={reportStart} setStart={setReportStart} end={reportEnd} setEnd={setReportEnd} />
+      )}
+      {view === "receivables" && (
+        <ReceivablesView data={receivables} asOf={receivablesAsOf} setAsOf={setReceivablesAsOf} includePaid={includePaidReceivables} setIncludePaid={setIncludePaidReceivables} paymentOrderId={paymentOrderId} beginPayment={beginPayment} cancelPayment={() => setPaymentOrderId(null)} paymentForm={paymentForm} setPaymentForm={setPaymentForm} recordPayment={recordPayment} />
       )}
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
@@ -744,6 +769,23 @@ function SalesReportView({ report, start, setStart, end, setEnd }) {
     </section>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Knjiga prodaje</p><h2>Posamezni zapisi</h2></div><span>{report.entries.length} zapisov</span></div>
       <div className="sales-report-table"><b>Datum</b><b>Dokument</b><b>Kupec</b><b>Način</b><b>Znesek</b>{report.entries.map((entry) => <React.Fragment key={entry.key}><span>{entry.date}</span><span>{entry.number}<small>{entry.source === "order" ? "naročilo" : "hitra prodaja"}</small></span><span>{entry.customer}<small>{entry.customer_type === "business" ? "poslovni" : "končni"}</small></span><span>{paymentLabel(entry.payment_method)}{entry.invoice_required && <small>račun</small>}</span><strong>{entry.total_eur.toFixed(2)} €</strong></React.Fragment>)}</div>
+    </section>
+  </>;
+}
+
+function ReceivablesView({ data, asOf, setAsOf, includePaid, setIncludePaid, paymentOrderId, beginPayment, cancelPayment, paymentForm, setPaymentForm, recordPayment }) {
+  const summary = data.summary || {};
+  const statusLabel = (value) => ({ open: "Odprto", partial: "Delno plačano", overdue: "Zapadlo", paid: "Plačano" }[value] || value);
+  const methodLabel = (value) => ({ cash: "gotovina", card: "kartica", bank_transfer: "nakazilo" }[value] || value);
+  return <>
+    <section className="panel receivables-heading"><div><p className="eyebrow">Poslovni računi</p><h2>Terjatve in plačila</h2><p className="muted">{data.note}</p></div><div className="receivable-filters"><label>Stanje na dan<input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} /></label><label className="check-label"><input type="checkbox" checked={includePaid} onChange={(e) => setIncludePaid(e.target.checked)} /> Prikaži tudi plačane</label></div></section>
+    <section className="metric-grid receivable-metrics">
+      <article className="metric-card"><span>Odprto</span><strong>{(summary.outstanding_eur || 0).toFixed(2)} €</strong><small>{summary.open_count || 0} računov</small></article>
+      <article className="metric-card"><span>Zapadlo</span><strong>{(summary.overdue_eur || 0).toFixed(2)} €</strong><small>{summary.overdue_count || 0} računov</small></article>
+      <article className="metric-card"><span>Prejeto</span><strong>{(summary.paid_eur || 0).toFixed(2)} €</strong><small>od {(summary.invoiced_eur || 0).toFixed(2)} € izdanih</small></article>
+    </section>
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Pregled računov</p><h2>Odprte postavke</h2></div><span>{data.items.length} zapisov</span></div>
+      {data.items.length === 0 ? <p className="empty-state">Ni odprtih terjatev.</p> : <div className="receivables-list">{data.items.map((item) => <article key={item.order_id} className={item.status}><div className="receivable-main"><div><span className={`receivable-state ${item.status}`}>{statusLabel(item.status)}</span><strong>{item.invoice_number} · {item.customer}</strong><span>Rok {item.due_date}{item.days_overdue > 0 ? ` · ${item.days_overdue} dni zamude` : ""}</span></div><div><strong>{item.outstanding_eur.toFixed(2)} € odprto</strong><span>{item.paid_eur.toFixed(2)} € od {item.total_eur.toFixed(2)} € plačano</span></div></div>{item.payments.length > 0 && <div className="payment-history">{item.payments.map((payment) => <span key={payment.id}>{payment.payment_date} · {payment.amount_eur.toFixed(2)} € · {methodLabel(payment.payment_method)}</span>)}</div>}{item.status !== "paid" && paymentOrderId !== item.order_id && <button className="secondary-button" onClick={() => beginPayment(item)}>EVIDENTIRAJ PLAČILO</button>}{paymentOrderId === item.order_id && <form className="payment-form" onSubmit={recordPayment}><label>Datum<input type="date" value={paymentForm.payment_date} onChange={(e) => setPaymentForm({ ...paymentForm, payment_date: e.target.value })} required /></label><label>Znesek (€)<input type="number" min="0.01" max={item.outstanding_eur} step="0.01" value={paymentForm.amount_eur} onChange={(e) => setPaymentForm({ ...paymentForm, amount_eur: e.target.value })} required /></label><label>Način<select value={paymentForm.payment_method} onChange={(e) => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}><option value="bank_transfer">Nakazilo</option><option value="cash">Gotovina</option><option value="card">Kartica</option></select></label><label>Opomba<input value={paymentForm.notes} onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })} /></label><div className="payment-actions"><button type="button" className="text-button" onClick={cancelPayment}>PREKLIČI</button><button className="primary-button">SHRANI PLAČILO</button></div></form>}</article>)}</div>}
     </section>
   </>;
 }

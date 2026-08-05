@@ -113,6 +113,13 @@ class OrderStatusUpdate(BaseModel):
     status: Literal["fulfilled", "cancelled"]
 
 
+class OrderPaymentCreate(BaseModel):
+    payment_date: date
+    amount_eur: float = Field(gt=0, le=1000000)
+    payment_method: Literal["cash", "card", "bank_transfer"]
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class CropPlanCreate(BaseModel):
     bed_id: int
     crop_id: int

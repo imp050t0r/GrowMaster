@@ -30,6 +30,7 @@ class Farm(Base):
     sales: Mapped[list["Sale"]] = relationship(back_populates="farm")
     customers: Mapped[list["Customer"]] = relationship(back_populates="farm")
     orders: Mapped[list["Order"]] = relationship(back_populates="farm")
+    order_payments: Mapped[list["OrderPayment"]] = relationship(back_populates="farm")
     crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="farm")
     sales_settings: Mapped["SalesSettings | None"] = relationship(back_populates="farm")
     retail_sales: Mapped[list["RetailSale"]] = relationship(back_populates="farm")
@@ -212,6 +213,9 @@ class Order(Base):
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
+    payments: Mapped[list["OrderPayment"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
 
     @property
     def total_eur(self) -> float:
@@ -233,6 +237,26 @@ class OrderItem(Base):
     @property
     def line_total_eur(self) -> float:
         return round(self.quantity_kg * self.price_per_kg_eur, 2)
+
+
+class OrderPayment(Base):
+    __tablename__ = "order_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(
+        ForeignKey("farms.id", ondelete="CASCADE"), index=True
+    )
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    payment_date: Mapped[date] = mapped_column(Date, index=True)
+    amount_eur: Mapped[float] = mapped_column(Float)
+    payment_method: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="order_payments")
+    order: Mapped[Order] = relationship(back_populates="payments")
 
 
 class CropPlan(Base):
