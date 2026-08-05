@@ -83,3 +83,29 @@ class SaleCreate(BaseModel):
     quantity_kg: float = Field(gt=0, le=100000)
     price_per_kg_eur: float = Field(gt=0, le=100000)
     customer: str | None = Field(default=None, max_length=120)
+
+
+class CustomerCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: str | None = Field(default=None, max_length=160)
+    phone: str | None = Field(default=None, max_length=60)
+    address: str | None = Field(default=None, max_length=1000)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class OrderItemCreate(BaseModel):
+    harvest_id: int
+    quantity_kg: float = Field(gt=0, le=100000)
+    price_per_kg_eur: float = Field(gt=0, le=100000)
+
+
+class OrderCreate(BaseModel):
+    customer_id: int
+    order_date: date
+    delivery_date: date
+    notes: str | None = Field(default=None, max_length=2000)
+    items: list[OrderItemCreate] = Field(min_length=1, max_length=100)
+
+
+class OrderStatusUpdate(BaseModel):
+    status: Literal["fulfilled", "cancelled"]
