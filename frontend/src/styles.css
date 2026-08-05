@@ -1,0 +1,94 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17352b;
+  background: #eef3ef;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+
+.app-shell {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 18px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px;
+  color: white;
+  background: linear-gradient(135deg, #143c2f, #286a4f);
+  border-radius: 24px;
+  box-shadow: 0 18px 45px rgba(20, 60, 47, 0.2);
+}
+
+.hero h1 { margin: 4px 0 8px; font-size: clamp(2rem, 6vw, 3.5rem); }
+.hero p { margin: 0; max-width: 620px; color: #d9eee4; }
+.eyebrow { margin: 0; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase; }
+.status-pill { align-self: flex-start; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 999px; white-space: nowrap; }
+
+.panel {
+  margin-top: 18px;
+  padding: 22px;
+  background: white;
+  border: 1px solid #dce7df;
+  border-radius: 20px;
+  box-shadow: 0 10px 28px rgba(30, 60, 48, 0.07);
+}
+
+.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.section-heading h2 { margin: 3px 0 0; }
+.section-heading > span { color: #597267; font-weight: 700; }
+
+.planting-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+label { display: grid; gap: 7px; font-size: 0.86rem; font-weight: 800; }
+input, select { width: 100%; min-height: 46px; padding: 10px 12px; color: #17352b; background: #f8fbf9; border: 1px solid #cddbd2; border-radius: 11px; }
+input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-color: #318f63; }
+
+.primary-button, .danger-button, .warning-actions button { min-height: 46px; padding: 10px 16px; border: 0; border-radius: 11px; font-weight: 900; }
+.primary-button { align-self: end; color: white; background: #237a52; }
+.primary-button:hover { background: #195f3f; }
+
+.message, .rotation-warning { margin-top: 16px; padding: 14px 16px; border-radius: 12px; }
+.message.success { color: #145c3a; background: #e7f6ed; }
+.message.error { color: #842525; background: #fdeaea; }
+.rotation-warning { color: #6e3c00; background: #fff3d6; border: 1px solid #edc66b; }
+.rotation-warning p { margin: 7px 0; }
+.warning-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.warning-actions button { color: #59451b; background: white; border: 1px solid #d5b86c; }
+.warning-actions .danger-button { color: white; background: #a94c20; border: 0; }
+
+.bed-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.bed-card { padding: 17px; background: #f8fbf9; border: 1px solid #dce7df; border-radius: 15px; }
+.bed-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bed-card h3 { margin: 0; font-size: 1.35rem; }
+.bed-card p { color: #597267; }
+.bed-status { padding: 5px 9px; font-size: 0.74rem; font-weight: 900; text-transform: uppercase; border-radius: 999px; }
+.bed-status.empty { color: #53655d; background: #e7ede9; }
+.bed-status.growing { color: #12603b; background: #dff3e7; }
+.crop-block { display: grid; gap: 4px; padding-top: 10px; border-top: 1px solid #dce7df; }
+.crop-block span { font-size: 0.84rem; color: #597267; }
+.muted, .empty-state { color: #6f8179; }
+
+.planting-list { display: grid; gap: 10px; }
+.planting-list article { display: grid; gap: 5px; padding: 14px; background: #f8fbf9; border-radius: 12px; }
+.planting-list span, .planting-list small { color: #597267; }
+
+@media (max-width: 820px) {
+  .planting-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .app-shell { padding: 10px; }
+  .hero { padding: 21px; border-radius: 18px; }
+  .status-pill { display: none; }
+  .panel { padding: 17px; border-radius: 16px; }
+  .planting-form, .bed-grid { grid-template-columns: 1fr; }
+  .primary-button { width: 100%; }
+}
