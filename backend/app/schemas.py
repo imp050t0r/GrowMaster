@@ -58,3 +58,28 @@ class TaskComplete(BaseModel):
     quantity_used: float | None = Field(default=None, ge=0)
     unit: str | None = Field(default=None, max_length=20)
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class HarvestCreate(BaseModel):
+    planting_id: int
+    harvest_date: date
+    quantity_kg: float = Field(gt=0, le=100000)
+    quality: Literal["A", "B", "waste"]
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class CostCreate(BaseModel):
+    bed_id: int
+    planting_id: int | None = None
+    cost_date: date
+    category: Literal["seed", "labor", "fertilizer", "water", "packaging", "other"]
+    amount_eur: float = Field(gt=0, le=1000000)
+    description: str = Field(min_length=1, max_length=200)
+
+
+class SaleCreate(BaseModel):
+    harvest_id: int
+    sale_date: date
+    quantity_kg: float = Field(gt=0, le=100000)
+    price_per_kg_eur: float = Field(gt=0, le=100000)
+    customer: str | None = Field(default=None, max_length=120)

@@ -3,16 +3,19 @@ from datetime import date, datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import Base, SessionLocal, engine, get_db
-from app.models import Bed, Crop, Planting, Task, Variety
+from app.models import Bed, Cost, Crop, Harvest, Planting, Sale, Task, Variety
 from app.schemas import (
     BedCreate,
+    CostCreate,
     CropOut,
+    HarvestCreate,
     PlantingCreate,
     RotationPreview,
+    SaleCreate,
     TaskComplete,
     TaskCreate,
 )
@@ -29,7 +32,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -91,6 +94,53 @@ def serialize_task(task: Task) -> dict:
         "quantity_used": task.quantity_used,
         "unit": task.unit,
         "notes": task.notes,
+    }
+
+
+def serialize_harvest(harvest: Harvest) -> dict:
+    sold_kg = round(sum(sale.quantity_kg for sale in harvest.sales), 2)
+    revenue = round(sum(sale.revenue_eur for sale in harvest.sales), 2)
+    return {
+        "id": harvest.id,
+        "planting_id": harvest.planting_id,
+        "bed_id": harvest.bed_id,
+        "bed": harvest.bed.name,
+        "crop": harvest.planting.crop.name,
+        "variety": harvest.planting.variety.name,
+        "harvest_date": harvest.harvest_date,
+        "quantity_kg": harvest.quantity_kg,
+        "quality": harvest.quality,
+        "notes": harvest.notes,
+        "sold_kg": sold_kg,
+        "available_kg": round(harvest.quantity_kg - sold_kg, 2),
+        "revenue_eur": revenue,
+    }
+
+
+def serialize_cost(cost: Cost) -> dict:
+    return {
+        "id": cost.id,
+        "bed_id": cost.bed_id,
+        "bed": cost.bed.name,
+        "planting_id": cost.planting_id,
+        "cost_date": cost.cost_date,
+        "category": cost.category,
+        "amount_eur": cost.amount_eur,
+        "description": cost.description,
+    }
+
+
+def serialize_sale(sale: Sale) -> dict:
+    return {
+        "id": sale.id,
+        "harvest_id": sale.harvest_id,
+        "bed_id": sale.harvest.bed_id,
+        "bed": sale.harvest.bed.name,
+        "sale_date": sale.sale_date,
+        "quantity_kg": sale.quantity_kg,
+        "price_per_kg_eur": sale.price_per_kg_eur,
+        "revenue_eur": sale.revenue_eur,
+        "customer": sale.customer,
     }
 
 
@@ -426,3 +476,150 @@ def complete_task(task_id: int, payload: TaskComplete, db: Session = Depends(get
     db.commit()
     db.refresh(task)
     return {"message": "Opravilo je zaključeno.", **serialize_task(task)}
+
+
+@app.get("/api/harvests")
+def list_harvests(db: Session = Depends(get_db)) -> list[dict]:
+    harvests = db.scalars(
+        select(Harvest)
+        .where(Harvest.farm_id == DEFAULT_FARM_ID)
+        .options(
+            selectinload(Harvest.bed),
+            selectinload(Harvest.sales),
+            selectinload(Harvest.planting).selectinload(Planting.crop),
+            selectinload(Harvest.planting).selectinload(Planting.variety),
+        )
+        .order_by(Harvest.harvest_date.desc(), Harvest.id.desc())
+    ).all()
+    return [serialize_harvest(harvest) for harvest in harvests]
+
+
+@app.post("/api/harvests", status_code=status.HTTP_201_CREATED)
+def create_harvest(payload: HarvestCreate, db: Session = Depends(get_db)) -> dict:
+    planting = db.scalar(
+        select(Planting)
+        .where(Planting.id == payload.planting_id, Planting.farm_id == DEFAULT_FARM_ID)
+        .options(selectinload(Planting.bed), selectinload(Planting.crop), selectinload(Planting.variety))
+    )
+    if planting is None:
+        raise HTTPException(status_code=404, detail="Setev ne obstaja.")
+    harvest = Harvest(
+        farm_id=DEFAULT_FARM_ID,
+        bed_id=planting.bed_id,
+        planting_id=planting.id,
+        harvest_date=payload.harvest_date,
+        quantity_kg=payload.quantity_kg,
+        quality=payload.quality,
+        notes=payload.notes.strip() if payload.notes else None,
+    )
+    db.add(harvest)
+    db.commit()
+    db.refresh(harvest)
+    harvest.sales = []
+    return {"message": "Žetev je zabeležena.", **serialize_harvest(harvest)}
+
+
+@app.get("/api/costs")
+def list_costs(db: Session = Depends(get_db)) -> list[dict]:
+    costs = db.scalars(
+        select(Cost)
+        .where(Cost.farm_id == DEFAULT_FARM_ID)
+        .options(selectinload(Cost.bed))
+        .order_by(Cost.cost_date.desc(), Cost.id.desc())
+    ).all()
+    return [serialize_cost(cost) for cost in costs]
+
+
+@app.post("/api/costs", status_code=status.HTTP_201_CREATED)
+def create_cost(payload: CostCreate, db: Session = Depends(get_db)) -> dict:
+    bed = db.get(Bed, payload.bed_id)
+    if bed is None or bed.farm_id != DEFAULT_FARM_ID:
+        raise HTTPException(status_code=404, detail="Gredica ne obstaja.")
+    if payload.planting_id is not None:
+        planting = db.get(Planting, payload.planting_id)
+        if planting is None or planting.farm_id != DEFAULT_FARM_ID:
+            raise HTTPException(status_code=404, detail="Setev ne obstaja.")
+        if planting.bed_id != bed.id:
+            raise HTTPException(status_code=422, detail="Setev ne pripada izbrani gredici.")
+    cost = Cost(
+        farm_id=DEFAULT_FARM_ID,
+        bed_id=bed.id,
+        planting_id=payload.planting_id,
+        cost_date=payload.cost_date,
+        category=payload.category,
+        amount_eur=payload.amount_eur,
+        description=payload.description.strip(),
+    )
+    db.add(cost)
+    db.commit()
+    db.refresh(cost)
+    return {"message": "Strošek je zabeležen.", **serialize_cost(cost)}
+
+
+@app.get("/api/sales")
+def list_sales(db: Session = Depends(get_db)) -> list[dict]:
+    sales = db.scalars(
+        select(Sale)
+        .where(Sale.farm_id == DEFAULT_FARM_ID)
+        .options(selectinload(Sale.harvest).selectinload(Harvest.bed))
+        .order_by(Sale.sale_date.desc(), Sale.id.desc())
+    ).all()
+    return [serialize_sale(sale) for sale in sales]
+
+
+@app.post("/api/sales", status_code=status.HTTP_201_CREATED)
+def create_sale(payload: SaleCreate, db: Session = Depends(get_db)) -> dict:
+    harvest = db.scalar(
+        select(Harvest)
+        .where(Harvest.id == payload.harvest_id, Harvest.farm_id == DEFAULT_FARM_ID)
+        .options(selectinload(Harvest.sales), selectinload(Harvest.bed))
+    )
+    if harvest is None:
+        raise HTTPException(status_code=404, detail="Žetev ne obstaja.")
+    already_sold = sum(sale.quantity_kg for sale in harvest.sales)
+    if round(already_sold + payload.quantity_kg, 6) > round(harvest.quantity_kg, 6):
+        raise HTTPException(status_code=409, detail="Prodana količina presega razpoložljivo količino žetve.")
+    sale = Sale(
+        farm_id=DEFAULT_FARM_ID,
+        harvest_id=harvest.id,
+        sale_date=payload.sale_date,
+        quantity_kg=payload.quantity_kg,
+        price_per_kg_eur=payload.price_per_kg_eur,
+        customer=payload.customer.strip() if payload.customer else None,
+    )
+    db.add(sale)
+    db.commit()
+    db.refresh(sale)
+    return {"message": "Prodaja je zabeležena.", **serialize_sale(sale)}
+
+
+@app.get("/api/economics/by-bed")
+def economics_by_bed(db: Session = Depends(get_db)) -> list[dict]:
+    beds = db.scalars(select(Bed).where(Bed.farm_id == DEFAULT_FARM_ID).order_by(Bed.name)).all()
+    result = []
+    for bed in beds:
+        harvested_kg = db.scalar(
+            select(func.coalesce(func.sum(Harvest.quantity_kg), 0.0)).where(Harvest.bed_id == bed.id)
+        )
+        costs_eur = db.scalar(
+            select(func.coalesce(func.sum(Cost.amount_eur), 0.0)).where(Cost.bed_id == bed.id)
+        )
+        revenue_eur = db.scalar(
+            select(func.coalesce(func.sum(Sale.quantity_kg * Sale.price_per_kg_eur), 0.0))
+            .join(Harvest, Sale.harvest_id == Harvest.id)
+            .where(Harvest.bed_id == bed.id)
+        )
+        result.append(
+            {
+                "bed_id": bed.id,
+                "bed": bed.name,
+                "area_m2": bed.area_m2,
+                "harvested_kg": round(float(harvested_kg or 0), 2),
+                "costs_eur": round(float(costs_eur or 0), 2),
+                "revenue_eur": round(float(revenue_eur or 0), 2),
+                "profit_eur": round(float(revenue_eur or 0) - float(costs_eur or 0), 2),
+            }
+        )
+    return result
+    HarvestCreate,
+    SaleCreate,

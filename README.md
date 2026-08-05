@@ -13,6 +13,8 @@ GrowMaster is a local-first farm management application for professional market 
 - three automatic follow-up tasks for every sowing
 - daily task center with date, priority, bed, duration, material use and notes
 - completion of a crop cycle releases the bed and updates rotation history
+- harvest records with quantity, quality and remaining sellable stock
+- costs, sales and automatic profit per bed
 - PostgreSQL, FastAPI and React/Vite in Docker Compose
 
 ## Start
@@ -34,4 +36,4 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete bed/planting/task API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete bed/planting/task/harvest/cost/sale API workflow test and builds the production frontend.

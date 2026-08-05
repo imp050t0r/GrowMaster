@@ -37,7 +37,7 @@ button { cursor: pointer; }
   top: 10px;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
   margin-top: 14px;
   padding: 8px;
@@ -164,12 +164,20 @@ input:focus, select:focus { outline: 3px solid rgba(49, 143, 99, 0.16); border-c
 .completion-summary { display: flex; flex-wrap: wrap; gap: 8px; }
 .completion-summary span { padding: 5px 8px; color: #586e64; background: #e6ece8; border-radius: 8px; font-size: 0.82rem; }
 .date-filter { min-width: 170px; }
+.economics-forms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.compact-form { display: grid; align-content: start; gap: 12px; }
+.compact-form h2 { margin: 0 0 4px; }
+.economics-table { display: grid; grid-template-columns: 1.2fr repeat(4, 1fr); gap: 0; overflow-x: auto; }
+.economics-table > * { min-width: 105px; padding: 12px 10px; border-bottom: 1px solid #e5ece7; }
+.economics-table .positive { color: #17603f; }
+.economics-table .negative { color: #a1372b; }
 
 @media (max-width: 900px) {
   .planting-form, .task-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .task-form .wide { grid-column: span 2; }
   .bed-grid, .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .inline-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .economics-forms { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {
