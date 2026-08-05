@@ -5,13 +5,25 @@ import hashlib
 import io
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.database import Base, SessionLocal, engine, get_db
+from app.backups import (
+    BackupRestoreError,
+    BackupValidationError,
+    automatic_backup_path,
+    create_backup_bytes,
+    database_summary,
+    list_automatic_backups,
+    parse_backup,
+    restore_parsed_backup,
+    write_automatic_backup,
+)
+from app.database import SessionLocal, get_db
+from app.migrations import run_migrations
 from app.models import (
     Bed,
     Cost,
@@ -95,13 +107,13 @@ DEFAULT_FARM_ID = 1
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    run_migrations()
     with SessionLocal() as db:
         seed_database(db)
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.8.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.9.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -114,6 +126,82 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"app": "GrowMaster", "status": "running"}
+
+
+@app.get("/api/system/data-safety")
+def data_safety_status(db: Session = Depends(get_db)) -> dict:
+    return {
+        **database_summary(db),
+        "automatic_backups": list_automatic_backups(),
+    }
+
+
+@app.get("/api/system/backups/export")
+def export_backup(db: Session = Depends(get_db)) -> Response:
+    content, summary = create_backup_bytes(db)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=content,
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="growmaster-backup-{timestamp}.json"'
+            ),
+            "X-GrowMaster-Checksum-SHA256": summary["checksum_sha256"],
+            "X-GrowMaster-Record-Count": str(summary["record_count"]),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/system/backups/automatic/{filename}")
+def download_automatic_backup(filename: str) -> Response:
+    path = automatic_backup_path(filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Varnostna kopija ne obstaja.")
+    return Response(
+        content=path.read_bytes(),
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{path.name}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/system/backups/restore")
+async def restore_backup(
+    request: Request,
+    confirmation: str = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    if confirmation != "OBNOVI":
+        raise HTTPException(
+            status_code=422,
+            detail='Za obnovitev je treba vnesti potrditev "OBNOVI".',
+        )
+    try:
+        backup = parse_backup(await request.body())
+        safety_content, safety_summary = create_backup_bytes(db)
+        safety_filename = write_automatic_backup(
+            safety_content, safety_summary["checksum_sha256"]
+        )
+        restore_parsed_backup(db, backup)
+    except BackupValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except BackupRestoreError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Samodejne povratne kopije ni bilo mogoče varno shraniti.",
+        ) from error
+    return {
+        "message": "Podatki so uspešno obnovljeni iz varnostne kopije.",
+        "restored_records": backup.record_count,
+        "backup_created_at": backup.created_at,
+        "safety_backup": safety_filename,
+    }
 
 
 @app.get("/api/crops", response_model=list[CropOut])

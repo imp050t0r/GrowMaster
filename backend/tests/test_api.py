@@ -1,17 +1,30 @@
 import os
 from pathlib import Path
+import shutil
 
 TEST_DATABASE = Path("growmaster-test.db")
 TEST_DATABASE.unlink(missing_ok=True)
+TEST_BACKUP_DIRECTORY = Path("tmp/growmaster-test-backups")
+shutil.rmtree(TEST_BACKUP_DIRECTORY, ignore_errors=True)
 os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DATABASE}"
+os.environ["BACKUP_DIR"] = str(TEST_BACKUP_DIRECTORY)
 
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 
+from app.database import engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.migrations import run_migrations, schema_migrations  # noqa: E402
 
 
 def test_bed_planting_and_task_workflow() -> None:
     with TestClient(app) as client:
+        assert run_migrations() == "0001_current_schema"
+        assert run_migrations() == "0001_current_schema"
+        with engine.connect() as connection:
+            assert connection.scalar(
+                select(func.count()).select_from(schema_migrations)
+            ) == 1
         beds = client.get("/api/beds").json()
         crops = client.get("/api/crops").json()
         assert len(beds) == 6
@@ -1621,3 +1634,85 @@ def test_bed_planting_and_task_workflow() -> None:
         assert farm_profitability_csv.status_code == 200
         assert "Splošni stroški EUR" in farm_profitability_csv.text
         assert "Skupaj;Kmetija" in farm_profitability_csv.text
+
+        data_safety = client.get("/api/system/data-safety")
+        assert data_safety.status_code == 200
+        data_safety_summary = data_safety.json()
+        assert data_safety_summary["schema_revision"] == "0001_current_schema"
+        assert data_safety_summary["backup_format_version"] == 1
+        assert data_safety_summary["table_count"] == 37
+        assert data_safety_summary["record_count"] > 0
+        assert data_safety_summary["automatic_backups"] == []
+
+        portable_backup = client.get("/api/system/backups/export")
+        assert portable_backup.status_code == 200
+        assert portable_backup.headers["content-type"].startswith("application/json")
+        assert "growmaster-backup-" in portable_backup.headers[
+            "content-disposition"
+        ]
+        backup_document = portable_backup.json()
+        assert len(backup_document["checksum_sha256"]) == 64
+        assert portable_backup.headers["x-growmaster-checksum-sha256"] == (
+            backup_document["checksum_sha256"]
+        )
+        assert backup_document["payload"]["record_count"] == (
+            data_safety_summary["record_count"]
+        )
+        assert len(backup_document["payload"]["tables"]) == 37
+
+        assert client.post(
+            "/api/system/backups/restore?confirmation=NAPAČNO",
+            content=portable_backup.content,
+            headers={"Content-Type": "application/json"},
+        ).status_code == 422
+        tampered_backup = portable_backup.json()
+        tampered_backup["payload"]["record_count"] += 1
+        assert client.post(
+            "/api/system/backups/restore?confirmation=OBNOVI",
+            json=tampered_backup,
+        ).status_code == 422
+
+        beds_before_restore = client.get("/api/beds").json()
+        temporary_bed = client.post(
+            "/api/beds",
+            json={"name": "ZAČASNA", "width_m": 1, "length_m": 3},
+        )
+        assert temporary_bed.status_code == 201
+        assert len(client.get("/api/beds").json()) == len(beds_before_restore) + 1
+
+        restored = client.post(
+            "/api/system/backups/restore?confirmation=OBNOVI",
+            content=portable_backup.content,
+            headers={"Content-Type": "application/json"},
+        )
+        assert restored.status_code == 200
+        restored_data = restored.json()
+        assert restored_data["restored_records"] == data_safety_summary["record_count"]
+        assert restored_data["safety_backup"].startswith("growmaster-auto-")
+        beds_after_restore = client.get("/api/beds").json()
+        assert len(beds_after_restore) == len(beds_before_restore)
+        assert all(item["name"] != "ZAČASNA" for item in beds_after_restore)
+
+        safety_after_restore = client.get("/api/system/data-safety").json()
+        assert len(safety_after_restore["automatic_backups"]) == 1
+        automatic_filename = safety_after_restore["automatic_backups"][0][
+            "filename"
+        ]
+        automatic_backup = client.get(
+            f"/api/system/backups/automatic/{automatic_filename}"
+        )
+        assert automatic_backup.status_code == 200
+        automatic_beds = automatic_backup.json()["payload"]["tables"]["beds"]
+        assert any(item["name"] == "ZAČASNA" for item in automatic_beds)
+        assert client.get(
+            "/api/system/backups/automatic/not-a-backup.json"
+        ).status_code == 404
+
+        bed_after_restore = client.post(
+            "/api/beds",
+            json={"name": "PO-OBNOVI", "width_m": 1, "length_m": 4},
+        )
+        assert bed_after_restore.status_code == 201
+        assert bed_after_restore.json()["id"] > max(
+            item["id"] for item in beds_after_restore
+        )
