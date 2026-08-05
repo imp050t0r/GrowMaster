@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -95,6 +95,7 @@ from app.schemas import (
     CreditNoteCreate,
     DayCloseCreate,
     FarmExpenseCreate,
+    FarmProfileUpdate,
     FiscalConfirmationCreate,
     HarvestCreate,
     InvoiceCreate,
@@ -121,10 +122,94 @@ from app.schemas import (
     TaskCreate,
     WorkerCreate,
 )
-from app.seed import seed_database
+from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
+DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
+DEMO_TASK_TITLES = {
+    "Jutranji pregled vseh gredic",
+    "Preveri namakalni sistem",
+    "Pripravi gredico A3 za setev",
+}
+DEMO_BED_FAMILIES = {"A1": "Brassicaceae", "A2": "Asteraceae"}
+DEMO_TASK_SIGNATURES = {
+    "Jutranji pregled vseh gredic": ("inspection", "normal"),
+    "Preveri namakalni sistem": ("irrigation", "high"),
+    "Pripravi gredico A3 za setev": ("bed_preparation", "normal"),
+}
+
+
+def demo_data_available(db: Session) -> bool:
+    farm = db.get(Farm, DEFAULT_FARM_ID)
+    if farm is None or farm.name != DEMO_FARM_NAME:
+        return False
+    beds = list(db.scalars(select(Bed).where(Bed.farm_id == DEFAULT_FARM_ID)))
+    tasks = list(db.scalars(select(Task).where(Task.farm_id == DEFAULT_FARM_ID)))
+    if (
+        len(beds) != len(DEMO_BED_NAMES)
+        or {bed.name for bed in beds} != DEMO_BED_NAMES
+        or any(
+            bed.status != "empty"
+            or bed.width_m != 0.8
+            or bed.length_m != 15.0
+            or bed.last_crop_family != DEMO_BED_FAMILIES.get(bed.name)
+            for bed in beds
+        )
+        or len(tasks) != len(DEMO_TASK_TITLES)
+        or {task.title for task in tasks} != DEMO_TASK_TITLES
+        or any(
+            task.status != "planned"
+            or (task.task_type, task.priority)
+            != DEMO_TASK_SIGNATURES[task.title]
+            or task.completed_at is not None
+            or task.duration_minutes is not None
+            or task.quantity_used is not None
+            or task.notes is not None
+            for task in tasks
+        )
+    ):
+        return False
+    activity_models = (
+        Planting,
+        Harvest,
+        Cost,
+        Sale,
+        Order,
+        RetailSale,
+        CropPlan,
+        SupplyUsage,
+        LaborEntry,
+    )
+    return not any(
+        db.scalar(select(func.count()).select_from(model))
+        for model in activity_models
+    )
+
+
+def prepare_farm_on_first_setup(
+    db: Session, farm_name: str, keep_demo_data: bool
+) -> bool:
+    farm = db.get(Farm, DEFAULT_FARM_ID)
+    if farm is None:
+        raise RuntimeError("Osnovni zapis kmetije ne obstaja.")
+    pristine_demo = demo_data_available(db)
+    removed_demo = pristine_demo and not keep_demo_data
+    if removed_demo:
+        db.execute(delete(Task).where(Task.farm_id == DEFAULT_FARM_ID))
+        db.execute(delete(Bed).where(Bed.farm_id == DEFAULT_FARM_ID))
+    farm.name = farm_name
+    settings = db.get(SalesSettings, DEFAULT_FARM_ID)
+    if settings is None:
+        settings = SalesSettings(
+            farm_id=DEFAULT_FARM_ID,
+            basic_agriculture_invoice_exemption=True,
+            seller_name=farm_name,
+        )
+        db.add(settings)
+    else:
+        settings.seller_name = farm_name
+    return removed_demo
 
 
 @asynccontextmanager
@@ -135,7 +220,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.11.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.12.0", lifespan=lifespan)
 PUBLIC_API_PATHS = {
     "/api/health",
     "/api/auth/status",
@@ -226,6 +311,7 @@ def authentication_status(
         "authenticated": authenticated is not None,
         "display_name": authenticated.display_name if authenticated else None,
         "session_days": SESSION_LIFETIME.days,
+        "demo_data_available": demo_data_available(db) if credential is None else False,
     }
 
 
@@ -240,10 +326,17 @@ def setup_authentication(
             status_code=status.HTTP_409_CONFLICT,
             detail="GrowMaster je že zaščiten z geslom.",
         )
-    if not payload.display_name.strip():
+    display_name = payload.display_name.strip()
+    farm_name = payload.farm_name.strip()
+    if not display_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Ime uporabnika ne sme biti prazno.",
+        )
+    if not farm_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Ime kmetije ne sme biti prazno.",
         )
     if not password_is_strong(payload.password):
         raise HTTPException(
@@ -251,7 +344,10 @@ def setup_authentication(
             detail="Geslo mora imeti vsaj 12 znakov ter vsebovati črko in številko.",
         )
     try:
-        credential = create_credential(db, payload.display_name, payload.password)
+        removed_demo = prepare_farm_on_first_setup(
+            db, farm_name, payload.keep_demo_data
+        )
+        credential = create_credential(db, display_name, payload.password)
         token, _ = create_session(db, credential)
         db.commit()
     except IntegrityError as error:
@@ -266,7 +362,12 @@ def setup_authentication(
         "authenticated": True,
         "display_name": credential.display_name,
         "session_days": SESSION_LIFETIME.days,
-        "message": "Zaščita z geslom je vključena.",
+        "demo_data_available": False,
+        "message": (
+            "Zaščita je vključena in prazna kmetija je pripravljena."
+            if removed_demo
+            else "Zaščita z geslom je vključena."
+        ),
     }
 
 
@@ -2708,10 +2809,11 @@ def planning_forecast(
 def get_sales_settings(db: Session) -> SalesSettings:
     settings = db.get(SalesSettings, DEFAULT_FARM_ID)
     if settings is None:
+        farm = db.get(Farm, DEFAULT_FARM_ID)
         settings = SalesSettings(
             farm_id=DEFAULT_FARM_ID,
             basic_agriculture_invoice_exemption=True,
-            seller_name="GrowMaster kmetija",
+            seller_name=farm.name if farm else "GrowMaster kmetija",
         )
         db.add(settings)
         db.commit()
@@ -2809,6 +2911,9 @@ def update_sales_settings(
     settings.seller_tax_number = (
         payload.seller_tax_number.strip() if payload.seller_tax_number else None
     )
+    farm = db.get(Farm, DEFAULT_FARM_ID)
+    if farm is not None:
+        farm.name = settings.seller_name
     db.commit()
     return {"message": "Nastavitve prodaje so shranjene.", **sales_settings(db)}
 
@@ -2861,6 +2966,72 @@ def update_invoice_profile(
     return {
         "message": "Podatki za račune so shranjeni.",
         **serialize_invoice_profile(profile),
+    }
+
+
+def serialize_farm_profile(db: Session) -> dict:
+    farm = db.get(Farm, DEFAULT_FARM_ID)
+    if farm is None:
+        raise HTTPException(status_code=404, detail="Kmetija ne obstaja.")
+    settings = get_sales_settings(db)
+    profile = get_invoice_profile(db)
+    return {
+        "farm_name": farm.name,
+        "basic_agriculture_invoice_exemption": (
+            settings.basic_agriculture_invoice_exemption
+        ),
+        "seller_tax_number": settings.seller_tax_number,
+        **serialize_invoice_profile(profile),
+        "business_documents_ready": bool(
+            settings.seller_tax_number and profile.seller_address.strip()
+        ),
+    }
+
+
+@app.get("/api/farm-profile")
+def farm_profile(db: Session = Depends(get_db)) -> dict:
+    return serialize_farm_profile(db)
+
+
+@app.put("/api/farm-profile")
+def update_farm_profile(
+    payload: FarmProfileUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    farm_name = payload.farm_name.strip()
+    if not farm_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Ime kmetije ne sme biti prazno.",
+        )
+    farm = db.get(Farm, DEFAULT_FARM_ID)
+    if farm is None:
+        raise HTTPException(status_code=404, detail="Kmetija ne obstaja.")
+    settings = get_sales_settings(db)
+    profile = get_invoice_profile(db)
+    farm.name = farm_name
+    settings.seller_name = farm_name
+    settings.basic_agriculture_invoice_exemption = (
+        payload.basic_agriculture_invoice_exemption
+    )
+    settings.seller_tax_number = (
+        payload.seller_tax_number.strip() if payload.seller_tax_number else None
+    )
+    profile.seller_address = payload.seller_address.strip()
+    profile.seller_iban = payload.seller_iban.strip() if payload.seller_iban else None
+    profile.seller_registration_number = (
+        payload.seller_registration_number.strip()
+        if payload.seller_registration_number
+        else None
+    )
+    profile.vat_note = payload.vat_note.strip() if payload.vat_note else None
+    profile.business_premise_code = payload.business_premise_code.strip().upper()
+    profile.device_code = payload.device_code.strip().upper()
+    profile.default_due_days = payload.default_due_days
+    db.commit()
+    return {
+        "message": "Profil kmetije je shranjen.",
+        **serialize_farm_profile(db),
     }
 
 

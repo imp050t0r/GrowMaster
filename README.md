@@ -68,6 +68,9 @@ GrowMaster is a local-first farm management application for professional market 
 - HTTP-only, 30-day local sessions, logout and protection of every business-data API
 - in-app display-name and password changes with current-password confirmation
 - immediate revocation of every older browser session after a password change
+- first-use farm naming with safe removal or explicit retention of untouched demo beds
+- one consolidated farm profile for the app header, direct sales and new invoices
+- business-document readiness indicator for tax number and seller address
 - portable backups that deliberately exclude passwords and active sessions
 - semicolon-delimited UTF-8 CSV profitability export
 - partial and final supplier payments with payment history and overpayment safeguards
@@ -101,3 +104,4 @@ GitHub Actions compiles the backend, runs the complete farm-to-season-plan, task
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).
 Database upgrades, portable backups and recovery behavior are documented in [docs/data-safety.md](docs/data-safety.md).
 Local password setup, sessions and deployment guidance are documented in [docs/authentication.md](docs/authentication.md).
+First-use demo handling and the consolidated farm profile are documented in [docs/onboarding.md](docs/onboarding.md).

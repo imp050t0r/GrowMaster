@@ -40,8 +40,8 @@ async function apiRequest(path, options = {}) {
 }
 
 function App() {
-  const [auth, setAuth] = useState({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30 });
-  const [authForm, setAuthForm] = useState({ display_name: "", password: "", confirmation: "" });
+  const [auth, setAuth] = useState({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30, demo_data_available: false });
+  const [authForm, setAuthForm] = useState({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
   const [view, setView] = useState("dashboard");
   const [crops, setCrops] = useState([]);
   const [beds, setBeds] = useState([]);
@@ -77,6 +77,7 @@ function App() {
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [dataSafety, setDataSafety] = useState({ automatic_backups: [] });
   const [account, setAccount] = useState({ display_name: "", active_sessions: 0, session_days: 30 });
+  const [farmProfile, setFarmProfile] = useState({ farm_name: "", basic_agriculture_invoice_exemption: true, seller_tax_number: null, seller_address: "", seller_iban: null, seller_registration_number: null, vat_note: null, business_premise_code: "GM", device_code: "01", default_due_days: 14, business_documents_ready: false });
   const [reportStart, setReportStart] = useState(today);
   const [reportEnd, setReportEnd] = useState(today);
   const [receivablesAsOf, setReceivablesAsOf] = useState(today);
@@ -154,7 +155,7 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, profitabilityData, farmExpenseData, invoiceData, invoiceProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, profitabilityData, farmExpenseData, invoiceData, invoiceProfileData, farmProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
@@ -185,6 +186,7 @@ function App() {
       apiRequest(`/api/farm-expenses?start=${profitabilityStart}&end=${profitabilityEnd}`),
       apiRequest("/api/invoices"),
       apiRequest("/api/invoice-profile"),
+      apiRequest("/api/farm-profile"),
     ]);
     setCrops(cropData);
     setBeds(bedData);
@@ -216,6 +218,7 @@ function App() {
     setFarmExpenses(farmExpenseData);
     setInvoices(invoiceData);
     setInvoiceProfile(invoiceProfileData);
+    setFarmProfile(farmProfileData);
     setHarvestForm((current) => ({ ...current, planting_id: current.planting_id || plantingData[0]?.id || "" }));
     setCostForm((current) => ({ ...current, bed_id: current.bed_id || bedData[0]?.id || "" }));
     setSaleForm((current) => ({ ...current, harvest_id: current.harvest_id || harvestData.find((item) => item.available_kg > 0)?.id || "" }));
@@ -315,10 +318,10 @@ function App() {
       const data = await apiRequest(setup ? "/api/auth/setup" : "/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(setup ? { display_name: authForm.display_name, password: authForm.password } : { password: authForm.password }),
+        body: JSON.stringify(setup ? { display_name: authForm.display_name, farm_name: authForm.farm_name, keep_demo_data: authForm.keep_demo_data, password: authForm.password } : { password: authForm.password }),
       });
       setAuth({ ...data, loading: false });
-      setAuthForm({ display_name: "", password: "", confirmation: "" });
+      setAuthForm({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
       setNotice(data.message);
     } catch (requestError) { setError(requestError.message); }
   }
@@ -328,7 +331,7 @@ function App() {
     try {
       await apiRequest("/api/auth/logout", { method: "POST" });
       setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
-      setAuthForm({ display_name: "", password: "", confirmation: "" });
+      setAuthForm({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
     } catch (requestError) { setError(requestError.message); }
   }
 
@@ -360,6 +363,21 @@ function App() {
       });
       setAccount(data);
       setPasswordForm({ current_password: "", new_password: "", confirmation: "" });
+      setNotice(data.message);
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function saveFarmProfile(event) {
+    event.preventDefault(); clearMessages();
+    try {
+      const data = await apiRequest("/api/farm-profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(farmProfile),
+      });
+      setFarmProfile(data);
+      setSalesSettings((current) => ({ ...current, seller_name: data.farm_name, seller_tax_number: data.seller_tax_number, basic_agriculture_invoice_exemption: data.basic_agriculture_invoice_exemption }));
+      setInvoiceProfile((current) => ({ ...current, seller_address: data.seller_address, seller_iban: data.seller_iban, seller_registration_number: data.seller_registration_number, vat_note: data.vat_note, business_premise_code: data.business_premise_code, device_code: data.device_code, default_due_days: data.default_due_days }));
       setNotice(data.message);
     } catch (requestError) { setError(requestError.message); }
   }
@@ -936,10 +954,10 @@ function App() {
         <div>
           <p className="eyebrow">Lokalno upravljanje kmetije</p>
           <h1>🌱 GrowMaster</h1>
-          <p>Gredice, setve in dnevno delo na enem mestu.</p>
+          <p>{farmProfile.farm_name ? `${farmProfile.farm_name} · gredice, setve in dnevno delo.` : "Gredice, setve in dnevno delo na enem mestu."}</p>
         </div>
         <div className="account-summary">
-          <span className="status-pill">MVP 1.11</span>
+          <span className="status-pill">MVP 1.12</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
           <button type="button" onClick={logout}>ODJAVA</button>
         </div>
@@ -1082,7 +1100,8 @@ function App() {
           confirmation={restoreConfirmation} setConfirmation={setRestoreConfirmation} restoreData={restoreData} />
       )}
       {view === "settings" && (
-        <AccountSettingsView account={account} accountForm={accountForm} setAccountForm={setAccountForm}
+        <SettingsView profile={farmProfile} setProfile={setFarmProfile} saveProfile={saveFarmProfile}
+          account={account} accountForm={accountForm} setAccountForm={setAccountForm}
           passwordForm={passwordForm} setPasswordForm={setPasswordForm} updateAccount={updateAccount} changePassword={changePassword} />
       )}
     </main>
@@ -1717,10 +1736,12 @@ function AuthenticationView({ auth, form, setForm, submit, error }) {
     </section>
     {!auth.loading && <form className="auth-card" onSubmit={submit}>
       <div><p className="eyebrow">{setup ? "Prva nastavitev" : "Varna prijava"}</p><h2>{setup ? "Ustvari skrbniški dostop" : "Dobrodošel nazaj"}</h2></div>
-      {setup && <label>Ime uporabnika<input value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} autoComplete="name" maxLength="120" required autoFocus /></label>}
+      {setup && <label>Ime kmetije<input value={form.farm_name} onChange={(event) => setForm({ ...form, farm_name: event.target.value })} autoComplete="organization" maxLength="120" required autoFocus /></label>}
+      {setup && <label>Ime uporabnika<input value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} autoComplete="name" maxLength="120" required /></label>}
       <label>Geslo<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} autoComplete={setup ? "new-password" : "current-password"} minLength={setup ? 12 : 1} maxLength="256" required autoFocus={!setup} /></label>
       {setup && <label>Ponovi geslo<input type="password" value={form.confirmation} onChange={(event) => setForm({ ...form, confirmation: event.target.value })} autoComplete="new-password" minLength="12" maxLength="256" required /></label>}
       {setup && <p className="auth-hint">Uporabi vsaj 12 znakov ter vključuj črko in številko. Geslo ni vključeno v varnostne kopije.</p>}
+      {setup && auth.demo_data_available && <label className="check-label setup-demo-choice"><input type="checkbox" checked={form.keep_demo_data} onChange={(event) => setForm({ ...form, keep_demo_data: event.target.checked })} /> Ohrani šest vzorčnih gredic in začetna opravila za preizkus</label>}
       {error && <div className="message error">⚠ {error}</div>}
       <button className="primary-button" type="submit">{setup ? "ZAŠČITI IN NADALJUJ" : "PRIJAVA"}</button>
       {!setup && <p className="auth-hint">Prijava velja {auth.session_days || 30} dni na tej napravi ali do odjave.</p>}
@@ -1728,8 +1749,24 @@ function AuthenticationView({ auth, form, setForm, submit, error }) {
   </main>;
 }
 
-function AccountSettingsView({ account, accountForm, setAccountForm, passwordForm, setPasswordForm, updateAccount, changePassword }) {
+function SettingsView({ profile, setProfile, saveProfile, account, accountForm, setAccountForm, passwordForm, setPasswordForm, updateAccount, changePassword }) {
   return <>
+    <form className="panel farm-profile-form" onSubmit={saveProfile}>
+      <div className="section-heading"><div><p className="eyebrow">Identiteta kmetije</p><h2>Profil in podatki za dokumente</h2><p className="muted">Ime se prikaže v GrowMasterju in uporabi kot naziv prodajalca na vseh novih dokumentih. Že izdani računi ostanejo nespremenjeni.</p></div><span className={`profile-readiness ${profile.business_documents_ready ? "ready" : "incomplete"}`}>{profile.business_documents_ready ? "PRIPRAVLJENO ZA RAČUNE" : "DOPOLNI ZA POSLOVNE RAČUNE"}</span></div>
+      <div className="farm-profile-fields">
+        <label>Naziv kmetije<input value={profile.farm_name || ""} onChange={(event) => setProfile({ ...profile, farm_name: event.target.value })} maxLength="120" required /></label>
+        <label>Davčna številka<input value={profile.seller_tax_number || ""} onChange={(event) => setProfile({ ...profile, seller_tax_number: event.target.value || null })} maxLength="30" /></label>
+        <label className="wide">Naslov prodajalca<textarea value={profile.seller_address || ""} onChange={(event) => setProfile({ ...profile, seller_address: event.target.value })} placeholder="Potreben za račune poslovnim kupcem" /></label>
+        <label>IBAN<input value={profile.seller_iban || ""} onChange={(event) => setProfile({ ...profile, seller_iban: event.target.value || null })} /></label>
+        <label>Matična številka<input value={profile.seller_registration_number || ""} onChange={(event) => setProfile({ ...profile, seller_registration_number: event.target.value || null })} /></label>
+        <label className="wide">Davčna opomba<input value={profile.vat_note || ""} onChange={(event) => setProfile({ ...profile, vat_note: event.target.value || null })} placeholder="Npr. klavzula glede DDV" /></label>
+        <label>Poslovni prostor<input value={profile.business_premise_code || "GM"} onChange={(event) => setProfile({ ...profile, business_premise_code: event.target.value })} required /></label>
+        <label>Naprava<input value={profile.device_code || "01"} onChange={(event) => setProfile({ ...profile, device_code: event.target.value })} required /></label>
+        <label>Privzeti rok plačila (dni)<input type="number" min="0" max="365" value={profile.default_due_days ?? 14} onChange={(event) => setProfile({ ...profile, default_due_days: Number(event.target.value) })} required /></label>
+        <label className="check-label wide"><input type="checkbox" checked={profile.basic_agriculture_invoice_exemption ?? true} onChange={(event) => setProfile({ ...profile, basic_agriculture_invoice_exemption: event.target.checked })} /> Za neposredno prodajo končnim kupcem uporabljam izjemo osnovne kmetijske dejavnosti; poslovni kupec še vedno dobi račun.</label>
+      </div>
+      <button className="primary-button" type="submit">SHRANI PROFIL KMETIJE</button>
+    </form>
     <section className="panel settings-heading">
       <div><p className="eyebrow">Dostop do aplikacije</p><h2>Nastavitve uporabnika</h2><p className="muted">Spremembe so zaščitene s trenutnim geslom. Geslo in prijavne seje ostanejo ločeni od poslovnih varnostnih kopij.</p></div>
       <span className="data-safe-badge">✓ ZAŠČITENO</span>
