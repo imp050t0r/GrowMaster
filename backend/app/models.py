@@ -30,6 +30,7 @@ class Farm(Base):
     sales: Mapped[list["Sale"]] = relationship(back_populates="farm")
     customers: Mapped[list["Customer"]] = relationship(back_populates="farm")
     orders: Mapped[list["Order"]] = relationship(back_populates="farm")
+    crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -73,6 +74,7 @@ class Bed(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="bed")
     harvests: Mapped[list["Harvest"]] = relationship(back_populates="bed")
     costs: Mapped[list["Cost"]] = relationship(back_populates="bed")
+    crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="bed")
 
     @property
     def area_m2(self) -> float:
@@ -214,6 +216,33 @@ class OrderItem(Base):
     @property
     def line_total_eur(self) -> float:
         return round(self.quantity_kg * self.price_per_kg_eur, 2)
+
+
+class CropPlan(Base):
+    __tablename__ = "crop_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"), index=True)
+    crop_id: Mapped[int] = mapped_column(ForeignKey("crops.id", ondelete="RESTRICT"), index=True)
+    variety_id: Mapped[int] = mapped_column(ForeignKey("varieties.id", ondelete="RESTRICT"), index=True)
+    planting_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plantings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    series_id: Mapped[str] = mapped_column(String(36), index=True)
+    sowing_date: Mapped[date] = mapped_column(Date, index=True)
+    transplant_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    expected_harvest_date: Mapped[date] = mapped_column(Date, index=True)
+    expected_yield_kg: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(30), default="planned", index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="crop_plans")
+    bed: Mapped[Bed] = relationship(back_populates="crop_plans")
+    crop: Mapped[Crop] = relationship()
+    variety: Mapped[Variety] = relationship()
+    planting: Mapped[Planting | None] = relationship()
 
 
 class Task(Base):

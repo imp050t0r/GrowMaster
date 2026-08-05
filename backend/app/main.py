@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from app.models import (
     Bed,
     Cost,
     Crop,
+    CropPlan,
     Customer,
     Harvest,
     Order,
@@ -23,6 +25,9 @@ from app.models import (
 from app.schemas import (
     BedCreate,
     CostCreate,
+    CropPlanActivate,
+    CropPlanCreate,
+    CropPlanStatusUpdate,
     CropOut,
     CustomerCreate,
     HarvestCreate,
@@ -47,7 +52,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="0.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -914,4 +919,351 @@ def order_document(
         "order": serialize_order(order),
         "customer": serialize_customer(order.customer),
         "issued_on": date.today(),
+    }
+
+
+def serialize_crop_plan(plan: CropPlan) -> dict:
+    return {
+        "id": plan.id,
+        "series_id": plan.series_id,
+        "bed_id": plan.bed_id,
+        "bed": plan.bed.name,
+        "crop_id": plan.crop_id,
+        "crop": plan.crop.name,
+        "variety_id": plan.variety_id,
+        "variety": plan.variety.name,
+        "sowing_date": plan.sowing_date,
+        "transplant_date": plan.transplant_date,
+        "expected_harvest_date": plan.expected_harvest_date,
+        "expected_yield_kg": plan.expected_yield_kg,
+        "status": plan.status,
+        "planting_id": plan.planting_id,
+        "notes": plan.notes,
+    }
+
+
+def crop_plan_options() -> tuple:
+    return (
+        selectinload(CropPlan.bed),
+        selectinload(CropPlan.crop),
+        selectinload(CropPlan.variety),
+    )
+
+
+@app.get("/api/plans")
+def list_crop_plans(
+    include_cancelled: bool = False,
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    statement = (
+        select(CropPlan)
+        .where(CropPlan.farm_id == DEFAULT_FARM_ID)
+        .options(*crop_plan_options())
+        .order_by(CropPlan.sowing_date, CropPlan.id)
+    )
+    if not include_cancelled:
+        statement = statement.where(CropPlan.status != "cancelled")
+    return [serialize_crop_plan(plan) for plan in db.scalars(statement).all()]
+
+
+@app.post("/api/plans", status_code=status.HTTP_201_CREATED)
+def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> dict:
+    bed = db.get(Bed, payload.bed_id)
+    crop = db.get(Crop, payload.crop_id)
+    variety = db.get(Variety, payload.variety_id)
+    if bed is None or crop is None or variety is None:
+        raise HTTPException(status_code=404, detail="Gredica, kultura ali sorta ne obstaja.")
+    if bed.farm_id != DEFAULT_FARM_ID:
+        raise HTTPException(status_code=403, detail="Gredica ne pripada aktivni kmetiji.")
+    if variety.crop_id != crop.id:
+        raise HTTPException(status_code=422, detail="Sorta ne pripada izbrani kulturi.")
+    if payload.transplant_date and payload.transplant_date < payload.sowing_date:
+        raise HTTPException(status_code=422, detail="Presajanje ne sme biti pred setvijo.")
+
+    existing = db.scalars(
+        select(CropPlan)
+        .where(
+            CropPlan.bed_id == bed.id,
+            CropPlan.status == "planned",
+        )
+        .options(*crop_plan_options())
+    ).all()
+    active = active_planting_for_bed(db, bed.id)
+    series_id = str(uuid4())
+    created: list[CropPlan] = []
+    warnings: list[str] = []
+    for index in range(payload.succession_count):
+        offset = timedelta(days=index * payload.succession_interval_days)
+        sowing_date = payload.sowing_date + offset
+        harvest_date = sowing_date + timedelta(days=variety.days_to_harvest)
+        transplant_date = payload.transplant_date + offset if payload.transplant_date else None
+        overlaps = [
+            other
+            for other in [*existing, *created]
+            if other.sowing_date <= harvest_date and other.expected_harvest_date >= sowing_date
+        ]
+        if overlaps:
+            warnings.append(
+                f"{sowing_date}: gredica {bed.name} se časovno prekriva z drugim načrtom."
+            )
+        if active is not None and index == 0:
+            warnings.append(f"Gredica {bed.name} je trenutno zasedena z aktivno setvijo.")
+        plan = CropPlan(
+            farm_id=DEFAULT_FARM_ID,
+            bed_id=bed.id,
+            crop_id=crop.id,
+            variety_id=variety.id,
+            series_id=series_id,
+            sowing_date=sowing_date,
+            transplant_date=transplant_date,
+            expected_harvest_date=harvest_date,
+            expected_yield_kg=payload.expected_yield_kg,
+            status="planned",
+            notes=payload.notes.strip() if payload.notes else None,
+        )
+        plan.bed = bed
+        plan.crop = crop
+        plan.variety = variety
+        db.add(plan)
+        created.append(plan)
+    db.commit()
+    return {
+        "message": f"Ustvarjenih je {len(created)} načrtovanih setev.",
+        "series_id": series_id,
+        "warnings": warnings,
+        "plans": [serialize_crop_plan(plan) for plan in created],
+    }
+
+
+@app.post("/api/plans/{plan_id}/activate")
+def activate_crop_plan(
+    plan_id: int,
+    payload: CropPlanActivate,
+    db: Session = Depends(get_db),
+) -> dict:
+    plan = db.scalar(
+        select(CropPlan)
+        .where(CropPlan.id == plan_id, CropPlan.farm_id == DEFAULT_FARM_ID)
+        .options(*crop_plan_options())
+    )
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
+    if plan.status != "planned":
+        raise HTTPException(status_code=409, detail="Aktivirati je mogoče le načrtovano setev.")
+    planting_payload = PlantingCreate(
+        crop_id=plan.crop_id,
+        variety_id=plan.variety_id,
+        bed_id=plan.bed_id,
+        sowing_date=plan.sowing_date,
+        override_rotation=payload.override_rotation,
+    )
+    preview = rotation_preview(planting_payload, db)
+    if not preview.allowed or (preview.requires_override and not payload.override_rotation):
+        raise HTTPException(status_code=409, detail=preview.model_dump())
+    planting = Planting(
+        farm_id=DEFAULT_FARM_ID,
+        bed_id=plan.bed_id,
+        crop_id=plan.crop_id,
+        variety_id=plan.variety_id,
+        sowing_date=plan.sowing_date,
+        expected_harvest_date=plan.expected_harvest_date,
+        rotation_override=payload.override_rotation,
+        status="active",
+    )
+    plan.bed.status = "growing"
+    db.add(planting)
+    db.flush()
+    planting.crop = plan.crop
+    planting.variety = plan.variety
+    add_automatic_tasks(db, planting, plan.bed)
+    plan.status = "activated"
+    plan.planting_id = planting.id
+    db.commit()
+    return {
+        "message": f"Načrt za {plan.crop.name} na gredici {plan.bed.name} je aktiviran.",
+        "planting_id": planting.id,
+        "plan": serialize_crop_plan(plan),
+    }
+
+
+@app.post("/api/plans/{plan_id}/status")
+def update_crop_plan_status(
+    plan_id: int,
+    payload: CropPlanStatusUpdate,
+    db: Session = Depends(get_db),
+) -> dict:
+    plan = db.scalar(
+        select(CropPlan)
+        .where(CropPlan.id == plan_id, CropPlan.farm_id == DEFAULT_FARM_ID)
+        .options(*crop_plan_options())
+    )
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
+    if plan.status != "planned":
+        raise HTTPException(status_code=409, detail="Spremeniti je mogoče le načrtovano setev.")
+    plan.status = payload.status
+    db.commit()
+    return {"message": "Načrt je preklican.", **serialize_crop_plan(plan)}
+
+
+def planning_range(start: date | None, end: date | None) -> tuple[date, date]:
+    range_start = start or date.today()
+    range_end = end or range_start + timedelta(days=90)
+    if range_end < range_start:
+        raise HTTPException(status_code=422, detail="Konec obdobja ne sme biti pred začetkom.")
+    return range_start, range_end
+
+
+@app.get("/api/planning/calendar")
+def planning_calendar(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    range_start, range_end = planning_range(start, end)
+    events: list[dict] = []
+    plans = db.scalars(
+        select(CropPlan)
+        .where(
+            CropPlan.farm_id == DEFAULT_FARM_ID,
+            CropPlan.status == "planned",
+            CropPlan.sowing_date <= range_end,
+            CropPlan.expected_harvest_date >= range_start,
+        )
+        .options(*crop_plan_options())
+    ).all()
+    for plan in plans:
+        candidates = [
+            (plan.sowing_date, "sowing", "Setev"),
+            (plan.transplant_date, "transplant", "Presajanje"),
+            (plan.expected_harvest_date, "planned_harvest", "Predvidena žetev"),
+        ]
+        for event_date, event_type, label in candidates:
+            if event_date and range_start <= event_date <= range_end:
+                events.append(
+                    {
+                        "date": event_date,
+                        "type": event_type,
+                        "title": f"{label}: {plan.crop.name} {plan.variety.name}",
+                        "bed": plan.bed.name,
+                        "plan_id": plan.id,
+                    }
+                )
+    tasks = db.scalars(
+        select(Task)
+        .where(
+            Task.farm_id == DEFAULT_FARM_ID,
+            Task.due_date >= range_start,
+            Task.due_date <= range_end,
+            Task.status == "planned",
+        )
+        .options(selectinload(Task.bed))
+    ).all()
+    events.extend(
+        {
+            "date": task.due_date,
+            "type": "task",
+            "title": task.title,
+            "bed": task.bed.name if task.bed else None,
+            "task_id": task.id,
+        }
+        for task in tasks
+    )
+    orders = db.scalars(
+        select(Order)
+        .where(
+            Order.farm_id == DEFAULT_FARM_ID,
+            Order.delivery_date >= range_start,
+            Order.delivery_date <= range_end,
+            Order.status == "confirmed",
+        )
+        .options(selectinload(Order.customer))
+    ).all()
+    events.extend(
+        {
+            "date": order.delivery_date,
+            "type": "delivery",
+            "title": f"Dostava: {order.customer.name}",
+            "bed": None,
+            "order_id": order.id,
+        }
+        for order in orders
+    )
+    events.sort(key=lambda event: (event["date"], event["type"], event["title"]))
+    return {"start": range_start, "end": range_end, "events": events}
+
+
+@app.get("/api/planning/forecast")
+def planning_forecast(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    range_start, range_end = planning_range(start, end)
+    crops = db.scalars(select(Crop).order_by(Crop.name)).all()
+    harvests = db.scalars(
+        select(Harvest)
+        .where(Harvest.farm_id == DEFAULT_FARM_ID, Harvest.quality != "waste")
+        .options(selectinload(Harvest.planting).selectinload(Planting.crop))
+    ).all()
+    plans = db.scalars(
+        select(CropPlan)
+        .where(
+            CropPlan.farm_id == DEFAULT_FARM_ID,
+            CropPlan.status == "planned",
+            CropPlan.expected_harvest_date >= range_start,
+            CropPlan.expected_harvest_date <= range_end,
+        )
+    ).all()
+    orders = db.scalars(
+        select(Order)
+        .where(
+            Order.farm_id == DEFAULT_FARM_ID,
+            Order.status == "confirmed",
+            Order.delivery_date >= range_start,
+            Order.delivery_date <= range_end,
+        )
+        .options(
+            selectinload(Order.items)
+            .selectinload(OrderItem.harvest)
+            .selectinload(Harvest.planting)
+            .selectinload(Planting.crop)
+        )
+    ).all()
+    rows = []
+    for crop in crops:
+        current_stock = sum(
+            max(0.0, harvest.quantity_kg - sold_quantity(db, harvest.id))
+            for harvest in harvests
+            if harvest.planting.crop_id == crop.id
+        )
+        planned_yield = sum(plan.expected_yield_kg for plan in plans if plan.crop_id == crop.id)
+        demand = sum(
+            item.quantity_kg
+            for order in orders
+            for item in order.items
+            if item.harvest.planting.crop_id == crop.id
+        )
+        if current_stock or planned_yield or demand:
+            projected = current_stock + planned_yield - demand
+            rows.append(
+                {
+                    "crop_id": crop.id,
+                    "crop": crop.name,
+                    "current_stock_kg": round(current_stock, 2),
+                    "planned_yield_kg": round(planned_yield, 2),
+                    "confirmed_demand_kg": round(demand, 2),
+                    "projected_balance_kg": round(projected, 2),
+                    "shortage": projected < 0,
+                }
+            )
+    return {
+        "start": range_start,
+        "end": range_end,
+        "rows": rows,
+        "warnings": [
+            f"Za kulturo {row['crop']} manjka {abs(row['projected_balance_kg'])} kg."
+            for row in rows
+            if row["shortage"]
+        ],
     }
