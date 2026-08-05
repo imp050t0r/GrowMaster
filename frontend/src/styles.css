@@ -221,7 +221,9 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .fiscal-badge.confirmed { color: #17603f; background: #dff3e7; }
 .fiscal-badge.pending { color: #842525; background: #fde2de; }
 .credit-note-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; background: #fff; border-left: 4px solid #ad5549; border-radius: 9px; }
-.credit-note-row > div:first-child { display: grid; gap: 3px; }
+.credit-note-details { display: grid; gap: 3px; }
+.refund-history { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.refund-history span { padding: 5px 8px; color: #53685e; background: #edf2ef; border-radius: 7px; font-size: 0.76rem; }
 .report-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .report-heading h2 { margin: 3px 0 8px; }
 .report-heading p:last-child { margin-bottom: 0; }

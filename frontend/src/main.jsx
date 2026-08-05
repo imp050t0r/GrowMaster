@@ -426,6 +426,51 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
+  async function recordRefund(creditNote, invoice) {
+    const amountInput = window.prompt(
+      `Znesek vračila (največ ${creditNote.refundable_eur.toFixed(2)} €):`,
+      creditNote.refundable_eur.toFixed(2),
+    );
+    if (amountInput === null) return;
+    const amount = Number(amountInput.replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Vnesite veljaven znesek vračila.");
+      return;
+    }
+    const methodInput = window.prompt(
+      "Način vračila: gotovina, kartica ali nakazilo",
+      paymentLabelForPrompt(invoice.payment_method),
+    );
+    if (methodInput === null) return;
+    const paymentMethod = {
+      gotovina: "cash",
+      cash: "cash",
+      kartica: "card",
+      card: "card",
+      nakazilo: "bank_transfer",
+      bank_transfer: "bank_transfer",
+    }[methodInput.trim().toLowerCase()];
+    if (!paymentMethod) {
+      setError("Način vračila mora biti gotovina, kartica ali nakazilo.");
+      return;
+    }
+    const notes = window.prompt("Opomba k vračilu (neobvezno):") || null;
+    if (!window.confirm(`Evidentiram dejansko vračilo ${amount.toFixed(2)} €?`)) return;
+    clearMessages();
+    try {
+      const data = await apiRequest(`/api/credit-notes/${creditNote.id}/refunds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refund_date: today, amount_eur: amount, payment_method: paymentMethod, notes }),
+      });
+      setNotice(data.message); await loadData();
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  function paymentLabelForPrompt(method) {
+    return ({ cash: "gotovina", card: "kartica", bank_transfer: "nakazilo" }[method] || "nakazilo");
+  }
+
   async function recordPayment(event) {
     event.preventDefault(); clearMessages();
     try {
@@ -496,7 +541,7 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.0</span>
+        <span className="status-pill">MVP 1.1</span>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -580,7 +625,8 @@ function App() {
       {view === "invoices" && (
         <InvoicesView invoices={invoices} profile={invoiceProfile} setProfile={setInvoiceProfile}
           saveProfile={saveInvoiceProfile} openPdf={openInvoicePdf}
-          confirmFiscal={saveFiscalConfirmation} issueCreditNote={issueCreditNote} />
+          confirmFiscal={saveFiscalConfirmation} issueCreditNote={issueCreditNote}
+          recordRefund={recordRefund} />
       )}
       {view === "reports" && (
         <SalesReportView report={salesReport} start={reportStart} setStart={setReportStart} end={reportEnd} setEnd={setReportEnd} />
@@ -815,7 +861,7 @@ function OrdersView({ inventory, customers, orders, customerForm, setCustomerFor
   </>;
 }
 
-function InvoicesView({ invoices, profile, setProfile, saveProfile, openPdf, confirmFiscal, issueCreditNote }) {
+function InvoicesView({ invoices, profile, setProfile, saveProfile, openPdf, confirmFiscal, issueCreditNote, recordRefund }) {
   const paymentLabel = (value) => ({ bank_transfer: "Nakazilo", cash: "Gotovina", card: "Kartica" }[value] || value);
   const fiscalLabel = (value) => ({ not_required: "EOR ni potreben", pending: "Čaka EOR", confirmed: "Davčno potrjeno" }[value] || value);
   return <>
@@ -834,7 +880,7 @@ function InvoicesView({ invoices, profile, setProfile, saveProfile, openPdf, con
       {invoices.length === 0 ? <p className="empty-state">Račun še ni izdan. Izdate ga pri dostavljenem poslovnem naročilu ali poslovni hitri prodaji.</p> : <div className="invoice-list">{invoices.map((invoice) => <article key={invoice.id} className={invoice.status}>
         <div className="invoice-main"><div><span className={`fiscal-badge ${invoice.fiscal_status}`}>{fiscalLabel(invoice.fiscal_status)}</span><strong>{invoice.number} · {invoice.customer.name}</strong><span>Izdano {invoice.issued_on} · dobava {invoice.supply_date} · rok {invoice.due_date}</span><span>{paymentLabel(invoice.payment_method)} · {invoice.source_type === "order" ? "naročilo" : "hitra prodaja"} #{invoice.source_id}</span></div><div><strong>{invoice.total_eur.toFixed(2)} €</strong><span>{invoice.status === "credited" ? "Dobropisano" : `${invoice.outstanding_eur.toFixed(2)} € odprto`}</span></div></div>
         <div className="order-actions">{invoice.fiscal_status === "pending" && <button className="secondary-button" onClick={() => confirmFiscal(invoice.id)}>VPIŠI EOR</button>}{invoice.fiscal_status !== "pending" && <button className="secondary-button" onClick={() => openPdf(invoice.id)}>ODPRI PDF</button>}{invoice.status !== "credited" && <button className="text-button danger-text" onClick={() => issueCreditNote(invoice.id)}>IZDAJ DOBROPIS</button>}</div>
-        {invoice.credit_note && <div className="credit-note-row"><div><strong>{invoice.credit_note.number}</strong><span>{invoice.credit_note.issued_on} · {invoice.credit_note.reason}</span></div><div className="order-actions">{invoice.credit_note.fiscal_status === "pending" ? <button className="secondary-button" onClick={() => confirmFiscal(invoice.id, invoice.credit_note.id)}>VPIŠI EOR DOBROPISA</button> : <a className="secondary-button export-button" href={`${API_URL}/api/credit-notes/${invoice.credit_note.id}/pdf`} target="_blank" rel="noreferrer">PDF DOBROPISA</a>}</div></div>}
+        {invoice.credit_note && <div className="credit-note-row"><div className="credit-note-details"><strong>{invoice.credit_note.number}</strong><span>{invoice.credit_note.issued_on} · {invoice.credit_note.reason}</span><span>Vrnjeno {invoice.credit_note.refunded_eur.toFixed(2)} € · še vračljivo {invoice.credit_note.refundable_eur.toFixed(2)} €</span>{invoice.credit_note.refunds.length > 0 && <div className="refund-history">{invoice.credit_note.refunds.map((refund) => <span key={refund.id}>{refund.refund_date} · {refund.amount_eur.toFixed(2)} € · {paymentLabel(refund.payment_method)}{refund.notes ? ` · ${refund.notes}` : ""}</span>)}</div>}</div><div className="order-actions">{invoice.credit_note.fiscal_status === "pending" ? <button className="secondary-button" onClick={() => confirmFiscal(invoice.id, invoice.credit_note.id)}>VPIŠI EOR DOBROPISA</button> : <><a className="secondary-button export-button" href={`${API_URL}/api/credit-notes/${invoice.credit_note.id}/pdf`} target="_blank" rel="noreferrer">PDF DOBROPISA</a>{invoice.credit_note.refundable_eur > 0 && <button className="primary-button" onClick={() => recordRefund(invoice.credit_note, invoice)}>EVIDENTIRAJ VRAČILO</button>}</>}</div></div>}
       </article>)}</div>}
     </section>
   </>;
@@ -886,12 +932,12 @@ function CashFlowView({ data, start, setStart, end, setEnd }) {
   const summary = data.summary || {};
   const categoryLabels = { seed: "Seme", labor: "Delo", fertilizer: "Gnojila", water: "Voda", packaging: "Embalaža", other: "Drugo" };
   const methodLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
-  const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek" }[source] || source);
+  const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek", refund: "vračilo kupcu" }[source] || source);
   return <>
     <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/cash-flow/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div></section>
     <section className="metric-grid cashflow-metrics">
       <article className="metric-card"><span>Prilivi</span><strong className="positive">{(summary.inflow_eur || 0).toFixed(2)} €</strong><small>{summary.inflow_count || 0} prejemkov</small></article>
-      <article className="metric-card"><span>Odlivi</span><strong className="negative">{(summary.outflow_eur || 0).toFixed(2)} €</strong><small>{summary.outflow_count || 0} stroškov</small></article>
+      <article className="metric-card"><span>Odlivi</span><strong className="negative">{(summary.outflow_eur || 0).toFixed(2)} €</strong><small>{summary.outflow_count || 0} odlivov · vračila {(summary.refund_eur || 0).toFixed(2)} €</small></article>
       <article className="metric-card"><span>Neto tok</span><strong className={(summary.net_eur || 0) < 0 ? "negative" : "positive"}>{(summary.net_eur || 0).toFixed(2)} €</strong><small>prilivi minus odlivi</small></article>
       <article className="metric-card"><span>Načini priliva</span><strong>{(summary.bank_transfer_eur || 0).toFixed(2)} €</strong><small>nakazila · gotovina {(summary.cash_eur || 0).toFixed(2)} € · kartice {(summary.card_eur || 0).toFixed(2)} €</small></article>
     </section>
