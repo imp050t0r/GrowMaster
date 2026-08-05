@@ -292,3 +292,12 @@ class RefundCreate(BaseModel):
     amount_eur: float = Field(gt=0, le=1000000)
     payment_method: Literal["cash", "card", "bank_transfer"]
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class AuthSetup(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class AuthLogin(BaseModel):
+    password: str = Field(min_length=1, max_length=256)

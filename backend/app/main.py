@@ -7,10 +7,26 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.auth import (
+    SESSION_COOKIE,
+    SESSION_LIFETIME,
+    authenticated_credential,
+    clear_login_failures,
+    cookie_secure,
+    create_credential,
+    create_session,
+    get_credential,
+    login_rate_limited,
+    password_is_strong,
+    record_login_failure,
+    revoke_session,
+    verify_password,
+)
 from app.backups import (
     BackupRestoreError,
     BackupValidationError,
@@ -64,6 +80,8 @@ from app.models import (
     Worker,
 )
 from app.schemas import (
+    AuthLogin,
+    AuthSetup,
     BedCreate,
     CostCreate,
     CropPlanActivate,
@@ -113,7 +131,38 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="GrowMaster API", version="1.9.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version="1.10.0", lifespan=lifespan)
+PUBLIC_API_PATHS = {
+    "/api/health",
+    "/api/auth/status",
+    "/api/auth/setup",
+    "/api/auth/login",
+    "/api/auth/logout",
+}
+
+
+@app.middleware("http")
+async def require_local_authentication(request: Request, call_next):
+    if (
+        request.method != "OPTIONS"
+        and request.url.path.startswith("/api/")
+        and request.url.path not in PUBLIC_API_PATHS
+    ):
+        with SessionLocal() as db:
+            credential = authenticated_credential(
+                db, request.cookies.get(SESSION_COOKIE)
+            )
+        if credential is None:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Za dostop se prijavite v GrowMaster."},
+                headers={"Cache-Control": "no-store"},
+            )
+    return await call_next(request)
+
+
+# Add CORS after the authentication middleware so even a 401 response carries
+# the browser headers needed by the separate local frontend origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -123,9 +172,130 @@ app.add_middleware(
 )
 
 
+def set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        max_age=int(SESSION_LIFETIME.total_seconds()),
+        httponly=True,
+        secure=cookie_secure(),
+        samesite="strict",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"app": "GrowMaster", "status": "running"}
+
+
+@app.get("/api/auth/status")
+def authentication_status(
+    request: Request, db: Session = Depends(get_db)
+) -> dict:
+    credential = get_credential(db)
+    authenticated = authenticated_credential(
+        db, request.cookies.get(SESSION_COOKIE)
+    )
+    return {
+        "configured": credential is not None,
+        "authenticated": authenticated is not None,
+        "display_name": authenticated.display_name if authenticated else None,
+        "session_days": SESSION_LIFETIME.days,
+    }
+
+
+@app.post("/api/auth/setup", status_code=status.HTTP_201_CREATED)
+def setup_authentication(
+    payload: AuthSetup,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    if get_credential(db) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="GrowMaster je že zaščiten z geslom.",
+        )
+    if not password_is_strong(payload.password):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Geslo mora imeti vsaj 12 znakov ter vsebovati črko in številko.",
+        )
+    try:
+        credential = create_credential(db, payload.display_name, payload.password)
+        token, _ = create_session(db, credential)
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="GrowMaster je že zaščiten z geslom.",
+        ) from error
+    set_auth_cookie(response, token)
+    return {
+        "configured": True,
+        "authenticated": True,
+        "display_name": credential.display_name,
+        "session_days": SESSION_LIFETIME.days,
+        "message": "Zaščita z geslom je vključena.",
+    }
+
+
+@app.post("/api/auth/login")
+def login(
+    payload: AuthLogin,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    client_key = request.client.host if request.client else "local"
+    if login_rate_limited(client_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Preveč neuspelih poskusov. Poskusite znova čez pet minut.",
+        )
+    credential = get_credential(db)
+    if credential is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Najprej nastavite zaščito GrowMasterja.",
+        )
+    if not verify_password(credential, payload.password):
+        record_login_failure(client_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Geslo ni pravilno.",
+        )
+    clear_login_failures(client_key)
+    token, _ = create_session(db, credential)
+    db.commit()
+    set_auth_cookie(response, token)
+    return {
+        "configured": True,
+        "authenticated": True,
+        "display_name": credential.display_name,
+        "session_days": SESSION_LIFETIME.days,
+        "message": "Prijava je uspela.",
+    }
+
+
+@app.post("/api/auth/logout")
+def logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    revoke_session(db, request.cookies.get(SESSION_COOKIE))
+    response.delete_cookie(
+        key=SESSION_COOKIE,
+        path="/",
+        secure=cookie_secure(),
+        httponly=True,
+        samesite="strict",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"message": "Odjava je uspela."}
 
 
 @app.get("/api/system/data-safety")

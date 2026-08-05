@@ -64,6 +64,9 @@ GrowMaster is a local-first farm management application for professional market 
 - portable full-data backups with schema version, record counts and SHA-256 verification
 - transactional restore with automatic pre-restore recovery copies and sequence repair
 - separate persistent Docker volume retaining the ten newest recovery copies
+- first-use administrator setup with a locally hashed password
+- HTTP-only, 30-day local sessions, logout and protection of every business-data API
+- portable backups that deliberately exclude passwords and active sessions
 - semicolon-delimited UTF-8 CSV profitability export
 - partial and final supplier payments with payment history and overpayment safeguards
 - supplier-payment outflows in cash flow and immutable daily sales closing
@@ -95,3 +98,4 @@ GitHub Actions compiles the backend, runs the complete farm-to-season-plan, task
 
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).
 Database upgrades, portable backups and recovery behavior are documented in [docs/data-safety.md](docs/data-safety.md).
+Local password setup, sessions and deployment guidance are documented in [docs/authentication.md](docs/authentication.md).

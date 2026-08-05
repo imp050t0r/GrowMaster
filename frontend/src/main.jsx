@@ -22,10 +22,17 @@ const taskTypeLabels = {
   harvest_check: "Kontrola žetve",
 };
 
+async function apiFetch(path, options = {}) {
+  return fetch(`${API_URL}${path}`, { ...options, credentials: "include" });
+}
+
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_URL}${path}`, options);
+  const response = await apiFetch(path, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      window.dispatchEvent(new Event("growmaster:unauthorized"));
+    }
     const detail = data.detail;
     throw new Error(typeof detail === "string" ? detail : detail?.message || "Zahteva ni uspela.");
   }
@@ -33,6 +40,8 @@ async function apiRequest(path, options = {}) {
 }
 
 function App() {
+  const [auth, setAuth] = useState({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30 });
+  const [authForm, setAuthForm] = useState({ display_name: "", password: "", confirmation: "" });
   const [view, setView] = useState("dashboard");
   const [crops, setCrops] = useState([]);
   const [beds, setBeds] = useState([]);
@@ -255,23 +264,60 @@ function App() {
   }
 
   useEffect(() => {
-    loadData().catch((loadError) => setError(loadError.message));
-  }, [taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd, laborStart, laborEnd, profitabilityStart, profitabilityEnd]);
+    apiRequest("/api/auth/status")
+      .then((status) => setAuth({ ...status, loading: false }))
+      .catch((loadError) => { setAuth((current) => ({ ...current, loading: false })); setError(loadError.message); });
+    const handleUnauthorized = () => setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
+    window.addEventListener("growmaster:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("growmaster:unauthorized", handleUnauthorized);
+  }, []);
 
   useEffect(() => {
-    if (view !== "data") return;
+    if (!auth.authenticated) return;
+    loadData().catch((loadError) => setError(loadError.message));
+  }, [auth.authenticated, taskDate, planStart, planEnd, reportStart, reportEnd, receivablesAsOf, includePaidReceivables, cashFlowStart, cashFlowEnd, laborStart, laborEnd, profitabilityStart, profitabilityEnd]);
+
+  useEffect(() => {
+    if (!auth.authenticated || view !== "data") return;
     apiRequest("/api/system/data-safety")
       .then(setDataSafety)
       .catch((loadError) => setError(loadError.message));
-  }, [view]);
+  }, [auth.authenticated, view]);
 
   useEffect(() => {
     const openingCash = Number(dayCloseForm.opening_cash_eur);
-    if (!dayCloseForm.business_date || !Number.isFinite(openingCash) || openingCash < 0) return;
+    if (!auth.authenticated || !dayCloseForm.business_date || !Number.isFinite(openingCash) || openingCash < 0) return;
     apiRequest(`/api/day-closes/preview?business_date=${dayCloseForm.business_date}&opening_cash_eur=${openingCash}`)
       .then(setDayClosePreview)
       .catch((loadError) => setError(loadError.message));
-  }, [dayCloseForm.business_date, dayCloseForm.opening_cash_eur]);
+  }, [auth.authenticated, dayCloseForm.business_date, dayCloseForm.opening_cash_eur]);
+
+  async function submitAuthentication(event) {
+    event.preventDefault(); clearMessages();
+    if (!auth.configured && authForm.password !== authForm.confirmation) {
+      setError("Vneseni gesli se ne ujemata."); return;
+    }
+    try {
+      const setup = !auth.configured;
+      const data = await apiRequest(setup ? "/api/auth/setup" : "/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(setup ? { display_name: authForm.display_name, password: authForm.password } : { password: authForm.password }),
+      });
+      setAuth({ ...data, loading: false });
+      setAuthForm({ display_name: "", password: "", confirmation: "" });
+      setNotice(data.message);
+    } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function logout() {
+    clearMessages();
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST" });
+      setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
+      setAuthForm({ display_name: "", password: "", confirmation: "" });
+    } catch (requestError) { setError(requestError.message); }
+  }
 
   function clearMessages() {
     setNotice("");
@@ -291,7 +337,7 @@ function App() {
 
   async function savePlanting(overrideRotation = false) {
     clearMessages();
-    const response = await fetch(`${API_URL}/api/plantings`, {
+    const response = await apiFetch("/api/plantings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -670,7 +716,7 @@ function App() {
     if (restoreConfirmation !== "OBNOVI") { setError('Za potrditev vpišite "OBNOVI".'); return; }
     if (!window.confirm("Obnovim podatke iz izbrane kopije? Trenutno stanje bo pred tem samodejno varnostno shranjeno.")) return;
     try {
-      const response = await fetch(`${API_URL}/api/system/backups/restore?confirmation=OBNOVI`, {
+      const response = await apiFetch("/api/system/backups/restore?confirmation=OBNOVI", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: await restoreFile.text(),
@@ -797,7 +843,7 @@ function App() {
 
   async function activatePlan(planId, overrideRotation = false) {
     clearMessages();
-    const response = await fetch(`${API_URL}/api/plans/${planId}/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ override_rotation: overrideRotation }) });
+    const response = await apiFetch(`/api/plans/${planId}/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ override_rotation: overrideRotation }) });
     const data = await response.json();
     if (!response.ok) {
       const detail = data.detail;
@@ -834,6 +880,10 @@ function App() {
     ["data", "Podatki", "⬇"],
   ];
 
+  if (auth.loading || !auth.authenticated) {
+    return <AuthenticationView auth={auth} form={authForm} setForm={setAuthForm} submit={submitAuthentication} error={error} />;
+  }
+
   return (
     <main className="app-shell">
       <header className="hero">
@@ -842,7 +892,11 @@ function App() {
           <h1>🌱 GrowMaster</h1>
           <p>Gredice, setve in dnevno delo na enem mestu.</p>
         </div>
-        <span className="status-pill">MVP 1.9</span>
+        <div className="account-summary">
+          <span className="status-pill">MVP 1.10</span>
+          <span>Prijavljen: <strong>{auth.display_name}</strong></span>
+          <button type="button" onClick={logout}>ODJAVA</button>
+        </div>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
@@ -1598,9 +1652,30 @@ function DataSafetyView({ status, restoreFile, setRestoreFile, confirmation, set
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Samodejna zaščita</p><h2>Povratne kopije pred obnovitvijo</h2></div><span>{backups.length} shranjenih</span></div>
       {backups.length === 0 ? <p className="empty-state">Povratna kopija bo ustvarjena tik pred prvo obnovitvijo.</p> : <div className="automatic-backup-list">{backups.map((backup) => <article key={backup.filename}><div><strong>{new Date(backup.created_at).toLocaleString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><a className="secondary-button" href={`${API_URL}/api/system/backups/automatic/${encodeURIComponent(backup.filename)}`}>PRENESI</a></article>)}</div>}
-      <p className="backup-privacy-note">Varnostne kopije lahko vsebujejo osebne in finančne podatke kupcev. Hrani jih na mestu, do katerega nima dostopa nepooblaščena oseba.</p>
+      <p className="backup-privacy-note">Varnostne kopije lahko vsebujejo osebne in finančne podatke kupcev, nikoli pa gesla ali aktivne prijave. Hrani jih na mestu, do katerega nima dostopa nepooblaščena oseba.</p>
     </section>
   </>;
+}
+
+function AuthenticationView({ auth, form, setForm, submit, error }) {
+  const setup = !auth.configured;
+  return <main className="auth-shell">
+    <section className="auth-intro">
+      <p className="eyebrow">Lokalno upravljanje kmetije</p>
+      <h1>🌱 GrowMaster</h1>
+      <p>{auth.loading ? "Preverjam zaščito aplikacije …" : setup ? "Pred prvo uporabo zaščiti podatke kmetije z enim skrbniškim geslom." : "Vnesi skrbniško geslo za dostop do podatkov kmetije."}</p>
+    </section>
+    {!auth.loading && <form className="auth-card" onSubmit={submit}>
+      <div><p className="eyebrow">{setup ? "Prva nastavitev" : "Varna prijava"}</p><h2>{setup ? "Ustvari skrbniški dostop" : "Dobrodošel nazaj"}</h2></div>
+      {setup && <label>Ime uporabnika<input value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} autoComplete="name" maxLength="120" required autoFocus /></label>}
+      <label>Geslo<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} autoComplete={setup ? "new-password" : "current-password"} minLength={setup ? 12 : 1} maxLength="256" required autoFocus={!setup} /></label>
+      {setup && <label>Ponovi geslo<input type="password" value={form.confirmation} onChange={(event) => setForm({ ...form, confirmation: event.target.value })} autoComplete="new-password" minLength="12" maxLength="256" required /></label>}
+      {setup && <p className="auth-hint">Uporabi vsaj 12 znakov ter vključuj črko in številko. Geslo ni vključeno v varnostne kopije.</p>}
+      {error && <div className="message error">⚠ {error}</div>}
+      <button className="primary-button" type="submit">{setup ? "ZAŠČITI IN NADALJUJ" : "PRIJAVA"}</button>
+      {!setup && <p className="auth-hint">Prijava velja {auth.session_days || 30} dni na tej napravi ali do odjave.</p>}
+    </form>}
+  </main>;
 }
 
 createRoot(document.getElementById("root")).render(<React.StrictMode><App /></React.StrictMode>);

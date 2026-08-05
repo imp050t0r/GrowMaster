@@ -18,6 +18,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://growmaster:change-me@database:5432/growmaster}
       BACKUP_DIR: ${BACKUP_DIR:-/data/backups}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - growmaster_backups:/data/backups
     depends_on:

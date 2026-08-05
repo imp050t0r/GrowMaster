@@ -888,3 +888,29 @@ class Task(Base):
     bed: Mapped[Bed | None] = relationship(back_populates="tasks")
     planting: Mapped[Planting | None] = relationship(back_populates="tasks")
     labor_entries: Mapped[list[LaborEntry]] = relationship(back_populates="task")
+
+
+class AdminCredential(Base):
+    __tablename__ = "admin_credentials"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(120))
+    password_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    password_salt: Mapped[bytes] = mapped_column(LargeBinary)
+    password_algorithm: Mapped[str] = mapped_column(String(40), default="scrypt-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    credential_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_credentials.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)

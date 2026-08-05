@@ -31,6 +31,18 @@ button { cursor: pointer; }
 .hero p { margin: 0; max-width: 620px; color: #d9eee4; }
 .eyebrow { margin: 0; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase; }
 .status-pill { align-self: flex-start; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 999px; white-space: nowrap; }
+.account-summary { display: grid; justify-items: end; align-content: start; gap: 8px; font-size: 0.8rem; color: #d9eee4; }
+.account-summary button { padding: 6px 10px; color: white; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.35); border-radius: 9px; font-size: 0.72rem; font-weight: 900; }
+
+.auth-shell { min-height: 100vh; display: grid; grid-template-columns: 1.05fr 0.95fr; align-items: center; gap: clamp(32px, 8vw, 100px); width: min(980px, 100%); margin: 0 auto; padding: 32px 22px; }
+.auth-intro { padding: clamp(8px, 4vw, 42px); }
+.auth-intro h1 { margin: 10px 0 14px; font-size: clamp(2.8rem, 8vw, 5.4rem); line-height: 1; }
+.auth-intro > p:last-child { max-width: 520px; color: #587268; font-size: 1.08rem; line-height: 1.6; }
+.auth-card { display: grid; gap: 17px; padding: clamp(24px, 5vw, 40px); background: white; border: 1px solid #dce7df; border-radius: 24px; box-shadow: 0 22px 60px rgba(20, 60, 47, 0.14); }
+.auth-card h2 { margin: 4px 0 0; font-size: 1.7rem; }
+.auth-card .primary-button { width: 100%; }
+.auth-card .message { margin-top: 0; }
+.auth-hint { margin: 0; color: #6f8179; font-size: 0.8rem; line-height: 1.5; }
 
 .main-nav {
   position: sticky;
@@ -441,6 +453,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .backup-privacy-note { margin: 16px 0 0; padding: 12px 14px; color: #684b18; background: #fff7df; border: 1px solid #ead69b; border-radius: 11px; font-size: 0.82rem; line-height: 1.45; }
 
 @media (max-width: 900px) {
+  .auth-shell { grid-template-columns: 1fr; gap: 8px; }
+  .auth-intro { padding-bottom: 8px; }
   .planting-form, .task-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .task-form .wide { grid-column: span 2; }
   .bed-grid, .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -469,6 +483,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 }
 
 @media (max-width: 620px) {
+  .hero { align-items: stretch; flex-direction: column; }
+  .account-summary { justify-items: start; }
   .app-shell { padding: 10px 10px 92px; }
   .hero { padding: 21px; border-radius: 18px; }
   .status-pill { display: none; }
