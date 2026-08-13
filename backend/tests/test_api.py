@@ -21,7 +21,8 @@ from app.backups import (  # noqa: E402
 from app.database import SessionLocal, engine  # noqa: E402
 from app.main import app, demo_data_available, prepare_farm_on_first_setup  # noqa: E402
 from app.migrations import run_migrations, schema_migrations  # noqa: E402
-from app.models import Bed, Task  # noqa: E402
+from app.models import Bed, Crop, Task, Variety  # noqa: E402
+from app.seed import seed_database  # noqa: E402
 
 
 def test_bed_planting_and_task_workflow() -> None:
@@ -135,14 +136,29 @@ def test_bed_planting_and_task_workflow() -> None:
         beds = client.get("/api/beds").json()
         crops = client.get("/api/crops").json()
         assert len(beds) == 6
-        assert crops
+        assert len(crops) >= 50
+        assert {crop["category"] for crop in crops} >= {
+            "Domača",
+            "Azijska",
+            "Indijska",
+        }
+        with SessionLocal() as db:
+            crop_count = db.scalar(select(func.count()).select_from(Crop))
+            variety_count = db.scalar(select(func.count()).select_from(Variety))
+            seed_database(db)
+            seed_database(db)
+            assert db.scalar(select(func.count()).select_from(Crop)) == crop_count
+            assert (
+                db.scalar(select(func.count()).select_from(Variety))
+                == variety_count
+            )
 
         new_crop = client.post(
             "/api/crops",
             json={
-                "name": "Paradižnik",
-                "family": "Solanaceae",
-                "category": "Plodovke",
+                "name": "Testna zelenjava",
+                "family": "Testaceae",
+                "category": "Lastna",
             },
         )
         assert new_crop.status_code == 201
@@ -150,9 +166,9 @@ def test_bed_planting_and_task_workflow() -> None:
         assert client.post(
             "/api/crops",
             json={
-                "name": "paradižnik",
-                "family": "Solanaceae",
-                "category": "Plodovke",
+                "name": "testna zelenjava",
+                "family": "Testaceae",
+                "category": "Lastna",
             },
         ).status_code == 409
         assert client.post(
@@ -161,17 +177,17 @@ def test_bed_planting_and_task_workflow() -> None:
         ).status_code == 422
         new_variety = client.post(
             f"/api/crops/{new_crop.json()['id']}/varieties",
-            json={"name": "Volovsko srce", "days_to_harvest": 80},
+            json={"name": "Testna sorta", "days_to_harvest": 80},
         )
         assert new_variety.status_code == 201
         assert new_variety.json()["days_to_harvest"] == 80
         assert client.post(
             f"/api/crops/{new_crop.json()['id']}/varieties",
-            json={"name": "volovsko srce", "days_to_harvest": 90},
+            json={"name": "testna sorta", "days_to_harvest": 90},
         ).status_code == 409
         refreshed_crops = client.get("/api/crops").json()
         refreshed_crop = next(
-            item for item in refreshed_crops if item["name"] == "Paradižnik"
+            item for item in refreshed_crops if item["name"] == "Testna zelenjava"
         )
         assert refreshed_crop["varieties"] == [new_variety.json()]
 

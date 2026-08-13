@@ -1358,6 +1358,14 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
 }
 
 function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm, setVarietyForm, createVariety }) {
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const normalizedQuery = catalogQuery.trim().toLocaleLowerCase("sl");
+  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.map((variety) => variety.name)].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
+  const categoryOrder = new Map([["Domača", 0], ["Azijska", 1], ["Indijska", 2]]);
+  const catalogGroups = Object.entries(visibleCrops.reduce((groups, crop) => {
+    const category = crop.category || "Drugo";
+    return { ...groups, [category]: [...(groups[category] || []), crop] };
+  }, {})).sort(([left], [right]) => (categoryOrder.get(left) ?? 99) - (categoryOrder.get(right) ?? 99) || left.localeCompare(right, "sl"));
   return (
     <>
       <section className="panel">
@@ -1382,18 +1390,26 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
       </section>
 
       <section className="panel">
-        <div className="section-heading"><div><p className="eyebrow">Pregled šifranta</p><h2>Vsa zelenjava</h2></div></div>
-        <div className="crop-catalog-grid">
-          {crops.map((crop) => (
-            <article className="crop-catalog-card" key={crop.id}>
-              <div><h3>{crop.name}</h3><span>{crop.category} · {crop.family}</span></div>
-              <div className="variety-list">
-                {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.days_to_harvest} dni</span>)}
-                {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
+        <div className="section-heading"><div><p className="eyebrow">Pregled šifranta</p><h2>Vsa zelenjava</h2></div><label className="catalog-search">Išči<input type="search" value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="Zelenjava ali sorta" /></label></div>
+        <div className="crop-catalog-groups">
+          {catalogGroups.map(([category, categoryCrops]) => (
+            <section className="crop-category-section" key={category}>
+              <div className="crop-category-heading"><h3>{category}</h3><span>{categoryCrops.length} vrst</span></div>
+              <div className="crop-catalog-grid">
+                {categoryCrops.map((crop) => (
+                  <article className="crop-catalog-card" key={crop.id}>
+                    <div><h3>{crop.name}</h3><span>{crop.family}</span></div>
+                    <div className="variety-list">
+                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.days_to_harvest} dni</span>)}
+                      {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
+                    </div>
+                  </article>
+                ))}
               </div>
-            </article>
+            </section>
           ))}
           {!crops.length && <p className="empty-state">Dodaj prvo zelenjavo in nato njeno sorto.</p>}
+          {crops.length > 0 && !visibleCrops.length && <p className="empty-state">Za ta iskalni niz ni zadetkov.</p>}
         </div>
       </section>
     </>
