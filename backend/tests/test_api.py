@@ -137,6 +137,44 @@ def test_bed_planting_and_task_workflow() -> None:
         assert len(beds) == 6
         assert crops
 
+        new_crop = client.post(
+            "/api/crops",
+            json={
+                "name": "Paradižnik",
+                "family": "Solanaceae",
+                "category": "Plodovke",
+            },
+        )
+        assert new_crop.status_code == 201
+        assert new_crop.json()["varieties"] == []
+        assert client.post(
+            "/api/crops",
+            json={
+                "name": "paradižnik",
+                "family": "Solanaceae",
+                "category": "Plodovke",
+            },
+        ).status_code == 409
+        assert client.post(
+            "/api/crops",
+            json={"name": " ", "family": " ", "category": "Plodovke"},
+        ).status_code == 422
+        new_variety = client.post(
+            f"/api/crops/{new_crop.json()['id']}/varieties",
+            json={"name": "Volovsko srce", "days_to_harvest": 80},
+        )
+        assert new_variety.status_code == 201
+        assert new_variety.json()["days_to_harvest"] == 80
+        assert client.post(
+            f"/api/crops/{new_crop.json()['id']}/varieties",
+            json={"name": "volovsko srce", "days_to_harvest": 90},
+        ).status_code == 409
+        refreshed_crops = client.get("/api/crops").json()
+        refreshed_crop = next(
+            item for item in refreshed_crops if item["name"] == "Paradižnik"
+        )
+        assert refreshed_crop["varieties"] == [new_variety.json()]
+
         new_bed = client.post(
             "/api/beds",
             json={"name": "B1", "width_m": 0.8, "length_m": 15},

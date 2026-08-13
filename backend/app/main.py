@@ -98,6 +98,7 @@ from app.schemas import (
     AuthSetup,
     BedCreate,
     CostCreate,
+    CropCreate,
     CropPlanActivate,
     CropPlanCreate,
     CropPlanStatusUpdate,
@@ -131,6 +132,8 @@ from app.schemas import (
     SupplyUsageCreate,
     TaskComplete,
     TaskCreate,
+    VarietyCreate,
+    VarietyOut,
     WorkerCreate,
 )
 from app.seed import DEMO_FARM_NAME, seed_database
@@ -677,6 +680,65 @@ async def restore_backup(
 def list_crops(db: Session = Depends(get_db)) -> list[Crop]:
     statement = select(Crop).options(selectinload(Crop.varieties)).order_by(Crop.name)
     return list(db.scalars(statement).all())
+
+
+@app.post("/api/crops", response_model=CropOut, status_code=status.HTTP_201_CREATED)
+def create_crop(payload: CropCreate, db: Session = Depends(get_db)) -> Crop:
+    name = payload.name.strip()
+    family = payload.family.strip()
+    category = payload.category.strip()
+    if not name or not family or not category:
+        raise HTTPException(
+            status_code=422,
+            detail="Ime zelenjave, družina in kategorija so obvezni.",
+        )
+    duplicate = db.scalar(select(Crop).where(func.lower(Crop.name) == name.lower()))
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Zelenjava s tem imenom že obstaja.",
+        )
+    crop = Crop(name=name, family=family, category=category, varieties=[])
+    db.add(crop)
+    db.commit()
+    db.refresh(crop)
+    return crop
+
+
+@app.post(
+    "/api/crops/{crop_id}/varieties",
+    response_model=VarietyOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_variety(
+    crop_id: int, payload: VarietyCreate, db: Session = Depends(get_db)
+) -> Variety:
+    crop = db.get(Crop, crop_id)
+    if crop is None:
+        raise HTTPException(status_code=404, detail="Zelenjava ne obstaja.")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Ime sorte je obvezno.")
+    duplicate = db.scalar(
+        select(Variety).where(
+            Variety.crop_id == crop.id,
+            func.lower(Variety.name) == name.lower(),
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Ta sorta je pri izbrani zelenjavi že dodana.",
+        )
+    variety = Variety(
+        crop_id=crop.id,
+        name=name,
+        days_to_harvest=payload.days_to_harvest,
+    )
+    db.add(variety)
+    db.commit()
+    db.refresh(variety)
+    return variety
 
 
 def active_planting_for_bed(db: Session, bed_id: int) -> Planting | None:

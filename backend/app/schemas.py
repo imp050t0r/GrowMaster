@@ -22,6 +22,17 @@ class CropOut(BaseModel):
     varieties: list[VarietyOut]
 
 
+class CropCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    family: str = Field(min_length=1, max_length=120)
+    category: str = Field(min_length=1, max_length=120)
+
+
+class VarietyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    days_to_harvest: int = Field(ge=1, le=730)
+
+
 class BedCreate(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     width_m: float = Field(gt=0, le=100)

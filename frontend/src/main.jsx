@@ -63,6 +63,7 @@ function App() {
   const [auth, setAuth] = useState({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30, demo_data_available: false });
   const [authForm, setAuthForm] = useState({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
   const [view, setView] = useState("dashboard");
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [crops, setCrops] = useState([]);
   const [beds, setBeds] = useState([]);
   const [plantings, setPlantings] = useState([]);
@@ -126,6 +127,8 @@ function App() {
     sowing_date: today,
   });
   const [bedForm, setBedForm] = useState({ name: "", width_m: "0.8", length_m: "15" });
+  const [cropForm, setCropForm] = useState({ name: "", family: "", category: "" });
+  const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_to_harvest: "" });
   const [taskForm, setTaskForm] = useState({
     title: "",
     task_type: "general",
@@ -254,6 +257,7 @@ function App() {
       return { ...current, harvest_id: selected?.harvest_id || "", price_per_kg_eur: sameSelection && current.price_per_kg_eur ? current.price_per_kg_eur : selected?.suggested_price_per_kg_eur || "" };
     });
     setPriceForm((current) => ({ ...current, crop_id: current.crop_id || cropData[0]?.id || "" }));
+    setVarietyForm((current) => ({ ...current, crop_id: current.crop_id || cropData[0]?.id || "" }));
     setPurchaseForm((current) => ({
       ...current,
       supplier_id: current.supplier_id || supplierData[0]?.id || "",
@@ -491,6 +495,44 @@ function App() {
       });
       setBedForm({ name: "", width_m: "0.8", length_m: "15" });
       setNotice(`Gredica ${data.name} je dodana.`);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function createCrop(event) {
+    event.preventDefault();
+    clearMessages();
+    try {
+      const data = await apiRequest("/api/crops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cropForm),
+      });
+      setCropForm({ name: "", family: "", category: "" });
+      setVarietyForm((current) => ({ ...current, crop_id: data.id }));
+      setNotice(`${data.name} je dodan med zelenjavo. Zdaj lahko dodaš še sorte.`);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function createVariety(event) {
+    event.preventDefault();
+    clearMessages();
+    try {
+      const data = await apiRequest(`/api/crops/${varietyForm.crop_id}/varieties`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: varietyForm.name,
+          days_to_harvest: Number(varietyForm.days_to_harvest),
+        }),
+      });
+      setVarietyForm((current) => ({ ...current, name: "", days_to_harvest: "" }));
+      setNotice(`Sorta ${data.name} je dodana.`);
       await loadData();
     } catch (requestError) {
       setError(requestError.message);
@@ -974,26 +1016,36 @@ function App() {
     catch (requestError) { setError(requestError.message); }
   }
 
-  const navigation = [
+  const primaryNavigation = [
     ["dashboard", "Domov", "⌂"],
     ["beds", "Gredice", "▦"],
-    ["planting", "Setev", "+"],
     ["tasks", "Opravila", "✓"],
+    ["orders", "Prodaja", "▤"],
+  ];
+  const moreNavigation = [
+    ["planting", "Setev", "+"],
     ["labor", "Delo", "◷"],
     ["economics", "Žetev €", "€"],
     ["profitability", "Analitika", "◎"],
     ["expenses", "Stroški", "−"],
-    ["orders", "Naročila", "▤"],
     ["invoices", "Računi", "R"],
-    ["reports", "Prodaja", "Σ"],
+    ["reports", "Poročila prodaje", "Σ"],
     ["receivables", "Terjatve", "↔"],
     ["cashflow", "Denar", "◒"],
     ["closing", "Zaključek", "✓"],
     ["purchasing", "Nabava", "↓"],
     ["planning", "Plan", "◫"],
+    ["crops", "Zelenjava in sorte", "♧"],
     ["data", "Podatki", "⬇"],
     ["settings", "Nastavitve", "⚙"],
   ];
+  const moreMenuActive = moreNavigation.some(([key]) => key === view);
+
+  function openView(key) {
+    setView(key);
+    setMoreMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   function changeServer() {
     forgetServer();
@@ -1035,12 +1087,31 @@ function App() {
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
-        {navigation.map(([key, label, icon]) => (
-          <button key={key} className={view === key ? "active" : ""} onClick={() => setView(key)}>
+        {primaryNavigation.map(([key, label, icon]) => (
+          <button key={key} className={view === key ? "active" : ""} onClick={() => openView(key)}>
             <span>{icon}</span>{label}
           </button>
         ))}
+        <button className={moreMenuActive || moreMenuOpen ? "active" : ""} onClick={() => setMoreMenuOpen((current) => !current)} aria-expanded={moreMenuOpen} aria-controls="more-navigation">
+          <span>•••</span>Več
+        </button>
       </nav>
+
+      {moreMenuOpen && (
+        <>
+          <button type="button" className="more-menu-backdrop" aria-label="Zapri meni" onClick={() => setMoreMenuOpen(false)} />
+          <section className="more-menu" id="more-navigation" aria-label="Vsi moduli">
+            <div className="more-menu-heading"><div><p className="eyebrow">Vsi moduli</p><h2>Kam želiš?</h2></div><button type="button" className="icon-button" aria-label="Zapri meni" onClick={() => setMoreMenuOpen(false)}>✕</button></div>
+            <div className="more-menu-grid">
+              {moreNavigation.map(([key, label, icon]) => (
+                <button type="button" key={key} className={view === key ? "active" : ""} onClick={() => openView(key)}>
+                  <span>{icon}</span><strong>{label}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
 
       {!online && <div className="offline-banner">Brez povezave. Pregled odprtega zaslona ostane na voljo, novih vnosov pa trenutno ni mogoče varno shraniti.</div>}
 
@@ -1168,6 +1239,10 @@ function App() {
           form={planForm} setForm={setPlanForm} selectedCrop={selectedPlanCrop} changeCrop={changePlanCrop} createPlan={createPlan}
           activatePlan={activatePlan} cancelPlan={cancelPlan} start={planStart} setStart={setPlanStart} end={planEnd} setEnd={setPlanEnd} />
       )}
+      {view === "crops" && (
+        <CropCatalogView crops={crops} cropForm={cropForm} setCropForm={setCropForm} createCrop={createCrop}
+          varietyForm={varietyForm} setVarietyForm={setVarietyForm} createVariety={createVariety} />
+      )}
       {view === "data" && (
         <DataSafetyView status={dataSafety} readiness={readiness} restoreFile={restoreFile} setRestoreFile={setRestoreFile}
           confirmation={restoreConfirmation} setConfirmation={setRestoreConfirmation} restoreData={restoreData} />
@@ -1242,6 +1317,49 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
           </div>
         </section>
       )}
+    </>
+  );
+}
+
+function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm, setVarietyForm, createVariety }) {
+  return (
+    <>
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Lastni šifrant</p><h2>Zelenjava in sorte</h2><p className="muted">Dodani vnosi so takoj na voljo pri setvi, načrtovanju, žetvi in ceniku.</p></div><span>{crops.length} vrst</span></div>
+        <div className="crop-catalog-forms">
+          <form className="catalog-form" onSubmit={createCrop}>
+            <div><p className="eyebrow">Nova zelenjava</p><h3>Dodaj vrsto zelenjave</h3></div>
+            <label>Ime<input value={cropForm.name} onChange={(event) => setCropForm({ ...cropForm, name: event.target.value })} placeholder="npr. Paradižnik" required /></label>
+            <label>Rastlinska družina<input value={cropForm.family} onChange={(event) => setCropForm({ ...cropForm, family: event.target.value })} placeholder="npr. Solanaceae" required /></label>
+            <label>Kategorija<input value={cropForm.category} onChange={(event) => setCropForm({ ...cropForm, category: event.target.value })} placeholder="npr. Plodovke" required /></label>
+            <button className="primary-button" type="submit">DODAJ ZELENJAVO</button>
+          </form>
+
+          <form className="catalog-form" onSubmit={createVariety}>
+            <div><p className="eyebrow">Nova sorta</p><h3>Dodaj sorto izbrani zelenjavi</h3></div>
+            <label>Zelenjava<select value={varietyForm.crop_id} onChange={(event) => setVarietyForm({ ...varietyForm, crop_id: event.target.value })} required disabled={!crops.length}><option value="">Izberi zelenjavo</option>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
+            <label>Ime sorte<input value={varietyForm.name} onChange={(event) => setVarietyForm({ ...varietyForm, name: event.target.value })} placeholder="npr. Volovsko srce" required /></label>
+            <label>Število dni do žetve<input type="number" min="1" max="730" value={varietyForm.days_to_harvest} onChange={(event) => setVarietyForm({ ...varietyForm, days_to_harvest: event.target.value })} placeholder="npr. 80" required /></label>
+            <button className="primary-button" type="submit" disabled={!crops.length}>DODAJ SORTO</button>
+          </form>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Pregled šifranta</p><h2>Vsa zelenjava</h2></div></div>
+        <div className="crop-catalog-grid">
+          {crops.map((crop) => (
+            <article className="crop-catalog-card" key={crop.id}>
+              <div><h3>{crop.name}</h3><span>{crop.category} · {crop.family}</span></div>
+              <div className="variety-list">
+                {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.days_to_harvest} dni</span>)}
+                {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
+              </div>
+            </article>
+          ))}
+          {!crops.length && <p className="empty-state">Dodaj prvo zelenjavo in nato njeno sorto.</p>}
+        </div>
+      </section>
     </>
   );
 }
