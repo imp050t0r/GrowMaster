@@ -1,0 +1,27 @@
+services:
+  backend:
+    environment:
+      COOKIE_SECURE: "true"
+
+  frontend:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      GROWMASTER_DOMAIN: ${GROWMASTER_DOMAIN:?Set GROWMASTER_DOMAIN in the remote environment file}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - growmaster_caddy_data:/data
+      - growmaster_caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+
+volumes:
+  growmaster_caddy_data:
+  growmaster_caddy_config:

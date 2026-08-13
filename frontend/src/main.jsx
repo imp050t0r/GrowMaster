@@ -1,8 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import {
+  apiFetch,
+  apiRequest,
+  configuredServerUrl,
+  forgetServer,
+  isNativeApp,
+  registerGrowMasterServiceWorker,
+  saveNativeSession,
+  saveServerUrl,
+  testServerConnection,
+} from "./platform";
 
-const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
 const now = new Date();
 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 const monthStart = `${today.slice(0, 7)}-01`;
@@ -11,6 +21,30 @@ const inDays = (days) => {
   const value = new Date(now); value.setDate(value.getDate() + days);
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 };
+
+async function downloadProtectedFile(path, filename, openInNewWindow = false) {
+  const previewWindow = openInNewWindow ? window.open("", "_blank") : null;
+  const response = await apiFetch(path);
+  if (!response.ok) {
+    previewWindow?.close();
+    throw new Error("Datoteke ni mogoče prenesti.");
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  if (previewWindow) {
+    previewWindow.opener = null;
+    previewWindow.location = objectUrl;
+  } else {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    link.click();
+  }
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
+function ProtectedDownloadButton({ path, filename, children, className = "secondary-button", open = false }) {
+  return <button type="button" className={className} onClick={() => downloadProtectedFile(path, filename, open).catch((error) => window.alert(error.message))}>{children}</button>;
+}
 
 const taskTypeLabels = {
   general: "Splošno",
@@ -22,24 +56,10 @@ const taskTypeLabels = {
   harvest_check: "Kontrola žetve",
 };
 
-async function apiFetch(path, options = {}) {
-  return fetch(`${API_URL}${path}`, { ...options, credentials: "include" });
-}
-
-async function apiRequest(path, options = {}) {
-  const response = await apiFetch(path, options);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401 && !path.startsWith("/api/auth/")) {
-      window.dispatchEvent(new Event("growmaster:unauthorized"));
-    }
-    const detail = data.detail;
-    throw new Error(typeof detail === "string" ? detail : detail?.message || "Zahteva ni uspela.");
-  }
-  return data;
-}
-
 function App() {
+  const [serverReady, setServerReady] = useState(!isNativeApp || Boolean(configuredServerUrl()));
+  const [online, setOnline] = useState(navigator.onLine);
+  const [installPrompt, setInstallPrompt] = useState(null);
   const [auth, setAuth] = useState({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30, demo_data_available: false });
   const [authForm, setAuthForm] = useState({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
   const [view, setView] = useState("dashboard");
@@ -271,12 +291,29 @@ function App() {
   }
 
   useEffect(() => {
+    if (!serverReady) return;
     apiRequest("/api/auth/status")
       .then((status) => setAuth({ ...status, loading: false }))
       .catch((loadError) => { setAuth((current) => ({ ...current, loading: false })); setError(loadError.message); });
     const handleUnauthorized = () => setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
     window.addEventListener("growmaster:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("growmaster:unauthorized", handleUnauthorized);
+  }, [serverReady]);
+
+  useEffect(() => {
+    const updateOnlineState = () => setOnline(navigator.onLine);
+    const captureInstallPrompt = (event) => {
+      event.preventDefault();
+      setInstallPrompt(event);
+    };
+    window.addEventListener("online", updateOnlineState);
+    window.addEventListener("offline", updateOnlineState);
+    window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    return () => {
+      window.removeEventListener("online", updateOnlineState);
+      window.removeEventListener("offline", updateOnlineState);
+      window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
+    };
   }, []);
 
   useEffect(() => {
@@ -327,6 +364,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(setup ? { display_name: authForm.display_name, farm_name: authForm.farm_name, keep_demo_data: authForm.keep_demo_data, password: authForm.password } : { password: authForm.password }),
       });
+      saveNativeSession(data.session_token);
       setAuth({ ...data, loading: false });
       setAuthForm({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
       setNotice(data.message);
@@ -337,6 +375,7 @@ function App() {
     clearMessages();
     try {
       await apiRequest("/api/auth/logout", { method: "POST" });
+      saveNativeSession("");
       setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
       setAuthForm({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
     } catch (requestError) { setError(requestError.message); }
@@ -368,6 +407,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ current_password: passwordForm.current_password, new_password: passwordForm.new_password }),
       });
+      saveNativeSession(data.session_token);
       setAccount(data);
       setPasswordForm({ current_password: "", new_password: "", confirmation: "" });
       setNotice(data.message);
@@ -651,8 +691,10 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
-  function openInvoicePdf(invoiceId) {
-    window.open(`${API_URL}/api/invoices/${invoiceId}/pdf`, "_blank", "noopener,noreferrer");
+  async function openInvoicePdf(invoiceId) {
+    clearMessages();
+    try { await downloadProtectedFile(`/api/invoices/${invoiceId}/pdf`, `racun-${invoiceId}.pdf`, true); }
+    catch (requestError) { setError(requestError.message); }
   }
 
   async function saveFiscalConfirmation(invoiceId, creditNoteId = null) {
@@ -953,8 +995,25 @@ function App() {
     ["settings", "Nastavitve", "⚙"],
   ];
 
+  function changeServer() {
+    forgetServer();
+    setAuth({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30, demo_data_available: false });
+    setServerReady(false);
+    clearMessages();
+  }
+
+  async function installWebApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    setInstallPrompt(null);
+  }
+
+  if (!serverReady) {
+    return <ConnectionView onConnected={(serverUrl) => { saveServerUrl(serverUrl); setServerReady(true); }} />;
+  }
+
   if (auth.loading || !auth.authenticated) {
-    return <AuthenticationView auth={auth} form={authForm} setForm={setAuthForm} submit={submitAuthentication} error={error} />;
+    return <AuthenticationView auth={auth} form={authForm} setForm={setAuthForm} submit={submitAuthentication} error={error} changeServer={isNativeApp ? changeServer : null} serverUrl={configuredServerUrl()} />;
   }
 
   return (
@@ -966,8 +1025,11 @@ function App() {
           <p>{farmProfile.farm_name ? `${farmProfile.farm_name} · gredice, setve in dnevno delo.` : "Gredice, setve in dnevno delo na enem mestu."}</p>
         </div>
         <div className="account-summary">
-          <span className="status-pill">MVP 1.14</span>
+          <span className={`connection-pill ${online ? "online" : "offline"}`}>{online ? "● POVEZANO" : "● BREZ POVEZAVE"}</span>
+          <span className="status-pill">1.15</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
+          {installPrompt && <button type="button" onClick={installWebApp}>NAMESTI APLIKACIJO</button>}
+          {isNativeApp && <button type="button" onClick={changeServer}>STREŽNIK</button>}
           <button type="button" onClick={logout}>ODJAVA</button>
         </div>
       </header>
@@ -979,6 +1041,8 @@ function App() {
           </button>
         ))}
       </nav>
+
+      {!online && <div className="offline-banner">Brez povezave. Pregled odprtega zaslona ostane na voljo, novih vnosov pa trenutno ni mogoče varno shraniti.</div>}
 
       {notice && <div className="message success">✓ {notice}</div>}
       {error && <div className="message error">⚠ {error}</div>}
@@ -1359,7 +1423,7 @@ function ProfitabilityView({ data, start, setStart, end, setEnd }) {
   return <>
     <section className="panel report-heading">
       <div><p className="eyebrow">Sezonski rezultat</p><h2>Dobičkonosnost pridelave</h2><p className="muted">{data.note}</p></div>
-      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/profitability-report/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div>
+      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><ProtectedDownloadButton className="secondary-button export-button" path={`/api/profitability-report/export.csv?start=${start}&end=${end}`} filename={`donosnost-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton></div>
     </section>
     <section className="metric-grid profitability-metrics">
       <article className="metric-card"><span>Dobiček</span><strong className={Number(summary.profit_eur || 0) >= 0 ? "positive" : "negative"}>{money(summary.profit_eur)}</strong><small>marža {ratio(summary.margin_pct, "%")}</small></article>
@@ -1486,7 +1550,7 @@ function InvoicesView({ invoices, profile, setProfile, saveProfile, openPdf, con
       {invoices.length === 0 ? <p className="empty-state">Račun še ni izdan. Izdate ga pri dostavljenem poslovnem naročilu ali poslovni hitri prodaji.</p> : <div className="invoice-list">{invoices.map((invoice) => <article key={invoice.id} className={invoice.status}>
         <div className="invoice-main"><div><span className={`fiscal-badge ${invoice.fiscal_status}`}>{fiscalLabel(invoice.fiscal_status)}</span><strong>{invoice.number} · {invoice.customer.name}</strong><span>Izdano {invoice.issued_on} · dobava {invoice.supply_date} · rok {invoice.due_date}</span><span>{paymentLabel(invoice.payment_method)} · {invoice.source_type === "order" ? "naročilo" : "hitra prodaja"} #{invoice.source_id}</span></div><div><strong>{invoice.total_eur.toFixed(2)} €</strong><span>{invoice.status === "credited" ? "Dobropisano" : `${invoice.outstanding_eur.toFixed(2)} € odprto`}</span></div></div>
         <div className="order-actions">{invoice.fiscal_status === "pending" && <button className="secondary-button" onClick={() => confirmFiscal(invoice.id)}>VPIŠI EOR</button>}{invoice.fiscal_status !== "pending" && <button className="secondary-button" onClick={() => openPdf(invoice.id)}>ODPRI PDF</button>}{invoice.status !== "credited" && <button className="text-button danger-text" onClick={() => issueCreditNote(invoice.id)}>IZDAJ DOBROPIS</button>}</div>
-        {invoice.credit_note && <div className="credit-note-row"><div className="credit-note-details"><strong>{invoice.credit_note.number}</strong><span>{invoice.credit_note.issued_on} · {invoice.credit_note.reason}</span><span>Vrnjeno {invoice.credit_note.refunded_eur.toFixed(2)} € · še vračljivo {invoice.credit_note.refundable_eur.toFixed(2)} €</span>{invoice.credit_note.refunds.length > 0 && <div className="refund-history">{invoice.credit_note.refunds.map((refund) => <span key={refund.id}>{refund.refund_date} · {refund.amount_eur.toFixed(2)} € · {paymentLabel(refund.payment_method)}{refund.notes ? ` · ${refund.notes}` : ""}</span>)}</div>}</div><div className="order-actions">{invoice.credit_note.fiscal_status === "pending" ? <button className="secondary-button" onClick={() => confirmFiscal(invoice.id, invoice.credit_note.id)}>VPIŠI EOR DOBROPISA</button> : <><a className="secondary-button export-button" href={`${API_URL}/api/credit-notes/${invoice.credit_note.id}/pdf`} target="_blank" rel="noreferrer">PDF DOBROPISA</a>{invoice.credit_note.refundable_eur > 0 && <button className="primary-button" onClick={() => recordRefund(invoice.credit_note, invoice)}>EVIDENTIRAJ VRAČILO</button>}</>}</div></div>}
+        {invoice.credit_note && <div className="credit-note-row"><div className="credit-note-details"><strong>{invoice.credit_note.number}</strong><span>{invoice.credit_note.issued_on} · {invoice.credit_note.reason}</span><span>Vrnjeno {invoice.credit_note.refunded_eur.toFixed(2)} € · še vračljivo {invoice.credit_note.refundable_eur.toFixed(2)} €</span>{invoice.credit_note.refunds.length > 0 && <div className="refund-history">{invoice.credit_note.refunds.map((refund) => <span key={refund.id}>{refund.refund_date} · {refund.amount_eur.toFixed(2)} € · {paymentLabel(refund.payment_method)}{refund.notes ? ` · ${refund.notes}` : ""}</span>)}</div>}</div><div className="order-actions">{invoice.credit_note.fiscal_status === "pending" ? <button className="secondary-button" onClick={() => confirmFiscal(invoice.id, invoice.credit_note.id)}>VPIŠI EOR DOBROPISA</button> : <><ProtectedDownloadButton path={`/api/credit-notes/${invoice.credit_note.id}/pdf`} filename={`dobropis-${invoice.credit_note.number}.pdf`} open>PDF DOBROPISA</ProtectedDownloadButton>{invoice.credit_note.refundable_eur > 0 && <button className="primary-button" onClick={() => recordRefund(invoice.credit_note, invoice)}>EVIDENTIRAJ VRAČILO</button>}</>}</div></div>}
       </article>)}</div>}
     </section>
   </>;
@@ -1498,7 +1562,7 @@ function SalesReportView({ report, start, setStart, end, setEnd }) {
   return <>
     <section className="panel report-heading">
       <div><p className="eyebrow">Dnevni register</p><h2>Pregled prodaje</h2><p className="muted">{report.note}</p></div>
-      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/sales-report/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div>
+      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><ProtectedDownloadButton className="secondary-button export-button" path={`/api/sales-report/export.csv?start=${start}&end=${end}`} filename={`prodaja-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton></div>
     </section>
     <section className="metric-grid report-metrics">
       <article className="metric-card"><span>Skupaj</span><strong>{(summary.total_eur || 0).toFixed(2)} €</strong><small>{summary.transactions || 0} prodaj · nerazvrščeno {(summary.unclassified_eur || 0).toFixed(2)} €</small></article>
@@ -1540,7 +1604,7 @@ function CashFlowView({ data, start, setStart, end, setEnd }) {
   const methodLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
   const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek", farm_expense: "splošni strošek", refund: "vračilo kupcu", supplier_payment: "plačilo dobavitelju" }[source] || source);
   return <>
-    <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/cash-flow/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div></section>
+    <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><ProtectedDownloadButton className="secondary-button export-button" path={`/api/cash-flow/export.csv?start=${start}&end=${end}`} filename={`denarni-tok-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton></div></section>
     <section className="metric-grid cashflow-metrics">
       <article className="metric-card"><span>Prilivi</span><strong className="positive">{(summary.inflow_eur || 0).toFixed(2)} €</strong><small>{summary.inflow_count || 0} prejemkov</small></article>
       <article className="metric-card"><span>Odlivi</span><strong className="negative">{(summary.outflow_eur || 0).toFixed(2)} €</strong><small>{summary.outflow_count || 0} odlivov · vračila {(summary.refund_eur || 0).toFixed(2)} € · dobavitelji {(summary.supplier_payments_eur || 0).toFixed(2)} €</small></article>
@@ -1722,12 +1786,12 @@ function DataSafetyView({ status, readiness, restoreFile, setRestoreFile, confir
     </section>
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Vsakodnevna zaščita</p><h2>Samodejne dnevne kopije</h2><p className="muted">Nova kopija nastane ob zagonu in nato enkrat na dan, dokler GrowMaster deluje. Vsebuje poslovne podatke, ne pa gesla ali aktivnih prijav.</p></div><span>{dailyBackups.length} shranjenih</span></div>
-      {dailyBackups.length === 0 ? <p className="empty-state">Prva dnevna kopija bo ustvarjena ob naslednjem zagonu GrowMasterja.</p> : <div className="automatic-backup-list">{dailyBackups.map((backup) => <article key={backup.filename}><div><strong>{new Date(`${backup.backup_date}T12:00:00`).toLocaleDateString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><a className="secondary-button" href={`${API_URL}/api/system/backups/daily/${encodeURIComponent(backup.filename)}`}>PRENESI</a></article>)}</div>}
+      {dailyBackups.length === 0 ? <p className="empty-state">Prva dnevna kopija bo ustvarjena ob naslednjem zagonu GrowMasterja.</p> : <div className="automatic-backup-list">{dailyBackups.map((backup) => <article key={backup.filename}><div><strong>{new Date(`${backup.backup_date}T12:00:00`).toLocaleDateString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><ProtectedDownloadButton path={`/api/system/backups/daily/${encodeURIComponent(backup.filename)}`} filename={backup.filename}>PRENESI</ProtectedDownloadButton></article>)}</div>}
     </section>
     <section className="data-safety-grid">
       <section className="panel backup-export-card">
         <div><p className="eyebrow">Shrani zunaj aplikacije</p><h2>Nova varnostna kopija</h2><p className="muted">Datoteka vsebuje gredice, pridelke, prodajo, račune, dokumente, zalogo in finančne zapise. Shrani jo na varen disk ali v svojo oblačno mapo.</p></div>
-        <a className="primary-button backup-download" href={`${API_URL}/api/system/backups/export`}>PRENESI CELOTNO KOPIJO</a>
+        <ProtectedDownloadButton className="primary-button backup-download" path="/api/system/backups/export" filename={`growmaster-kopija-${today}.json`}>PRENESI CELOTNO KOPIJO</ProtectedDownloadButton>
       </section>
       <form className="panel restore-form" onSubmit={restoreData}>
         <div><p className="eyebrow">Nadzorovana obnovitev</p><h2>Obnovi iz datoteke</h2><p className="muted">Datoteka se pred obnovitvijo preveri. Če je poškodovana ali iz druge različice, se podatki ne spremenijo.</p></div>
@@ -1739,16 +1803,53 @@ function DataSafetyView({ status, readiness, restoreFile, setRestoreFile, confir
     </section>
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Samodejna zaščita</p><h2>Povratne kopije pred obnovitvijo</h2></div><span>{backups.length} shranjenih</span></div>
-      {backups.length === 0 ? <p className="empty-state">Povratna kopija bo ustvarjena tik pred prvo obnovitvijo.</p> : <div className="automatic-backup-list">{backups.map((backup) => <article key={backup.filename}><div><strong>{new Date(backup.created_at).toLocaleString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><a className="secondary-button" href={`${API_URL}/api/system/backups/automatic/${encodeURIComponent(backup.filename)}`}>PRENESI</a></article>)}</div>}
+      {backups.length === 0 ? <p className="empty-state">Povratna kopija bo ustvarjena tik pred prvo obnovitvijo.</p> : <div className="automatic-backup-list">{backups.map((backup) => <article key={backup.filename}><div><strong>{new Date(backup.created_at).toLocaleString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><ProtectedDownloadButton path={`/api/system/backups/automatic/${encodeURIComponent(backup.filename)}`} filename={backup.filename}>PRENESI</ProtectedDownloadButton></article>)}</div>}
       <p className="backup-privacy-note">Varnostne kopije lahko vsebujejo osebne in finančne podatke kupcev, nikoli pa gesla ali aktivne prijave. Hrani jih na mestu, do katerega nima dostopa nepooblaščena oseba.</p>
     </section>
   </>;
 }
 
-function AuthenticationView({ auth, form, setForm, submit, error }) {
+function ConnectionView({ onConnected }) {
+  const [serverUrl, setServerUrl] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
+
+  async function connect(event) {
+    event.preventDefault();
+    setChecking(true);
+    setConnectionError("");
+    try {
+      const result = await testServerConnection(serverUrl);
+      onConnected(result.serverUrl);
+    } catch (error) {
+      setConnectionError(error.message || "Povezava ni uspela.");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return <main className="auth-shell connection-shell">
+    <section className="auth-intro">
+      <img className="auth-logo" src="/icons/growmaster-192.png" alt="" />
+      <p className="eyebrow">Mobilni GrowMaster</p>
+      <h1>Poveži svojo kmetijo</h1>
+      <p>Vpiši naslov GrowMasterja na računalniku ali zasebnem spletnem strežniku. Telefon in računalnik bosta nato uporabljala iste podatke.</p>
+    </section>
+    <form className="auth-card" onSubmit={connect}>
+      <div><p className="eyebrow">Prva povezava</p><h2>Naslov strežnika</h2></div>
+      <label>Naslov GrowMasterja<input type="url" inputMode="url" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://moja-kmetija.example.si" autoCapitalize="none" autoCorrect="off" required autoFocus /></label>
+      <p className="auth-hint">Za uporabo samo v domačem omrežju je lahko naslov npr. http://192.168.1.20:3000. Za uporabo kjerkoli priporočamo zasebni naslov HTTPS.</p>
+      {connectionError && <div className="message error">⚠ {connectionError}</div>}
+      <button className="primary-button" type="submit" disabled={checking}>{checking ? "PREVERJAM …" : "POVEŽI"}</button>
+    </form>
+  </main>;
+}
+
+function AuthenticationView({ auth, form, setForm, submit, error, changeServer, serverUrl }) {
   const setup = !auth.configured;
   return <main className="auth-shell">
     <section className="auth-intro">
+      <img className="auth-logo" src="/icons/growmaster-192.png" alt="" />
       <p className="eyebrow">Lokalno upravljanje kmetije</p>
       <h1>🌱 GrowMaster</h1>
       <p>{auth.loading ? "Preverjam zaščito aplikacije …" : setup ? "Pred prvo uporabo zaščiti podatke kmetije z enim skrbniškim geslom." : "Vnesi skrbniško geslo za dostop do podatkov kmetije."}</p>
@@ -1764,6 +1865,7 @@ function AuthenticationView({ auth, form, setForm, submit, error }) {
       {error && <div className="message error">⚠ {error}</div>}
       <button className="primary-button" type="submit">{setup ? "ZAŠČITI IN NADALJUJ" : "PRIJAVA"}</button>
       {!setup && <p className="auth-hint">Prijava velja {auth.session_days || 30} dni na tej napravi ali do odjave.</p>}
+      {changeServer && <div className="server-choice"><small>Povezano: {serverUrl}</small><button type="button" className="text-button" onClick={changeServer}>IZBERI DRUG STREŽNIK</button></div>}
     </form>}
   </main>;
 }
@@ -1815,4 +1917,5 @@ function SettingsView({ profile, setProfile, saveProfile, account, accountForm, 
   </>;
 }
 
+registerGrowMasterServiceWorker();
 createRoot(document.getElementById("root")).render(<React.StrictMode><App /></React.StrictMode>);

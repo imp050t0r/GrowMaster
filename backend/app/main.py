@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import io
 import logging
+import os
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -25,8 +26,10 @@ from app.auth import (
     create_session,
     get_credential,
     login_rate_limited,
+    native_session_payload,
     password_is_strong,
     record_login_failure,
+    request_session_token,
     replace_password,
     revoke_session,
     verify_password,
@@ -134,7 +137,7 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
-APP_VERSION = "1.14.0"
+APP_VERSION = "1.15.0"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
@@ -275,7 +278,7 @@ async def require_local_authentication(request: Request, call_next):
     ):
         with SessionLocal() as db:
             credential = authenticated_credential(
-                db, request.cookies.get(SESSION_COOKIE)
+                db, request_session_token(request)
             )
         if credential is None:
             return JSONResponse(
@@ -290,7 +293,17 @@ async def require_local_authentication(request: Request, call_next):
 # the browser headers needed by the separate local frontend origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            (
+                "http://localhost:3000,http://127.0.0.1:3000,"
+                "http://localhost,https://localhost,capacitor://localhost"
+            ),
+        ).split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -349,7 +362,7 @@ def authentication_status(
 ) -> dict:
     credential = get_credential(db)
     authenticated = authenticated_credential(
-        db, request.cookies.get(SESSION_COOKIE)
+        db, request_session_token(request)
     )
     return {
         "configured": credential is not None,
@@ -363,6 +376,7 @@ def authentication_status(
 @app.post("/api/auth/setup", status_code=status.HTTP_201_CREATED)
 def setup_authentication(
     payload: AuthSetup,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ) -> dict:
@@ -417,6 +431,7 @@ def setup_authentication(
             if removed_demo
             else "Zaščita z geslom je vključena."
         ),
+        **native_session_payload(request, token),
     }
 
 
@@ -455,6 +470,7 @@ def login(
         "display_name": credential.display_name,
         "session_days": SESSION_LIFETIME.days,
         "message": "Prijava je uspela.",
+        **native_session_payload(request, token),
     }
 
 
@@ -464,7 +480,7 @@ def logout(
     response: Response,
     db: Session = Depends(get_db),
 ) -> dict:
-    revoke_session(db, request.cookies.get(SESSION_COOKIE))
+    revoke_session(db, request_session_token(request))
     response.delete_cookie(
         key=SESSION_COOKIE,
         path="/",
@@ -481,7 +497,7 @@ def account_settings(
     request: Request, db: Session = Depends(get_db)
 ) -> dict:
     credential = authenticated_credential(
-        db, request.cookies.get(SESSION_COOKIE)
+        db, request_session_token(request)
     )
     if credential is None:
         raise HTTPException(
@@ -502,7 +518,7 @@ def update_account(
     db: Session = Depends(get_db),
 ) -> dict:
     credential = authenticated_credential(
-        db, request.cookies.get(SESSION_COOKIE)
+        db, request_session_token(request)
     )
     if credential is None:
         raise HTTPException(
@@ -534,7 +550,7 @@ def change_password(
     db: Session = Depends(get_db),
 ) -> dict:
     credential = authenticated_credential(
-        db, request.cookies.get(SESSION_COOKIE)
+        db, request_session_token(request)
     )
     if credential is None:
         raise HTTPException(
@@ -560,6 +576,7 @@ def change_password(
         "active_sessions": 1,
         "session_days": SESSION_LIFETIME.days,
         "message": "Geslo je spremenjeno, vse druge naprave pa so odjavljene.",
+        **native_session_payload(request, token),
     }
 
 

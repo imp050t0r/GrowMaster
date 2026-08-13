@@ -31,11 +31,15 @@ button { cursor: pointer; }
 .hero p { margin: 0; max-width: 620px; color: #d9eee4; }
 .eyebrow { margin: 0; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase; }
 .status-pill { align-self: flex-start; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 999px; white-space: nowrap; }
+.connection-pill { padding: 5px 9px; border-radius: 999px; font-size: 0.68rem; font-weight: 900; white-space: nowrap; }
+.connection-pill.online { color: #dff8e9; background: rgba(20, 111, 67, 0.48); }
+.connection-pill.offline { color: #ffe4d7; background: rgba(150, 53, 35, 0.55); }
 .account-summary { display: grid; justify-items: end; align-content: start; gap: 8px; font-size: 0.8rem; color: #d9eee4; }
 .account-summary button { padding: 6px 10px; color: white; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.35); border-radius: 9px; font-size: 0.72rem; font-weight: 900; }
 
 .auth-shell { min-height: 100vh; display: grid; grid-template-columns: 1.05fr 0.95fr; align-items: center; gap: clamp(32px, 8vw, 100px); width: min(980px, 100%); margin: 0 auto; padding: 32px 22px; }
 .auth-intro { padding: clamp(8px, 4vw, 42px); }
+.auth-logo { width: 94px; height: 94px; object-fit: contain; filter: drop-shadow(0 10px 14px rgba(20, 60, 47, 0.18)); }
 .auth-intro h1 { margin: 10px 0 14px; font-size: clamp(2.8rem, 8vw, 5.4rem); line-height: 1; }
 .auth-intro > p:last-child { max-width: 520px; color: #587268; font-size: 1.08rem; line-height: 1.6; }
 .auth-card { display: grid; gap: 17px; padding: clamp(24px, 5vw, 40px); background: white; border: 1px solid #dce7df; border-radius: 24px; box-shadow: 0 22px 60px rgba(20, 60, 47, 0.14); }
@@ -44,6 +48,10 @@ button { cursor: pointer; }
 .auth-card .message { margin-top: 0; }
 .auth-hint { margin: 0; color: #6f8179; font-size: 0.8rem; line-height: 1.5; }
 .setup-demo-choice { padding: 11px 12px; background: #f3f7f4; border-radius: 11px; }
+.server-choice { display: grid; gap: 5px; padding-top: 12px; border-top: 1px solid #e1e9e3; }
+.server-choice small { overflow-wrap: anywhere; color: #6f8179; }
+.server-choice .text-button { justify-self: start; padding-left: 0; }
+.offline-banner { position: sticky; top: 80px; z-index: 4; margin-top: 12px; padding: 11px 14px; color: #6f3b12; background: #fff0d4; border: 1px solid #e5bd79; border-radius: 11px; font-size: 0.84rem; font-weight: 750; }
 
 .main-nav {
   position: sticky;
@@ -114,6 +122,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 }
 .primary-button { align-self: end; color: white; background: #237a52; border: 0; }
 .primary-button:hover { background: #195f3f; }
+.primary-button:disabled, .secondary-button:disabled { cursor: wait; opacity: 0.6; }
 .secondary-button { color: #17603f; background: #e8f5ed; border: 1px solid #b9d9c7; }
 .danger-button { color: white; background: #a1372b; border: 0; }
 .danger-button:disabled { cursor: not-allowed; opacity: 0.48; }
@@ -520,11 +529,11 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 @media (max-width: 620px) {
   .hero { align-items: stretch; flex-direction: column; }
   .account-summary { justify-items: start; }
-  .app-shell { padding: 10px 10px 92px; }
+  .app-shell { padding: max(10px, env(safe-area-inset-top)) 10px calc(92px + env(safe-area-inset-bottom)); }
   .hero { padding: 21px; border-radius: 18px; }
   .status-pill { display: none; }
   .panel { padding: 17px; border-radius: 16px; }
-  .main-nav { position: fixed; top: auto; right: 8px; bottom: 8px; left: 8px; margin: 0; }
+  .main-nav { position: fixed; top: auto; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); left: 8px; margin: 0; }
   .main-nav button { display: grid; gap: 1px; min-height: 54px; font-size: 0.72rem; }
   .main-nav button span { font-size: 1.1rem; }
   .planting-form, .task-form, .inline-form, .bed-grid, .metric-grid, .detail-columns, .completion-form, .inventory-grid, .order-form, .quick-sale-form, .planning-form, .plan-grid, .invoice-profile-form, .day-close-form, .purchasing-setup-grid, .purchasing-setup-grid .compact-form, .purchase-order-details, .purchase-line-form, .supply-stock-grid, .supply-usage-form, .labor-entry-form, .labor-breakdown-grid, .farm-expense-fields, .farm-profile-fields { grid-template-columns: 1fr; }
@@ -533,7 +542,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .farm-expense-list article { align-items: flex-start; }
   .day-close-heading, .day-close-history article { align-items: stretch; flex-direction: column; }
   .data-safety-heading, .settings-heading, .automatic-backup-list article { align-items: stretch; flex-direction: column; }
-  .automatic-backup-list article a { justify-content: center; }
+  .automatic-backup-list article a, .automatic-backup-list article button { justify-content: center; }
   .day-close-history article > div:last-child { text-align: left; }
   .day-close-form .section-heading, .day-close-form label:last-of-type, .day-close-form .primary-button, .locked-note { grid-column: 1; }
   .purchasing-setup-grid .section-heading, .purchasing-setup-grid .secondary-button { grid-column: 1; }

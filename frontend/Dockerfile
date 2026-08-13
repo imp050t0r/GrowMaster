@@ -6,6 +6,7 @@ COPY package.json .
 RUN npm install
 
 COPY index.html .
+COPY public ./public
 COPY src ./src
 
 ARG VITE_API_URL=""

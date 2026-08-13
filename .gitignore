@@ -1,5 +1,6 @@
 # Environment
 .env
+.env.remote
 
 # Python
 __pycache__/
@@ -13,6 +14,7 @@ backups/
 # Node
 node_modules/
 dist/
+installer/output/
 
 # Editors
 .vscode/

@@ -31,7 +31,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.14.0",
+            "version": "1.15.0",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -1756,7 +1756,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.14.0"
+        assert production_readiness.json()["version"] == "1.15.0"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(
@@ -1945,6 +1945,36 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert new_login.status_code == 200
         assert new_login.json()["display_name"] == "Vodja kmetije"
+        assert "session_token" not in new_login.json()
+
+        with TestClient(app) as mobile_client:
+            mobile_login = mobile_client.post(
+                "/api/auth/login",
+                json={"password": "Novo varno geslo 2027!"},
+                headers={
+                    "X-GrowMaster-Client": "mobile",
+                    "Origin": "capacitor://localhost",
+                },
+            )
+            assert mobile_login.status_code == 200
+            mobile_token = mobile_login.json()["session_token"]
+            assert len(mobile_token) >= 32
+            mobile_client.cookies.clear()
+            mobile_headers = {
+                "Authorization": f"Bearer {mobile_token}",
+                "X-GrowMaster-Client": "mobile",
+                "Origin": "capacitor://localhost",
+            }
+            mobile_beds = mobile_client.get("/api/beds", headers=mobile_headers)
+            assert mobile_beds.status_code == 200
+            assert mobile_beds.headers["access-control-allow-origin"] == (
+                "capacitor://localhost"
+            )
+            assert mobile_client.get("/api/auth/status", headers=mobile_headers).json()[
+                "authenticated"
+            ] is True
+            assert mobile_client.post("/api/auth/logout", headers=mobile_headers).status_code == 200
+            assert mobile_client.get("/api/beds", headers=mobile_headers).status_code == 401
 
         with SessionLocal() as db:
             for day in range(1, 16):
