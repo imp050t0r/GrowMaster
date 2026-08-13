@@ -97,6 +97,7 @@ from app.schemas import (
     AuthLogin,
     AuthSetup,
     BedCreate,
+    BedSizeUpdate,
     CostCreate,
     CropCreate,
     CropPlanActivate,
@@ -954,6 +955,28 @@ def create_bed(payload: BedCreate, db: Session = Depends(get_db)) -> dict:
         "length_m": bed.length_m,
         "area_m2": bed.area_m2,
         "status": bed.status,
+    }
+
+
+@app.put("/api/beds/{bed_id}/size")
+def update_bed_size(
+    bed_id: int, payload: BedSizeUpdate, db: Session = Depends(get_db)
+) -> dict:
+    bed = db.get(Bed, bed_id)
+    if bed is None or bed.farm_id != DEFAULT_FARM_ID:
+        raise HTTPException(status_code=404, detail="Gredica ne obstaja.")
+    bed.width_m = payload.width_m
+    bed.length_m = payload.length_m
+    db.commit()
+    db.refresh(bed)
+    return {
+        "id": bed.id,
+        "name": bed.name,
+        "width_m": bed.width_m,
+        "length_m": bed.length_m,
+        "area_m2": bed.area_m2,
+        "status": bed.status,
+        "message": f"Velikost gredice {bed.name} je posodobljena.",
     }
 
 

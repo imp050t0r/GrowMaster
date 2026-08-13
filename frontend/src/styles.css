@@ -190,6 +190,12 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .current-cycle span, .current-cycle small { color: #587268; }
 .current-cycle strong { font-size: 1.2rem; }
 .empty-state-box { padding: 18px; color: #5d746a; background: #f3f6f4; border-radius: 13px; }
+.bed-size-form { display: grid; grid-template-columns: 1.1fr repeat(2, minmax(120px, 0.7fr)) 0.8fr auto; align-items: end; gap: 12px; margin-bottom: 15px; padding: 15px; background: #f8fbf9; border: 1px solid #dce7df; border-radius: 14px; }
+.bed-size-form > div:first-child { align-self: center; }
+.bed-size-form > div:first-child strong { display: block; margin-top: 3px; }
+.bed-area-preview { display: grid; align-content: center; gap: 3px; min-height: 46px; }
+.bed-area-preview span { color: #647a70; font-size: 0.76rem; font-weight: 800; }
+.bed-area-preview strong { color: #237a52; }
 .detail-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 22px; }
 .detail-columns h3 { margin-top: 0; }
 .history-row { display: grid; gap: 3px; padding: 11px 0; border-bottom: 1px solid #e5ece7; }
@@ -580,7 +586,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .main-nav { position: fixed; top: auto; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); left: 8px; margin: 0; }
   .main-nav button { display: grid; gap: 1px; min-height: 54px; font-size: 0.72rem; }
   .main-nav button span { font-size: 1.1rem; }
-  .planting-form, .task-form, .inline-form, .bed-grid, .metric-grid, .detail-columns, .completion-form, .inventory-grid, .order-form, .quick-sale-form, .planning-form, .plan-grid, .invoice-profile-form, .day-close-form, .purchasing-setup-grid, .purchasing-setup-grid .compact-form, .purchase-order-details, .purchase-line-form, .supply-stock-grid, .supply-usage-form, .labor-entry-form, .labor-breakdown-grid, .farm-expense-fields, .farm-profile-fields, .crop-catalog-forms, .crop-catalog-grid { grid-template-columns: 1fr; }
+  .planting-form, .task-form, .inline-form, .bed-grid, .metric-grid, .detail-columns, .completion-form, .inventory-grid, .order-form, .quick-sale-form, .planning-form, .plan-grid, .invoice-profile-form, .day-close-form, .purchasing-setup-grid, .purchasing-setup-grid .compact-form, .purchase-order-details, .purchase-line-form, .supply-stock-grid, .supply-usage-form, .labor-entry-form, .labor-breakdown-grid, .farm-expense-fields, .farm-profile-fields, .crop-catalog-forms, .crop-catalog-grid, .bed-size-form { grid-template-columns: 1fr; }
+  .bed-size-form .secondary-button { width: 100%; }
   .farm-profile-fields .wide { grid-column: 1; }
   .farm-expense-fields .wide { grid-column: 1; }
   .farm-expense-list article { align-items: flex-start; }

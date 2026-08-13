@@ -127,6 +127,7 @@ function App() {
     sowing_date: today,
   });
   const [bedForm, setBedForm] = useState({ name: "", width_m: "0.8", length_m: "15" });
+  const [bedSizeForm, setBedSizeForm] = useState({ width_m: "", length_m: "" });
   const [cropForm, setCropForm] = useState({ name: "", family: "", category: "" });
   const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_to_harvest: "" });
   const [taskForm, setTaskForm] = useState({
@@ -544,6 +545,30 @@ function App() {
     try {
       const detail = await apiRequest(`/api/beds/${bedId}`);
       setSelectedBed(detail);
+      setBedSizeForm({ width_m: String(detail.width_m), length_m: String(detail.length_m) });
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function updateBedSize(event) {
+    event.preventDefault();
+    if (!selectedBed) return;
+    clearMessages();
+    try {
+      const updated = await apiRequest(`/api/beds/${selectedBed.id}/size`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          width_m: Number(bedSizeForm.width_m),
+          length_m: Number(bedSizeForm.length_m),
+        }),
+      });
+      await loadData();
+      const detail = await apiRequest(`/api/beds/${selectedBed.id}`);
+      setSelectedBed(detail);
+      setBedSizeForm({ width_m: String(detail.width_m), length_m: String(detail.length_m) });
+      setNotice(updated.message);
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -1131,6 +1156,9 @@ function App() {
           openBed={openBed}
           selectedBed={selectedBed}
           setSelectedBed={setSelectedBed}
+          bedSizeForm={bedSizeForm}
+          setBedSizeForm={setBedSizeForm}
+          updateBedSize={updateBedSize}
           finishPlanting={finishPlanting}
         />
       )}
@@ -1276,7 +1304,8 @@ function DashboardView({ dashboard, beds, setView }) {
   );
 }
 
-function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, setSelectedBed, finishPlanting }) {
+function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, setSelectedBed, bedSizeForm, setBedSizeForm, updateBedSize, finishPlanting }) {
+  const previewArea = Number(bedSizeForm.width_m) * Number(bedSizeForm.length_m);
   return (
     <>
       <section className="panel">
@@ -1308,6 +1337,13 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
       {selectedBed && (
         <section className="panel bed-detail">
           <div className="section-heading"><div><p className="eyebrow">Podrobnosti gredice</p><h2>{selectedBed.name} · {selectedBed.area_m2} m²</h2></div><button className="icon-button" onClick={() => setSelectedBed(null)}>✕</button></div>
+          <form className="bed-size-form" onSubmit={updateBedSize}>
+            <div><p className="eyebrow">Mere gredice</p><strong>Popravi velikost</strong></div>
+            <label>Širina (m)<input type="number" step="0.01" min="0.01" max="100" value={bedSizeForm.width_m} onChange={(event) => setBedSizeForm({ ...bedSizeForm, width_m: event.target.value })} required /></label>
+            <label>Dolžina (m)<input type="number" step="0.01" min="0.01" max="1000" value={bedSizeForm.length_m} onChange={(event) => setBedSizeForm({ ...bedSizeForm, length_m: event.target.value })} required /></label>
+            <div className="bed-area-preview"><span>Nova površina</span><strong>{Number.isFinite(previewArea) ? previewArea.toFixed(2) : "—"} m²</strong></div>
+            <button className="secondary-button" type="submit">SHRANI VELIKOST</button>
+          </form>
           {selectedBed.current_planting ? (
             <div className="current-cycle"><div><span>Trenutno raste</span><strong>{selectedBed.current_planting.crop} {selectedBed.current_planting.variety}</strong><small>{selectedBed.current_planting.sowing_date} → {selectedBed.current_planting.expected_harvest_date}</small></div><button className="secondary-button" onClick={() => finishPlanting(selectedBed.current_planting.id)}>ZAKLJUČI CIKEL</button></div>
           ) : <div className="empty-state-box">Gredica je prazna in pripravljena za setev.</div>}

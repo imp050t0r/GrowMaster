@@ -39,6 +39,11 @@ class BedCreate(BaseModel):
     length_m: float = Field(gt=0, le=1000)
 
 
+class BedSizeUpdate(BaseModel):
+    width_m: float = Field(gt=0, le=100)
+    length_m: float = Field(gt=0, le=1000)
+
+
 class PlantingCreate(BaseModel):
     crop_id: int
     variety_id: int

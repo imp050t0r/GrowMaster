@@ -181,6 +181,19 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert new_bed.status_code == 201
         assert new_bed.json()["area_m2"] == 12.0
+        resized_bed = client.put(
+            f"/api/beds/{new_bed.json()['id']}/size",
+            json={"width_m": 1.2, "length_m": 20},
+        )
+        assert resized_bed.status_code == 200
+        assert resized_bed.json()["area_m2"] == 24.0
+        assert client.get(f"/api/beds/{new_bed.json()['id']}").json()[
+            "length_m"
+        ] == 20
+        assert client.put(
+            f"/api/beds/{new_bed.json()['id']}/size",
+            json={"width_m": 0, "length_m": 20},
+        ).status_code == 422
 
         crop = next(item for item in crops if item["name"] == "Rukola")
         variety = next(item for item in crop["varieties"] if item["name"] == "Astro")
