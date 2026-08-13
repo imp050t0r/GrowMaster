@@ -141,7 +141,7 @@ function App() {
   const [bedForm, setBedForm] = useState({ name: "", width_m: "0.8", length_m: "15" });
   const [bedSizeForm, setBedSizeForm] = useState({ width_m: "", length_m: "" });
   const [cropForm, setCropForm] = useState({ name: "", family: "", category: "" });
-  const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "" });
+  const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "", composition: "" });
   const [taskForm, setTaskForm] = useState({
     title: "",
     task_type: "general",
@@ -546,9 +546,10 @@ function App() {
           days_summer: Number(varietyForm.days_summer),
           days_autumn: Number(varietyForm.days_autumn),
           days_winter: Number(varietyForm.days_winter),
+          composition: varietyForm.composition || null,
         }),
       });
-      setVarietyForm((current) => ({ ...current, name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "" }));
+      setVarietyForm((current) => ({ ...current, name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "", composition: "" }));
       setNotice(`Sorta ${data.name} je dodana.`);
       await loadData();
     } catch (requestError) {
@@ -1376,7 +1377,7 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
 function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm, setVarietyForm, createVariety }) {
   const [catalogQuery, setCatalogQuery] = useState("");
   const normalizedQuery = catalogQuery.trim().toLocaleLowerCase("sl");
-  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.map((variety) => variety.name)].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
+  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.flatMap((variety) => [variety.name, variety.composition || ""])].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
   const categoryOrder = new Map([["Domača", 0], ["Azijska", 1], ["Indijska", 2], ["Baby leaf", 3]]);
   const catalogGroups = Object.entries(visibleCrops.reduce((groups, crop) => {
     const category = crop.category || "Drugo";
@@ -1405,6 +1406,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
               <label>Jesen (dni)<input type="number" min="1" max="730" value={varietyForm.days_autumn} onChange={(event) => setVarietyForm({ ...varietyForm, days_autumn: event.target.value })} placeholder="npr. 55" required /></label>
               <label>Zima (dni)<input type="number" min="1" max="730" value={varietyForm.days_winter} onChange={(event) => setVarietyForm({ ...varietyForm, days_winter: event.target.value })} placeholder="npr. 75" required /></label>
             </div>
+            <label>Sestava mešanice (neobvezno)<textarea maxLength="1000" value={varietyForm.composition} onChange={(event) => setVarietyForm({ ...varietyForm, composition: event.target.value })} placeholder="Npr. mizuna, tatsoi, pak choi ..." /></label>
             <button className="primary-button" type="submit" disabled={!crops.length}>DODAJ SORTO</button>
           </form>
         </div>
@@ -1421,7 +1423,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
                   <article className="crop-catalog-card" key={crop.id}>
                     <div><h3>{crop.name}</h3><span>{crop.family}</span></div>
                     <div className="variety-list">
-                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong><small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small><small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small></span>)}
+                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.composition && <em className="variety-composition"><b>Sestava:</b> {variety.composition}</em>}<small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small><small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small></span>)}
                       {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
                     </div>
                   </article>

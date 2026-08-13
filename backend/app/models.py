@@ -78,6 +78,7 @@ class Variety(Base):
     days_summer: Mapped[int] = mapped_column(Integer)
     days_autumn: Mapped[int] = mapped_column(Integer)
     days_winter: Mapped[int] = mapped_column(Integer)
+    composition: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     crop: Mapped[Crop] = relationship(back_populates="varieties")
 

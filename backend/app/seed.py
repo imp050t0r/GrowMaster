@@ -421,9 +421,32 @@ CROP_DATA = [
         "family": "Mešanica",
         "category": "Baby leaf",
         "varieties": [
-            ("Klasična solatna mešanica", 28, 24, 35, 50),
-            ("Azijska mešanica", 25, 22, 32, 45),
-            ("Pikantna mešanica", 25, 22, 32, 45),
+            (
+                "Klasična solatna mešanica",
+                28,
+                24,
+                35,
+                50,
+                "Zelena in rdeča listna solata, baby špinača, mladi listi "
+                "rdeče pese, blitva in rukola.",
+            ),
+            (
+                "Azijska mešanica",
+                25,
+                22,
+                32,
+                45,
+                "Mizuna, mibuna, tatsoi, mladi pak choi in komatsuna.",
+            ),
+            (
+                "Pikantna mešanica",
+                25,
+                22,
+                32,
+                45,
+                "Divja rukola, azijska gorčica, rdeča mizuna, listna "
+                "redkvica in baby ohrovt.",
+            ),
         ],
     },
     {
@@ -539,16 +562,22 @@ def seed_database(db: Session) -> None:
         elif crop.category in legacy_categories:
             crop.category = legacy_categories[crop.category]
 
-        existing_varieties = {variety.name.casefold() for variety in crop.varieties}
+        existing_varieties = {
+            variety.name.casefold(): variety for variety in crop.varieties
+        }
         for variety_values in item["varieties"]:
             name = variety_values[0]
-            if name.casefold() in existing_varieties:
+            composition = variety_values[5] if len(variety_values) == 6 else None
+            existing_variety = existing_varieties.get(name.casefold())
+            if existing_variety is not None:
+                if composition and not existing_variety.composition:
+                    existing_variety.composition = composition
                 continue
             if len(variety_values) == 2:
                 days_to_harvest = variety_values[1]
                 estimates = estimated_seasonal_days(days_to_harvest)
             else:
-                _, spring, summer, autumn, winter = variety_values
+                _, spring, summer, autumn, winter = variety_values[:5]
                 days_to_harvest = spring
                 estimates = {
                     "spring": spring,
@@ -564,9 +593,10 @@ def seed_database(db: Session) -> None:
                     days_summer=estimates["summer"],
                     days_autumn=estimates["autumn"],
                     days_winter=estimates["winter"],
+                    composition=composition,
                 )
             )
-            existing_varieties.add(name.casefold())
+            existing_varieties[name.casefold()] = crop.varieties[-1]
     db.flush()
 
     if db.scalar(select(Task).limit(1)) is None and farm.name == DEMO_FARM_NAME:

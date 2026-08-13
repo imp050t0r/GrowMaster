@@ -223,6 +223,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .variety-list > span { display: grid; gap: 2px; padding: 7px 9px; color: #5c7167; background: #e9f2ec; border-radius: 9px; font-size: 0.76rem; }
 .variety-list > span strong { color: #254538; font-size: 0.82rem; }
 .variety-list > span small { color: #5c7167; font-size: 0.7rem; white-space: nowrap; }
+.variety-composition { max-width: 360px; margin: 3px 0; color: #35594a; font-size: 0.73rem; font-style: normal; line-height: 1.4; }
 
 .task-list { display: grid; gap: 12px; }
 .task-list.compact { gap: 8px; }

@@ -6,6 +6,7 @@ GrowMaster is a local-first farm management application for professional market 
 
 - crop library with domestic, Asian, Indian and baby-leaf crops and multiple varieties
 - spring, summer, autumn and winter maturity estimates selected from the sowing date
+- visible composition recipes for seed and baby-leaf mixtures
 - mobile dashboard with today's work, active beds and next harvest
 - bed creation, occupancy status, detail view and crop history
 - sowing form: crop, variety, date and bed

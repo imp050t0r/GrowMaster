@@ -69,10 +69,20 @@ def add_seasonal_maturity(connection: Connection) -> None:
         )
 
 
+def add_variety_composition(connection: Connection) -> None:
+    """Add an optional human-readable recipe for seed and baby-leaf mixtures."""
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("varieties")
+    }
+    if "composition" not in existing_columns:
+        connection.execute(text("ALTER TABLE varieties ADD COLUMN composition TEXT"))
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
     Migration("0003_seasonal_maturity", add_seasonal_maturity),
+    Migration("0004_variety_composition", add_variety_composition),
 )
 
 

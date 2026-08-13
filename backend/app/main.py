@@ -146,7 +146,7 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
-APP_VERSION = "1.16.0"
+APP_VERSION = "1.16.1"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
@@ -737,6 +737,7 @@ def create_variety(
             detail="Ta sorta je pri izbrani zelenjavi že dodana.",
         )
     estimates = estimated_seasonal_days(payload.days_to_harvest)
+    composition = payload.composition.strip() if payload.composition else None
     variety = Variety(
         crop_id=crop.id,
         name=name,
@@ -745,6 +746,7 @@ def create_variety(
         days_summer=payload.days_summer or estimates["summer"],
         days_autumn=payload.days_autumn or estimates["autumn"],
         days_winter=payload.days_winter or estimates["winter"],
+        composition=composition or None,
     )
     db.add(variety)
     db.commit()

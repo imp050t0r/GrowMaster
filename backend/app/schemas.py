@@ -14,6 +14,7 @@ class VarietyOut(BaseModel):
     days_summer: int
     days_autumn: int
     days_winter: int
+    composition: str | None
 
 
 class CropOut(BaseModel):
@@ -39,6 +40,7 @@ class VarietyCreate(BaseModel):
     days_summer: int | None = Field(default=None, ge=1, le=730)
     days_autumn: int | None = Field(default=None, ge=1, le=730)
     days_winter: int | None = Field(default=None, ge=1, le=730)
+    composition: str | None = Field(default=None, max_length=1000)
 
 
 class BedCreate(BaseModel):

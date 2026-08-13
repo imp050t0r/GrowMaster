@@ -36,7 +36,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.16.0",
+            "version": "1.16.1",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0003_seasonal_maturity"
-        assert run_migrations() == "0003_seasonal_maturity"
+        assert run_migrations() == "0004_variety_composition"
+        assert run_migrations() == "0004_variety_composition"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 3
+            ) == 4
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -159,6 +159,14 @@ def test_bed_planting_and_task_workflow() -> None:
             "Baby leaf špinača",
             "Baby leaf ohrovt",
         }
+        mixture_crop = next(crop for crop in crops if crop["name"] == "Baby leaf mešanica")
+        classic_mixture = next(
+            variety
+            for variety in mixture_crop["varieties"]
+            if variety["name"] == "Klasična solatna mešanica"
+        )
+        assert "baby špinača" in classic_mixture["composition"]
+        assert "rdeče pese" in classic_mixture["composition"]
         with SessionLocal() as db:
             crop_count = db.scalar(select(func.count()).select_from(Crop))
             variety_count = db.scalar(select(func.count()).select_from(Variety))
@@ -201,10 +209,14 @@ def test_bed_planting_and_task_workflow() -> None:
                 "days_summer": 60,
                 "days_autumn": 95,
                 "days_winter": 120,
+                "composition": "  Testna solata, rukola in špinača.  ",
             },
         )
         assert new_variety.status_code == 201
         assert new_variety.json()["days_to_harvest"] == 80
+        assert new_variety.json()["composition"] == (
+            "Testna solata, rukola in špinača."
+        )
         assert {
             key: new_variety.json()[key]
             for key in (
@@ -1862,7 +1874,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0003_seasonal_maturity"
+        assert data_safety_summary["schema_revision"] == "0004_variety_composition"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["table_count"] == 37
         assert data_safety_summary["record_count"] > 0
@@ -1872,7 +1884,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.16.0"
+        assert production_readiness.json()["version"] == "1.16.1"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(
@@ -1935,8 +1947,22 @@ def test_bed_planting_and_task_workflow() -> None:
             "days_autumn",
             "days_winter",
         } <= set(backup_variety)
+        assert "composition" in backup_variety
 
-        legacy_document = json.loads(portable_backup.content)
+        precomposition_document = json.loads(portable_backup.content)
+        for row in precomposition_document["payload"]["tables"]["varieties"]:
+            row.pop("composition")
+        precomposition_document["checksum_sha256"] = hashlib.sha256(
+            canonical_json(precomposition_document["payload"])
+        ).hexdigest()
+        parsed_precomposition = parse_backup(
+            json.dumps(precomposition_document, ensure_ascii=False).encode("utf-8")
+        )
+        assert parsed_precomposition.rows_by_table["varieties"][0][
+            "composition"
+        ] is None
+
+        legacy_document = json.loads(json.dumps(precomposition_document))
         for row in legacy_document["payload"]["tables"]["varieties"]:
             for field in (
                 "days_spring",

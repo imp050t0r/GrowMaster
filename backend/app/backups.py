@@ -248,26 +248,32 @@ def parse_backup(content: bytes) -> ParsedBackup:
                 f"Podatki tabele {table_name} niso v pričakovani obliki."
             )
         expected_columns = {column.name for column in table.columns}
-        legacy_variety_columns = expected_columns - {
+        seasonal_columns = {
             "days_spring",
             "days_summer",
             "days_autumn",
             "days_winter",
         }
+        allowed_columns = {frozenset(expected_columns)}
+        if table_name == "varieties":
+            allowed_columns.update(
+                {
+                    frozenset(expected_columns - {"composition"}),
+                    frozenset(expected_columns - seasonal_columns),
+                    frozenset(expected_columns - seasonal_columns - {"composition"}),
+                }
+            )
         decoded_rows: list[dict] = []
         for encoded_row in encoded_rows:
             row_columns = set(encoded_row) if isinstance(encoded_row, dict) else set()
-            is_legacy_variety = (
-                table_name == "varieties" and row_columns == legacy_variety_columns
-            )
-            if row_columns != expected_columns and not is_legacy_variety:
+            if frozenset(row_columns) not in allowed_columns:
                 raise BackupValidationError(
                     f"Zapis v tabeli {table_name} nima pričakovanih polj."
                 )
             decoded_row = {
                 key: decode_value(value) for key, value in encoded_row.items()
             }
-            if is_legacy_variety:
+            if table_name == "varieties" and not seasonal_columns <= row_columns:
                 estimates = estimated_seasonal_days(decoded_row["days_to_harvest"])
                 decoded_row.update(
                     {
@@ -277,6 +283,8 @@ def parse_backup(content: bytes) -> ParsedBackup:
                         "days_winter": estimates["winter"],
                     }
                 )
+            if table_name == "varieties" and "composition" not in row_columns:
+                decoded_row["composition"] = None
             decoded_rows.append(decoded_row)
         rows_by_table[table_name] = decoded_rows
         record_count += len(decoded_rows)
