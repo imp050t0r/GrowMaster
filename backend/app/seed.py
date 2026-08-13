@@ -507,6 +507,141 @@ CROP_DATA = [
             ("Dwarf Green Curled", 30, 26, 38, 55),
         ],
     },
+    {
+        "name": "Baby leaf listna solata",
+        "family": "Asteraceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Green Saladbowl", 28, 24, 34, 48),
+            ("Red Saladbowl", 30, 26, 36, 50),
+            ("Tango", 28, 24, 34, 48),
+            ("Red Sails", 30, 26, 36, 50),
+            ("Black Seeded Simpson", 28, 24, 34, 48),
+            ("Marilisa", 30, 26, 36, 50),
+        ],
+    },
+    {
+        "name": "Baby leaf hrastov list",
+        "family": "Asteraceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Garrison", 28, 24, 34, 48),
+            ("Green Oakleaf", 28, 24, 34, 48),
+            ("Red Oakleaf", 30, 26, 36, 50),
+        ],
+    },
+    {
+        "name": "Baby leaf rimska solata",
+        "family": "Asteraceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Parris Island", 30, 26, 36, 50),
+            ("Jericho", 28, 24, 34, 48),
+            ("Outredgeous", 32, 27, 38, 52),
+        ],
+    },
+    {
+        "name": "Baby leaf batavia",
+        "family": "Asteraceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Nevada", 32, 28, 40, 55),
+            ("Maravilla de Verano", 32, 28, 40, 55),
+            ("Leda", 32, 28, 40, 55),
+        ],
+    },
+    {
+        "name": "Baby leaf endivija",
+        "family": "Asteraceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Frisée", 32, 28, 40, 55),
+            ("Dečja glava", 35, 30, 43, 60),
+            ("Wallonne", 38, 32, 46, 65),
+        ],
+    },
+    {
+        "name": "Baby leaf radič",
+        "family": "Asteraceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Tržaški solatnik", 30, 26, 38, 52),
+            ("Palla Rossa", 35, 30, 44, 60),
+            ("Castelfranco", 35, 30, 44, 60),
+        ],
+    },
+    {
+        "name": "Baby leaf blitva",
+        "family": "Amaranthaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Bright Lights", 28, 24, 35, 48),
+            ("Charbell", 25, 22, 32, 45),
+            ("Bright Yellow", 25, 22, 32, 45),
+        ],
+    },
+    {
+        "name": "Baby leaf gorčica",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Red Giant", 25, 21, 31, 43),
+            ("Green Wave", 25, 21, 31, 43),
+            ("Ruby Streaks", 25, 21, 31, 43),
+            ("Wasabina", 25, 21, 31, 43),
+            ("Scarlet Frills", 25, 21, 31, 43),
+        ],
+    },
+    {
+        "name": "Baby leaf mizuna",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Green River", 24, 20, 30, 42),
+            ("Red Kingdom", 25, 21, 31, 43),
+            ("Ember", 25, 21, 31, 43),
+        ],
+    },
+    {
+        "name": "Baby leaf tatsoi",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Koji", 28, 23, 34, 46),
+            ("Red Cloud", 28, 23, 34, 46),
+            ("Tatsoi", 28, 23, 34, 46),
+        ],
+    },
+    {
+        "name": "Baby leaf pak choi",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Rosie", 28, 23, 34, 46),
+            ("Joi Choi", 28, 23, 34, 46),
+            ("Mei Qing Choi", 28, 23, 34, 46),
+        ],
+    },
+    {
+        "name": "Baby leaf komatsuna",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Green River", 25, 21, 31, 43),
+            ("Green Giant", 25, 21, 31, 43),
+            ("Carlton", 27, 23, 33, 45),
+        ],
+    },
+    {
+        "name": "Baby leaf kitajsko zelje",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Tokyo Bekana", 25, 21, 32, 45),
+            ("Michihili", 28, 23, 34, 48),
+            ("Kyoto No. 3", 28, 23, 34, 48),
+        ],
+    },
 ]
 DEMO_FARM_NAME = "GrowMaster Demo Farm"
 

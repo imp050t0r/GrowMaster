@@ -36,7 +36,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.16.1",
+            "version": "1.17.0",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -158,6 +158,29 @@ def test_bed_planting_and_task_workflow() -> None:
             "Mladi listi rdeče pese",
             "Baby leaf špinača",
             "Baby leaf ohrovt",
+            "Baby leaf listna solata",
+            "Baby leaf hrastov list",
+            "Baby leaf rimska solata",
+            "Baby leaf batavia",
+            "Baby leaf endivija",
+            "Baby leaf radič",
+            "Baby leaf blitva",
+            "Baby leaf gorčica",
+            "Baby leaf mizuna",
+            "Baby leaf tatsoi",
+            "Baby leaf pak choi",
+            "Baby leaf komatsuna",
+            "Baby leaf kitajsko zelje",
+        }
+        assert len(baby_leaf_names) >= 20
+        leaf_lettuce = next(
+            crop for crop in crops if crop["name"] == "Baby leaf listna solata"
+        )
+        assert {variety["name"] for variety in leaf_lettuce["varieties"]} >= {
+            "Green Saladbowl",
+            "Red Saladbowl",
+            "Tango",
+            "Red Sails",
         }
         mixture_crop = next(crop for crop in crops if crop["name"] == "Baby leaf mešanica")
         classic_mixture = next(
@@ -1884,7 +1907,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.16.1"
+        assert production_readiness.json()["version"] == "1.17.0"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(
