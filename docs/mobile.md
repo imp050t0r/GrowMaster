@@ -10,6 +10,8 @@ The production frontend includes a manifest, Apple touch icon and a service work
 
 Capacitor wraps the same compiled frontend. On first launch, the user enters the private GrowMaster server URL. Native requests identify themselves with `X-GrowMaster-Client: mobile` and use a revocable 30-day bearer session. Browser clients continue using an HTTP-only, same-site cookie and never receive the bearer token.
 
+The platform workflow publishes an Android debug APK for private testing. A Play Store release requires a protected Android signing key. The iPhone project is compiled without distribution signing in CI; installation outside the PWA requires an Apple Developer account, signing certificate and App Store/TestFlight provisioning.
+
 The server allows only the explicit local Capacitor origins by default. A public deployment must use HTTPS and should set `CORS_ORIGINS` to the exact origins that are needed.
 
 ## Synchronization model
