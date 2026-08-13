@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
 const now = new Date();
 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 const monthStart = `${today.slice(0, 7)}-01`;
@@ -76,6 +76,7 @@ function App() {
   const [invoices, setInvoices] = useState([]);
   const [invoiceProfile, setInvoiceProfile] = useState(null);
   const [dataSafety, setDataSafety] = useState({ daily_backups: [], automatic_backups: [] });
+  const [readiness, setReadiness] = useState({ operational_ready: false, business_documents_ready: false, checks: [] });
   const [account, setAccount] = useState({ display_name: "", active_sessions: 0, session_days: 30 });
   const [farmProfile, setFarmProfile] = useState({ farm_name: "", basic_agriculture_invoice_exemption: true, seller_tax_number: null, seller_address: "", seller_iban: null, seller_registration_number: null, vat_note: null, business_premise_code: "GM", device_code: "01", default_due_days: 14, business_documents_ready: false });
   const [reportStart, setReportStart] = useState(today);
@@ -285,8 +286,14 @@ function App() {
 
   useEffect(() => {
     if (!auth.authenticated || view !== "data") return;
-    apiRequest("/api/system/data-safety")
-      .then(setDataSafety)
+    Promise.all([
+      apiRequest("/api/system/data-safety"),
+      apiRequest("/api/system/readiness"),
+    ])
+      .then(([safetyData, readinessData]) => {
+        setDataSafety(safetyData);
+        setReadiness(readinessData);
+      })
       .catch((loadError) => setError(loadError.message));
   }, [auth.authenticated, view]);
 
@@ -786,7 +793,9 @@ function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Obnovitev ni uspela.");
-      setRestoreFile(null); setRestoreConfirmation(""); setNotice(`${data.message} Povratna kopija: ${data.safety_backup}`); await loadData(); setDataSafety(await apiRequest("/api/system/data-safety"));
+      setRestoreFile(null); setRestoreConfirmation(""); setNotice(`${data.message} Povratna kopija: ${data.safety_backup}`); await loadData();
+      const [safetyData, readinessData] = await Promise.all([apiRequest("/api/system/data-safety"), apiRequest("/api/system/readiness")]);
+      setDataSafety(safetyData); setReadiness(readinessData);
     } catch (requestError) { setError(requestError.message); }
   }
 
@@ -957,7 +966,7 @@ function App() {
           <p>{farmProfile.farm_name ? `${farmProfile.farm_name} · gredice, setve in dnevno delo.` : "Gredice, setve in dnevno delo na enem mestu."}</p>
         </div>
         <div className="account-summary">
-          <span className="status-pill">MVP 1.13</span>
+          <span className="status-pill">MVP 1.14</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
           <button type="button" onClick={logout}>ODJAVA</button>
         </div>
@@ -1096,7 +1105,7 @@ function App() {
           activatePlan={activatePlan} cancelPlan={cancelPlan} start={planStart} setStart={setPlanStart} end={planEnd} setEnd={setPlanEnd} />
       )}
       {view === "data" && (
-        <DataSafetyView status={dataSafety} restoreFile={restoreFile} setRestoreFile={setRestoreFile}
+        <DataSafetyView status={dataSafety} readiness={readiness} restoreFile={restoreFile} setRestoreFile={setRestoreFile}
           confirmation={restoreConfirmation} setConfirmation={setRestoreConfirmation} restoreData={restoreData} />
       )}
       {view === "settings" && (
@@ -1692,14 +1701,18 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
   </>;
 }
 
-function DataSafetyView({ status, restoreFile, setRestoreFile, confirmation, setConfirmation, restoreData }) {
+function DataSafetyView({ status, readiness, restoreFile, setRestoreFile, confirmation, setConfirmation, restoreData }) {
   const backups = status.automatic_backups || [];
   const dailyBackups = status.daily_backups || [];
   const sizeLabel = (bytes) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return <>
     <section className="panel data-safety-heading">
       <div><p className="eyebrow">Varnost podatkov</p><h2>Varnostne kopije in obnovitev</h2><p className="muted">GrowMaster vsak dan med delovanjem shrani novo prenosljivo kopijo. Pred vsako obnovitvijo dodatno ohrani trenutno stanje, zato se lahko vrneš nazaj.</p></div>
-      <span className="data-safe-badge">✓ BAZA PRIPRAVLJENA</span>
+      <span className={`readiness-summary ${readiness.operational_ready ? "ready" : "blocked"}`}>{readiness.operational_ready ? "✓ PRIPRAVLJENO ZA DELO" : "⚠ POTREBEN JE PREGLED"}</span>
+    </section>
+    <section className="panel readiness-panel">
+      <div className="section-heading"><div><p className="eyebrow">Produkcijski pregled</p><h2>Ali je GrowMaster pripravljen?</h2><p className="muted">Ob vsakem obisku se preverijo povezava z bazo, različica podatkov, zapisovanje in veljavnost kopij ter osnovna nastavitev kmetije.</p></div><span>Različica {readiness.version || "—"}</span></div>
+      <div className="readiness-grid">{(readiness.checks || []).map((check) => <article className={`readiness-check ${check.status}`} key={check.key}><span className="readiness-icon">{check.status === "ready" ? "✓" : check.status === "attention" ? "!" : "×"}</span><div><strong>{check.label}</strong><small>{check.detail}</small>{!check.required && <em>Potrebno šele pred prvim računom pravni osebi</em>}</div></article>)}</div>
     </section>
     <section className="metric-grid data-safety-metrics">
       <article className="metric-card"><span>Različica podatkov</span><strong>{status.schema_revision?.split("_")[0] || "—"}</strong><small>nadgradnje se izvedejo samodejno in samo enkrat</small></article>

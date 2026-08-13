@@ -27,6 +27,8 @@ First administrator setup refreshes the current day's file after the real farm n
 
 Daily files can be inspected and downloaded from **Podatki**. Like manual backups, they exclude the password and active sessions. Automatic creation only runs while the backend is running; Docker restarts the backend unless the stack has been deliberately stopped.
 
+The production-readiness panel reopens the newest daily file and verifies its checksum. A missing, damaged or older-than-one-day copy blocks the green readiness state until GrowMaster creates a valid current copy.
+
 ## Controlled restore
 
 The UI requires the exact confirmation `OBNOVI`. Before changing the database, GrowMaster writes a full automatic recovery copy of the current state. It then replaces application data in one database transaction. A failed insert rolls the whole transaction back, leaving the original data unchanged.

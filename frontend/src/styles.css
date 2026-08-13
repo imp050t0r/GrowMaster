@@ -439,6 +439,22 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .data-safety-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .data-safety-heading h2 { margin: 3px 0 8px; }
 .data-safe-badge { flex: 0 0 auto; padding: 8px 11px; color: #17603f; background: #dff3e7; border-radius: 999px; font-size: 0.72rem; font-weight: 900; }
+.readiness-summary { flex: 0 0 auto; padding: 8px 11px; border-radius: 999px; font-size: 0.72rem; font-weight: 900; }
+.readiness-summary.ready { color: #17603f; background: #dff3e7; }
+.readiness-summary.blocked { color: #8a3d24; background: #fbe5db; }
+.readiness-panel { display: grid; gap: 16px; }
+.readiness-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.readiness-check { display: grid; grid-template-columns: auto 1fr; gap: 11px; padding: 13px; border: 1px solid #dce7df; border-radius: 12px; background: #f8fbf9; }
+.readiness-check.ready { border-color: #c8e5d3; background: #f2faf5; }
+.readiness-check.attention { border-color: #ead69b; background: #fffaf0; }
+.readiness-check.blocked { border-color: #edc8bb; background: #fff5f1; }
+.readiness-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; color: white; background: #60756b; font-weight: 900; }
+.readiness-check.ready .readiness-icon { background: #318f63; }
+.readiness-check.attention .readiness-icon { background: #c58a22; }
+.readiness-check.blocked .readiness-icon { background: #b8573c; }
+.readiness-check > div { display: grid; gap: 4px; }
+.readiness-check small { color: #647a70; line-height: 1.4; }
+.readiness-check em { color: #8a5b0b; font-size: 0.72rem; font-style: normal; font-weight: 800; }
 .data-safety-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .data-safety-metrics .metric-card:first-child strong { font-size: 1.35rem; }
 .data-safety-grid { display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 14px; }
@@ -487,6 +503,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .cashflow-summary-grid { grid-template-columns: 1fr; }
   .farm-expense-grid { grid-template-columns: 1fr; }
   .data-safety-grid { grid-template-columns: 1fr; }
+  .readiness-grid { grid-template-columns: 1fr; }
   .settings-grid { grid-template-columns: 1fr; }
   .farm-profile-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .farm-profile-fields .wide { grid-column: span 2; }

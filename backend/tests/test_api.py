@@ -26,6 +26,13 @@ from app.models import Bed, Task  # noqa: E402
 
 def test_bed_planting_and_task_workflow() -> None:
     with TestClient(app) as client:
+        health = client.get("/api/health")
+        assert health.status_code == 200
+        assert health.json() == {
+            "app": "GrowMaster",
+            "status": "running",
+            "version": "1.14.0",
+        }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
             assert prepare_farm_on_first_setup(
@@ -54,6 +61,7 @@ def test_bed_planting_and_task_workflow() -> None:
             "/api/beds", headers={"Origin": "http://localhost:3000"}
         )
         assert protected.status_code == 401
+        assert client.get("/api/system/readiness").status_code == 401
         assert protected.headers["access-control-allow-origin"] == (
             "http://localhost:3000"
         )
@@ -108,6 +116,22 @@ def test_bed_planting_and_task_workflow() -> None:
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
         assert initial_profile.json()["business_documents_ready"] is False
+        initial_readiness = client.get("/api/system/readiness")
+        assert initial_readiness.status_code == 200
+        assert initial_readiness.json()["operational_ready"] is True
+        assert initial_readiness.json()["business_documents_ready"] is False
+        assert {
+            item["key"]: item["status"]
+            for item in initial_readiness.json()["checks"]
+        } == {
+            "database": "ready",
+            "schema": "ready",
+            "backup_storage": "ready",
+            "daily_backup": "ready",
+            "authentication": "ready",
+            "farm_profile": "ready",
+            "business_documents": "attention",
+        }
         beds = client.get("/api/beds").json()
         crops = client.get("/api/crops").json()
         assert len(beds) == 6
@@ -1730,6 +1754,16 @@ def test_bed_planting_and_task_workflow() -> None:
         assert len(data_safety_summary["daily_backups"]) == 1
         assert data_safety_summary["automatic_backups"] == []
 
+        production_readiness = client.get("/api/system/readiness")
+        assert production_readiness.status_code == 200
+        assert production_readiness.json()["version"] == "1.14.0"
+        assert production_readiness.json()["operational_ready"] is True
+        assert production_readiness.json()["business_documents_ready"] is True
+        assert all(
+            item["status"] == "ready"
+            for item in production_readiness.json()["checks"]
+        )
+
         daily_filename = data_safety_summary["daily_backups"][0]["filename"]
         assert daily_filename.startswith("growmaster-daily-")
         with SessionLocal() as db:
@@ -1746,6 +1780,19 @@ def test_bed_planting_and_task_workflow() -> None:
         assert client.get(
             "/api/system/backups/daily/not-a-backup.json"
         ).status_code == 404
+
+        (TEST_BACKUP_DIRECTORY / daily_filename).write_bytes(b"damaged")
+        damaged_readiness = client.get("/api/system/readiness").json()
+        damaged_checks = {
+            item["key"]: item["status"]
+            for item in damaged_readiness["checks"]
+        }
+        assert damaged_readiness["operational_ready"] is False
+        assert damaged_checks["daily_backup"] == "blocked"
+        with SessionLocal() as db:
+            refresh_daily_backup(db)
+        repaired_readiness = client.get("/api/system/readiness").json()
+        assert repaired_readiness["operational_ready"] is True
 
         portable_backup = client.get("/api/system/backups/export")
         assert portable_backup.status_code == 200
