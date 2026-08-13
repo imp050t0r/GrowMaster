@@ -3,6 +3,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.maturity import estimated_seasonal_days
 from app.models import Bed, Crop, Farm, Task, Variety
 
 
@@ -415,6 +416,74 @@ CROP_DATA = [
         "category": "Indijska",
         "varieties": [("CO-4", 40), ("Sadhana", 45)],
     },
+    {
+        "name": "Baby leaf mešanica",
+        "family": "Mešanica",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Klasična solatna mešanica", 28, 24, 35, 50),
+            ("Azijska mešanica", 25, 22, 32, 45),
+            ("Pikantna mešanica", 25, 22, 32, 45),
+        ],
+    },
+    {
+        "name": "Divja rukola",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Sylvetta", 35, 30, 42, 60),
+            ("Selvatica", 38, 32, 45, 65),
+        ],
+    },
+    {
+        "name": "Salatni trpotec",
+        "family": "Plantaginaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Erba Stella", 45, 38, 55, 75),
+            ("Minutina", 45, 38, 55, 75),
+        ],
+    },
+    {
+        "name": "Cikorija",
+        "family": "Asteraceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Catalogna", 55, 48, 65, 90),
+            ("Puntarelle", 65, 55, 75, 100),
+            ("Grumolo Verde", 70, 60, 85, 115),
+        ],
+    },
+    {
+        "name": "Mladi listi rdeče pese",
+        "family": "Amaranthaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Bull's Blood", 25, 22, 32, 45),
+            ("Detroit Baby Leaf", 28, 24, 35, 50),
+            ("Rainbow Mix", 28, 24, 35, 50),
+        ],
+    },
+    {
+        "name": "Baby leaf špinača",
+        "family": "Amaranthaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Matador", 30, 25, 38, 55),
+            ("Palco", 28, 24, 35, 50),
+            ("Space", 28, 24, 35, 50),
+        ],
+    },
+    {
+        "name": "Baby leaf ohrovt",
+        "family": "Brassicaceae",
+        "category": "Baby leaf",
+        "varieties": [
+            ("Nero di Toscana", 30, 26, 38, 55),
+            ("Red Russian", 28, 24, 35, 50),
+            ("Dwarf Green Curled", 30, 26, 38, 55),
+        ],
+    },
 ]
 DEMO_FARM_NAME = "GrowMaster Demo Farm"
 
@@ -451,7 +520,6 @@ def seed_database(db: Session) -> None:
         ).all()
     }
     legacy_categories = {
-        "Baby leaf": "Domača",
         "Asian": "Azijska",
         "Indian": "Indijska",
     }
@@ -466,14 +534,38 @@ def seed_database(db: Session) -> None:
             db.add(crop)
             db.flush()
             existing_crops[crop.name.casefold()] = crop
+        elif crop.category == "Baby leaf" and item["category"] != "Baby leaf":
+            crop.category = item["category"]
         elif crop.category in legacy_categories:
             crop.category = legacy_categories[crop.category]
 
         existing_varieties = {variety.name.casefold() for variety in crop.varieties}
-        for name, days in item["varieties"]:
+        for variety_values in item["varieties"]:
+            name = variety_values[0]
             if name.casefold() in existing_varieties:
                 continue
-            crop.varieties.append(Variety(name=name, days_to_harvest=days))
+            if len(variety_values) == 2:
+                days_to_harvest = variety_values[1]
+                estimates = estimated_seasonal_days(days_to_harvest)
+            else:
+                _, spring, summer, autumn, winter = variety_values
+                days_to_harvest = spring
+                estimates = {
+                    "spring": spring,
+                    "summer": summer,
+                    "autumn": autumn,
+                    "winter": winter,
+                }
+            crop.varieties.append(
+                Variety(
+                    name=name,
+                    days_to_harvest=days_to_harvest,
+                    days_spring=estimates["spring"],
+                    days_summer=estimates["summer"],
+                    days_autumn=estimates["autumn"],
+                    days_winter=estimates["winter"],
+                )
+            )
             existing_varieties.add(name.casefold())
     db.flush()
 

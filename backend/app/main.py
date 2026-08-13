@@ -53,6 +53,11 @@ from app.backups import (
 )
 from app.database import SessionLocal, get_db
 from app.migrations import latest_revision, run_migrations, schema_migrations
+from app.maturity import (
+    estimated_seasonal_days,
+    maturity_days_for_date,
+    maturity_details,
+)
 from app.models import (
     Bed,
     Cost,
@@ -141,7 +146,7 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
-APP_VERSION = "1.15.0"
+APP_VERSION = "1.16.0"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
@@ -731,10 +736,15 @@ def create_variety(
             status_code=409,
             detail="Ta sorta je pri izbrani zelenjavi že dodana.",
         )
+    estimates = estimated_seasonal_days(payload.days_to_harvest)
     variety = Variety(
         crop_id=crop.id,
         name=name,
         days_to_harvest=payload.days_to_harvest,
+        days_spring=payload.days_spring or estimates["spring"],
+        days_summer=payload.days_summer or estimates["summer"],
+        days_autumn=payload.days_autumn or estimates["autumn"],
+        days_winter=payload.days_winter or estimates["winter"],
     )
     db.add(variety)
     db.commit()
@@ -764,6 +774,7 @@ def serialize_planting(planting: Planting) -> dict:
         "expected_harvest_date": planting.expected_harvest_date,
         "status": planting.status,
         "rotation_override": planting.rotation_override,
+        **maturity_details(planting.variety, planting.sowing_date),
     }
 
 
@@ -1115,7 +1126,8 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
         crop_id=crop.id,
         variety_id=variety.id,
         sowing_date=payload.sowing_date,
-        expected_harvest_date=payload.sowing_date + timedelta(days=variety.days_to_harvest),
+        expected_harvest_date=payload.sowing_date
+        + timedelta(days=maturity_days_for_date(variety, payload.sowing_date)),
         rotation_override=payload.override_rotation,
         status="active",
     )
@@ -1135,6 +1147,7 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
         "crop": crop.name,
         "variety": variety.name,
         "expected_harvest_date": planting.expected_harvest_date,
+        **maturity_details(variety, payload.sowing_date),
     }
 
 
@@ -2644,6 +2657,7 @@ def serialize_crop_plan(plan: CropPlan) -> dict:
         "status": plan.status,
         "planting_id": plan.planting_id,
         "notes": plan.notes,
+        **maturity_details(plan.variety, plan.sowing_date),
     }
 
 
@@ -2700,7 +2714,9 @@ def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> 
     for index in range(payload.succession_count):
         offset = timedelta(days=index * payload.succession_interval_days)
         sowing_date = payload.sowing_date + offset
-        harvest_date = sowing_date + timedelta(days=variety.days_to_harvest)
+        harvest_date = sowing_date + timedelta(
+            days=maturity_days_for_date(variety, sowing_date)
+        )
         transplant_date = payload.transplant_date + offset if payload.transplant_date else None
         overlaps = [
             other

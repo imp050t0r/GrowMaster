@@ -22,6 +22,18 @@ const inDays = (days) => {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 };
 
+const maturitySeasonForDate = (dateValue) => {
+  const month = Number(String(dateValue || "").slice(5, 7));
+  if ([3, 4, 5].includes(month)) return { key: "spring", label: "pomlad" };
+  if ([6, 7, 8].includes(month)) return { key: "summer", label: "poletje" };
+  if ([9, 10, 11].includes(month)) return { key: "autumn", label: "jesen" };
+  return { key: "winter", label: "zima" };
+};
+const maturityDaysForDate = (variety, dateValue) => {
+  const season = maturitySeasonForDate(dateValue);
+  return variety?.[`days_${season.key}`] ?? variety?.days_to_harvest ?? "—";
+};
+
 async function downloadProtectedFile(path, filename, openInNewWindow = false) {
   const previewWindow = openInNewWindow ? window.open("", "_blank") : null;
   const response = await apiFetch(path);
@@ -129,7 +141,7 @@ function App() {
   const [bedForm, setBedForm] = useState({ name: "", width_m: "0.8", length_m: "15" });
   const [bedSizeForm, setBedSizeForm] = useState({ width_m: "", length_m: "" });
   const [cropForm, setCropForm] = useState({ name: "", family: "", category: "" });
-  const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_to_harvest: "" });
+  const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "" });
   const [taskForm, setTaskForm] = useState({
     title: "",
     task_type: "general",
@@ -529,10 +541,14 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: varietyForm.name,
-          days_to_harvest: Number(varietyForm.days_to_harvest),
+          days_to_harvest: Number(varietyForm.days_spring),
+          days_spring: Number(varietyForm.days_spring),
+          days_summer: Number(varietyForm.days_summer),
+          days_autumn: Number(varietyForm.days_autumn),
+          days_winter: Number(varietyForm.days_winter),
         }),
       });
-      setVarietyForm((current) => ({ ...current, name: "", days_to_harvest: "" }));
+      setVarietyForm((current) => ({ ...current, name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "" }));
       setNotice(`Sorta ${data.name} je dodana.`);
       await loadData();
     } catch (requestError) {
@@ -1361,7 +1377,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
   const [catalogQuery, setCatalogQuery] = useState("");
   const normalizedQuery = catalogQuery.trim().toLocaleLowerCase("sl");
   const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.map((variety) => variety.name)].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
-  const categoryOrder = new Map([["Domača", 0], ["Azijska", 1], ["Indijska", 2]]);
+  const categoryOrder = new Map([["Domača", 0], ["Azijska", 1], ["Indijska", 2], ["Baby leaf", 3]]);
   const catalogGroups = Object.entries(visibleCrops.reduce((groups, crop) => {
     const category = crop.category || "Drugo";
     return { ...groups, [category]: [...(groups[category] || []), crop] };
@@ -1383,7 +1399,12 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
             <div><p className="eyebrow">Nova sorta</p><h3>Dodaj sorto izbrani zelenjavi</h3></div>
             <label>Zelenjava<select value={varietyForm.crop_id} onChange={(event) => setVarietyForm({ ...varietyForm, crop_id: event.target.value })} required disabled={!crops.length}><option value="">Izberi zelenjavo</option>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
             <label>Ime sorte<input value={varietyForm.name} onChange={(event) => setVarietyForm({ ...varietyForm, name: event.target.value })} placeholder="npr. Volovsko srce" required /></label>
-            <label>Število dni do žetve<input type="number" min="1" max="730" value={varietyForm.days_to_harvest} onChange={(event) => setVarietyForm({ ...varietyForm, days_to_harvest: event.target.value })} placeholder="npr. 80" required /></label>
+            <div className="seasonal-maturity-fields">
+              <label>Pomlad (dni)<input type="number" min="1" max="730" value={varietyForm.days_spring} onChange={(event) => setVarietyForm({ ...varietyForm, days_spring: event.target.value })} placeholder="npr. 45" required /></label>
+              <label>Poletje (dni)<input type="number" min="1" max="730" value={varietyForm.days_summer} onChange={(event) => setVarietyForm({ ...varietyForm, days_summer: event.target.value })} placeholder="npr. 35" required /></label>
+              <label>Jesen (dni)<input type="number" min="1" max="730" value={varietyForm.days_autumn} onChange={(event) => setVarietyForm({ ...varietyForm, days_autumn: event.target.value })} placeholder="npr. 55" required /></label>
+              <label>Zima (dni)<input type="number" min="1" max="730" value={varietyForm.days_winter} onChange={(event) => setVarietyForm({ ...varietyForm, days_winter: event.target.value })} placeholder="npr. 75" required /></label>
+            </div>
             <button className="primary-button" type="submit" disabled={!crops.length}>DODAJ SORTO</button>
           </form>
         </div>
@@ -1400,7 +1421,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
                   <article className="crop-catalog-card" key={crop.id}>
                     <div><h3>{crop.name}</h3><span>{crop.family}</span></div>
                     <div className="variety-list">
-                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.days_to_harvest} dni</span>)}
+                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong><small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small><small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small></span>)}
                       {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
                     </div>
                   </article>
@@ -1423,7 +1444,7 @@ function PlantingView({ crops, beds, plantings, form, setForm, selectedCrop, cha
         <div className="section-heading"><div><p className="eyebrow">Načrt setve</p><h2>Dodaj novo setev</h2></div></div>
         <form className="planting-form" onSubmit={(event) => { event.preventDefault(); savePlanting(false); }}>
           <label>Kultura<select value={form.crop_id} onChange={changeCrop} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
-          <label>Sorta<select value={form.variety_id} onChange={(event) => setForm({ ...form, variety_id: event.target.value })} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name} · {variety.days_to_harvest} dni</option>)}</select></label>
+          <label>Sorta<select value={form.variety_id} onChange={(event) => setForm({ ...form, variety_id: event.target.value })} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name} · {maturityDaysForDate(variety, form.sowing_date)} dni ({maturitySeasonForDate(form.sowing_date).label})</option>)}</select></label>
           <label>Datum setve<input type="date" value={form.sowing_date} onChange={(event) => setForm({ ...form, sowing_date: event.target.value })} required /></label>
           <label>Gredica<select value={form.bed_id} onChange={(event) => { setForm({ ...form, bed_id: event.target.value }); setRotationWarning(null); }} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.status === "empty" ? "prazna" : "zasedena"} · {bed.area_m2} m²</option>)}</select></label>
           <button className="primary-button" type="submit">DODAJ SETEV</button>
@@ -1918,7 +1939,7 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
       <form className="planning-form" onSubmit={createPlan}>
         <label>Gredica<select value={form.bed_id} onChange={(e) => setForm({ ...form, bed_id: e.target.value })} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.area_m2} m²</option>)}</select></label>
         <label>Kultura<select value={form.crop_id} onChange={changeCrop} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
-        <label>Sorta<select value={form.variety_id} onChange={(e) => setForm({ ...form, variety_id: e.target.value })} required>{(selectedCrop?.varieties || []).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.days_to_harvest} dni</option>)}</select></label>
+        <label>Sorta<select value={form.variety_id} onChange={(e) => setForm({ ...form, variety_id: e.target.value })} required>{(selectedCrop?.varieties || []).map((item) => <option key={item.id} value={item.id}>{item.name} · {maturityDaysForDate(item, form.sowing_date)} dni ({maturitySeasonForDate(form.sowing_date).label})</option>)}</select></label>
         <label>Setev<input type="date" value={form.sowing_date} onChange={(e) => setForm({ ...form, sowing_date: e.target.value })} required /></label>
         <label>Presajanje<input type="date" value={form.transplant_date} onChange={(e) => setForm({ ...form, transplant_date: e.target.value })} /></label>
         <label>Pričakovano (kg)<input type="number" min="0.1" step="0.1" value={form.expected_yield_kg} onChange={(e) => setForm({ ...form, expected_yield_kg: e.target.value })} required /></label>

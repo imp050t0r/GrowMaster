@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -14,8 +16,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
 
 from app.backups import (  # noqa: E402
+    canonical_json,
     ensure_daily_backup,
     list_daily_backups,
+    parse_backup,
     refresh_daily_backup,
 )
 from app.database import SessionLocal, engine  # noqa: E402
@@ -32,7 +36,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.15.0",
+            "version": "1.16.0",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -107,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0002_authentication"
-        assert run_migrations() == "0002_authentication"
+        assert run_migrations() == "0003_seasonal_maturity"
+        assert run_migrations() == "0003_seasonal_maturity"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 2
+            ) == 3
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -141,6 +145,19 @@ def test_bed_planting_and_task_workflow() -> None:
             "Domača",
             "Azijska",
             "Indijska",
+            "Baby leaf",
+        }
+        baby_leaf_names = {
+            crop["name"] for crop in crops if crop["category"] == "Baby leaf"
+        }
+        assert baby_leaf_names >= {
+            "Baby leaf mešanica",
+            "Divja rukola",
+            "Salatni trpotec",
+            "Cikorija",
+            "Mladi listi rdeče pese",
+            "Baby leaf špinača",
+            "Baby leaf ohrovt",
         }
         with SessionLocal() as db:
             crop_count = db.scalar(select(func.count()).select_from(Crop))
@@ -177,10 +194,31 @@ def test_bed_planting_and_task_workflow() -> None:
         ).status_code == 422
         new_variety = client.post(
             f"/api/crops/{new_crop.json()['id']}/varieties",
-            json={"name": "Testna sorta", "days_to_harvest": 80},
+            json={
+                "name": "Testna sorta",
+                "days_to_harvest": 80,
+                "days_spring": 80,
+                "days_summer": 60,
+                "days_autumn": 95,
+                "days_winter": 120,
+            },
         )
         assert new_variety.status_code == 201
         assert new_variety.json()["days_to_harvest"] == 80
+        assert {
+            key: new_variety.json()[key]
+            for key in (
+                "days_spring",
+                "days_summer",
+                "days_autumn",
+                "days_winter",
+            )
+        } == {
+            "days_spring": 80,
+            "days_summer": 60,
+            "days_autumn": 95,
+            "days_winter": 120,
+        }
         assert client.post(
             f"/api/crops/{new_crop.json()['id']}/varieties",
             json={"name": "testna sorta", "days_to_harvest": 90},
@@ -225,6 +263,10 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert planting.status_code == 201
         assert "tri opravila" in planting.json()["message"]
+        assert planting.json()["maturity_season"] == "summer"
+        assert planting.json()["maturity_season_label"] == "poletje"
+        assert planting.json()["maturity_days"] == variety["days_summer"]
+        assert planting.json()["expected_harvest_date"] == "2026-09-06"
 
         detail = client.get(f"/api/beds/{bed['id']}")
         assert detail.status_code == 200
@@ -628,6 +670,13 @@ def test_bed_planting_and_task_workflow() -> None:
         assert plan_series.status_code == 201
         assert len(plan_series.json()["plans"]) == 2
         assert plan_series.json()["warnings"]
+        assert plan_series.json()["plans"][0]["maturity_season"] == "autumn"
+        assert plan_series.json()["plans"][0]["maturity_days"] == variety[
+            "days_autumn"
+        ]
+        assert plan_series.json()["plans"][0]["expected_harvest_date"] == (
+            "2026-10-30"
+        )
 
         calendar = client.get(
             "/api/planning/calendar?start=2026-09-20&end=2026-11-30"
@@ -1813,7 +1862,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0002_authentication"
+        assert data_safety_summary["schema_revision"] == "0003_seasonal_maturity"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["table_count"] == 37
         assert data_safety_summary["record_count"] > 0
@@ -1823,7 +1872,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.15.0"
+        assert production_readiness.json()["version"] == "1.16.0"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(
@@ -1879,6 +1928,30 @@ def test_bed_planting_and_task_workflow() -> None:
         assert len(backup_document["payload"]["tables"]) == 37
         assert "admin_credentials" not in backup_document["payload"]["tables"]
         assert "auth_sessions" not in backup_document["payload"]["tables"]
+        backup_variety = backup_document["payload"]["tables"]["varieties"][0]
+        assert {
+            "days_spring",
+            "days_summer",
+            "days_autumn",
+            "days_winter",
+        } <= set(backup_variety)
+
+        legacy_document = json.loads(portable_backup.content)
+        for row in legacy_document["payload"]["tables"]["varieties"]:
+            for field in (
+                "days_spring",
+                "days_summer",
+                "days_autumn",
+                "days_winter",
+            ):
+                row.pop(field)
+        legacy_document["checksum_sha256"] = hashlib.sha256(
+            canonical_json(legacy_document["payload"])
+        ).hexdigest()
+        parsed_legacy = parse_backup(
+            json.dumps(legacy_document, ensure_ascii=False).encode("utf-8")
+        )
+        assert parsed_legacy.rows_by_table["varieties"][0]["days_winter"] > 0
 
         assert client.post(
             "/api/system/backups/restore?confirmation=NAPAČNO",

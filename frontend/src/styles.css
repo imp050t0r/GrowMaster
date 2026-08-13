@@ -208,6 +208,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .crop-catalog-forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .catalog-form { display: grid; align-content: start; gap: 12px; padding: 17px; background: #f8fbf9; border: 1px solid #dce7df; border-radius: 14px; }
 .catalog-form h3 { margin: 3px 0 0; }
+.seasonal-maturity-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .catalog-search { width: min(260px, 100%); }
 .crop-catalog-groups { display: grid; gap: 24px; }
 .crop-category-section { display: grid; gap: 11px; }
@@ -221,6 +222,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .variety-list { display: flex; flex-wrap: wrap; gap: 7px; }
 .variety-list > span { display: grid; gap: 2px; padding: 7px 9px; color: #5c7167; background: #e9f2ec; border-radius: 9px; font-size: 0.76rem; }
 .variety-list > span strong { color: #254538; font-size: 0.82rem; }
+.variety-list > span small { color: #5c7167; font-size: 0.7rem; white-space: nowrap; }
 
 .task-list { display: grid; gap: 12px; }
 .task-list.compact { gap: 8px; }
@@ -644,6 +646,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .section-heading { align-items: center; }
   .section-heading:has(.catalog-search) { align-items: stretch; flex-direction: column; }
   .catalog-search { width: 100%; }
+  .seasonal-maturity-fields { grid-template-columns: 1fr; }
   .current-cycle { align-items: stretch; flex-direction: column; }
   .task-main { grid-template-columns: auto 1fr; }
   .task-state { grid-column: 2; justify-self: start; }

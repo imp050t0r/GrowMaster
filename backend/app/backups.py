@@ -13,6 +13,7 @@ from sqlalchemy import Integer, func, select, text
 from sqlalchemy.orm import Session
 
 from app.database import Base
+from app.maturity import estimated_seasonal_days
 from app.migrations import latest_revision
 import app.models  # noqa: F401  Ensures every mapped table is registered.
 
@@ -247,15 +248,36 @@ def parse_backup(content: bytes) -> ParsedBackup:
                 f"Podatki tabele {table_name} niso v pričakovani obliki."
             )
         expected_columns = {column.name for column in table.columns}
+        legacy_variety_columns = expected_columns - {
+            "days_spring",
+            "days_summer",
+            "days_autumn",
+            "days_winter",
+        }
         decoded_rows: list[dict] = []
         for encoded_row in encoded_rows:
-            if not isinstance(encoded_row, dict) or set(encoded_row) != expected_columns:
+            row_columns = set(encoded_row) if isinstance(encoded_row, dict) else set()
+            is_legacy_variety = (
+                table_name == "varieties" and row_columns == legacy_variety_columns
+            )
+            if row_columns != expected_columns and not is_legacy_variety:
                 raise BackupValidationError(
                     f"Zapis v tabeli {table_name} nima pričakovanih polj."
                 )
-            decoded_rows.append(
-                {key: decode_value(value) for key, value in encoded_row.items()}
-            )
+            decoded_row = {
+                key: decode_value(value) for key, value in encoded_row.items()
+            }
+            if is_legacy_variety:
+                estimates = estimated_seasonal_days(decoded_row["days_to_harvest"])
+                decoded_row.update(
+                    {
+                        "days_spring": estimates["spring"],
+                        "days_summer": estimates["summer"],
+                        "days_autumn": estimates["autumn"],
+                        "days_winter": estimates["winter"],
+                    }
+                )
+            decoded_rows.append(decoded_row)
         rows_by_table[table_name] = decoded_rows
         record_count += len(decoded_rows)
 
