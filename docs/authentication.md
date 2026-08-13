@@ -22,7 +22,7 @@ A password change deletes every existing session before creating one replacement
 
 ## Local HTTP and HTTPS
 
-The default Docker setup is intended for the same computer and uses `COOKIE_SECURE=false` because `http://localhost` has no TLS. Do not publish ports 3000, 8000 or 5432 directly to the internet.
+The default Docker setup is intended for the same computer and uses `COOKIE_SECURE=false` because `http://localhost` has no TLS. Only the Nginx frontend is published on port 3000; the backend and PostgreSQL stay inside the Docker network. Do not publish any GrowMaster port directly to the internet.
 
 If GrowMaster is exposed to other devices, place it behind an HTTPS reverse proxy, restrict network access, set `COOKIE_SECURE=true`, and use a trusted certificate. The frontend and API origins must remain explicitly allowed by the backend CORS configuration.
 

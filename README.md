@@ -79,6 +79,8 @@ GrowMaster is a local-first farm management application for professional market 
 - seasonal crop plans with succession sowings and activation into field work
 - calendar for sowing, transplanting, harvest, tasks and deliveries
 - crop forecast comparing current stock, planned yield and confirmed demand
+- in-app production-readiness checks for the database, schema, backups and farm setup
+- production frontend image with Nginx, same-origin API proxying and service health checks
 - PostgreSQL, FastAPI and React/Vite in Docker Compose
 
 ## Start
@@ -91,8 +93,9 @@ docker compose up --build
 Open:
 
 - application: http://localhost:3000
-- API documentation: http://localhost:8000/docs
-- API health: http://localhost:8000/api/health
+- API health through the application proxy: http://localhost:3000/api/health
+
+Before entering real data, replace the sample database password in both relevant lines of `.env`. Then open **Podatki** and confirm that the production-readiness panel is green. Business-invoice details are deliberately shown as optional until the first sale to a legal entity.
 
 ## Core rule
 
@@ -100,9 +103,10 @@ GrowMaster may recommend and warn, but the user makes the final decision. A rota
 
 ## Validation
 
-GitHub Actions compiles the backend, runs the complete farm-to-season-plan, task/labor-cost, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing, supplier-purchasing, material-usage, supplier-payment, general-farm-expense, seasonal-profitability and daily/full backup/restore API workflow test and builds the production frontend.
+GitHub Actions compiles the backend, runs the complete farm-to-season-plan, task/labor-cost, multi-item direct-sale/price-list, invoice/PDF/credit-note/refund, sales-report, receivables, cash-flow, immutable daily-closing, supplier-purchasing, material-usage, supplier-payment, general-farm-expense, seasonal-profitability and daily/full backup/restore API workflow test, builds the frontend, and validates both production Docker images.
 
 Operational and fiscal limitations of the invoice module are documented in [docs/invoices.md](docs/invoices.md).
 Database upgrades, portable backups and recovery behavior are documented in [docs/data-safety.md](docs/data-safety.md).
 Local password setup, sessions and deployment guidance are documented in [docs/authentication.md](docs/authentication.md).
 First-use demo handling and the consolidated farm profile are documented in [docs/onboarding.md](docs/onboarding.md).
+The production startup and readiness checklist are documented in [docs/production.md](docs/production.md).

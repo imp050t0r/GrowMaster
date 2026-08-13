@@ -1,7 +1,7 @@
 import asyncio
 import csv
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import io
 import logging
@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import delete, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import (
@@ -36,6 +36,7 @@ from app.backups import (
     BackupRestoreError,
     BackupValidationError,
     automatic_backup_path,
+    backup_storage_status,
     create_backup_bytes,
     daily_backup_path,
     database_summary,
@@ -48,7 +49,7 @@ from app.backups import (
     write_automatic_backup,
 )
 from app.database import SessionLocal, get_db
-from app.migrations import run_migrations
+from app.migrations import latest_revision, run_migrations, schema_migrations
 from app.models import (
     Bed,
     Cost,
@@ -133,6 +134,7 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
+APP_VERSION = "1.14.0"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
@@ -254,7 +256,7 @@ async def lifespan(_: FastAPI):
         await backup_task
 
 
-app = FastAPI(title="GrowMaster API", version="1.13.0", lifespan=lifespan)
+app = FastAPI(title="GrowMaster API", version=APP_VERSION, lifespan=lifespan)
 PUBLIC_API_PATHS = {
     "/api/health",
     "/api/auth/status",
@@ -328,8 +330,17 @@ def reauthenticate(
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"app": "GrowMaster", "status": "running"}
+def health(db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        database_ready = db.scalar(select(1)) == 1
+    except SQLAlchemyError:
+        database_ready = False
+    if not database_ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Podatkovna baza ni dosegljiva.",
+        )
+    return {"app": "GrowMaster", "status": "running", "version": APP_VERSION}
 
 
 @app.get("/api/auth/status")
@@ -3040,6 +3051,140 @@ def serialize_farm_profile(db: Session) -> dict:
         "business_documents_ready": bool(
             settings.seller_tax_number and profile.seller_address.strip()
         ),
+    }
+
+
+def readiness_check(
+    key: str,
+    label: str,
+    ready: bool,
+    detail: str,
+    *,
+    required: bool = True,
+) -> dict:
+    return {
+        "key": key,
+        "label": label,
+        "status": "ready" if ready else ("blocked" if required else "attention"),
+        "detail": detail,
+        "required": required,
+    }
+
+
+@app.get("/api/system/readiness")
+def system_readiness(db: Session = Depends(get_db)) -> dict:
+    database_ready = db.scalar(select(1)) == 1
+    applied_revisions = set(
+        db.execute(select(schema_migrations.c.revision)).scalars()
+    )
+    schema_ready = latest_revision() in applied_revisions
+    storage = backup_storage_status()
+
+    daily_backups = list_daily_backups()
+    latest_daily = daily_backups[0] if daily_backups else None
+    daily_ready = False
+    daily_detail = "Samodejna dnevna kopija še ne obstaja."
+    if latest_daily is not None:
+        try:
+            latest_path = daily_backup_path(latest_daily["filename"])
+            if latest_path is None:
+                raise BackupValidationError("Datoteka ne obstaja.")
+            parse_backup(latest_path.read_bytes())
+            backup_date = date.fromisoformat(latest_daily["backup_date"])
+            backup_age = (datetime.now(timezone.utc).date() - backup_date).days
+            daily_ready = 0 <= backup_age <= 1
+            daily_detail = (
+                f"Zadnja preverjena kopija: {latest_daily['backup_date']}."
+                if daily_ready
+                else "Zadnja dnevna kopija je starejša od enega dne."
+            )
+        except (BackupValidationError, OSError, ValueError):
+            daily_detail = "Zadnje dnevne kopije ni mogoče varno preveriti."
+
+    credential_ready = get_credential(db) is not None
+    farm = db.get(Farm, DEFAULT_FARM_ID)
+    farm_ready = bool(
+        farm and farm.name.strip() and farm.name != DEMO_FARM_NAME
+    )
+    sales_settings = db.get(SalesSettings, DEFAULT_FARM_ID)
+    invoice_profile = db.get(InvoiceProfile, DEFAULT_FARM_ID)
+    business_documents_ready = bool(
+        sales_settings
+        and sales_settings.seller_tax_number
+        and invoice_profile
+        and invoice_profile.seller_address.strip()
+    )
+
+    checks = [
+        readiness_check(
+            "database",
+            "Podatkovna baza",
+            database_ready,
+            "Povezava s podatkovno bazo deluje.",
+        ),
+        readiness_check(
+            "schema",
+            "Različica podatkov",
+            schema_ready,
+            (
+                f"Uporabljena je trenutna različica {latest_revision()}."
+                if schema_ready
+                else "Podatkovna baza nima trenutne različice."
+            ),
+        ),
+        readiness_check(
+            "backup_storage",
+            "Shranjevanje kopij",
+            storage["ok"],
+            storage["detail"],
+        ),
+        readiness_check(
+            "daily_backup",
+            "Dnevna varnostna kopija",
+            daily_ready,
+            daily_detail,
+        ),
+        readiness_check(
+            "authentication",
+            "Skrbniški dostop",
+            credential_ready,
+            (
+                "Skrbniško geslo je nastavljeno."
+                if credential_ready
+                else "Dokončajte prvo nastavitev skrbniškega dostopa."
+            ),
+        ),
+        readiness_check(
+            "farm_profile",
+            "Profil kmetije",
+            farm_ready,
+            (
+                f"Aktivna kmetija: {farm.name}."
+                if farm_ready
+                else "Vnesite pravi naziv kmetije."
+            ),
+        ),
+        readiness_check(
+            "business_documents",
+            "Računi pravnim osebam",
+            business_documents_ready,
+            (
+                "Davčna številka in naslov prodajalca sta vnesena."
+                if business_documents_ready
+                else "Neobvezno do prvega računa pravni osebi: dopolnite davčno številko in naslov."
+            ),
+            required=False,
+        ),
+    ]
+    operational_ready = all(
+        item["status"] == "ready" for item in checks if item["required"]
+    )
+    return {
+        "version": APP_VERSION,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "operational_ready": operational_ready,
+        "business_documents_ready": business_documents_ready,
+        "checks": checks,
     }
 
 

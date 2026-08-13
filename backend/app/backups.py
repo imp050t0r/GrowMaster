@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import tempfile
 
 from sqlalchemy import Integer, func, select, text
 from sqlalchemy.orm import Session
@@ -48,6 +49,39 @@ class ParsedBackup:
 
 def backup_directory() -> Path:
     return Path(os.getenv("BACKUP_DIR", "backups"))
+
+
+def backup_storage_status() -> dict:
+    """Verify that the configured backup directory accepts an atomic local write."""
+    directory = backup_directory()
+    probe_path: Path | None = None
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=directory,
+            prefix=".growmaster-storage-check-",
+            delete=False,
+        ) as probe:
+            probe.write(b"growmaster")
+            probe.flush()
+            os.fsync(probe.fileno())
+            probe_path = Path(probe.name)
+        probe_path.unlink()
+        return {
+            "ok": True,
+            "detail": "Mapa za varnostne kopije je zapisljiva.",
+        }
+    except OSError:
+        return {
+            "ok": False,
+            "detail": "Mapa za varnostne kopije ni zapisljiva.",
+        }
+    finally:
+        if probe_path is not None:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def backup_tables() -> list:
