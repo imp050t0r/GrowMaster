@@ -21,6 +21,49 @@ function Show-GrowMasterMessage([string]$Message, [string]$Title = "GrowMaster")
     [System.Windows.MessageBox]::Show($Message, $Title) | Out-Null
 }
 
+function Get-EnvironmentValue([string]$Path, [string]$Name) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    foreach ($line in [IO.File]::ReadAllLines($Path)) {
+        if ($line -match ('^\s*' + [Regex]::Escape($Name) + '\s*=\s*(.*)$')) {
+            $value = $Matches[1].Trim()
+            if ($value.Length -ge 2 -and $value[0] -eq '"' -and $value[$value.Length - 1] -eq '"') {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            return $value.Replace('$$', '$').Replace('\"', '"')
+        }
+    }
+    return $null
+}
+
+function Ensure-StorageMetadata {
+    if (-not (Test-Path -LiteralPath $envFile)) { return }
+    $linesToAdd = @()
+    if ($null -eq (Get-EnvironmentValue $envFile "GROWMASTER_WINDOWS_INSTALL")) {
+        $linesToAdd += "GROWMASTER_WINDOWS_INSTALL=true"
+    }
+    if ($null -eq (Get-EnvironmentValue $envFile "GROWMASTER_DATA_ROOT")) {
+        $databaseSource = Get-EnvironmentValue $envFile "POSTGRES_DATA_SOURCE"
+        $backupSource = Get-EnvironmentValue $envFile "BACKUP_DATA_SOURCE"
+        if (
+            -not [string]::IsNullOrWhiteSpace($databaseSource) -and
+            -not [string]::IsNullOrWhiteSpace($backupSource) -and
+            [IO.Path]::IsPathRooted($databaseSource) -and
+            [IO.Path]::IsPathRooted($backupSource)
+        ) {
+            $databaseParent = [IO.Path]::GetFullPath((Split-Path -Parent $databaseSource)).TrimEnd('\', '/')
+            $backupParent = [IO.Path]::GetFullPath((Split-Path -Parent $backupSource)).TrimEnd('\', '/')
+            if ([string]::Equals($databaseParent, $backupParent, [StringComparison]::OrdinalIgnoreCase)) {
+                $rootSource = $databaseParent.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
+                $linesToAdd += "GROWMASTER_DATA_ROOT=`"$rootSource`""
+            }
+        }
+    }
+    if ($linesToAdd.Count -gt 0) {
+        $linesToAdd | Add-Content -LiteralPath $envFile -Encoding UTF8
+        Write-LauncherLog "Added Windows storage metadata to the private environment file."
+    }
+}
+
 function Find-DockerExecutable {
     $command = Get-Command docker.exe -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
@@ -46,6 +89,7 @@ function Ensure-PrivateEnvironment {
     New-Item -ItemType Directory -Path $backupStorage -Force | Out-Null
     $databaseSource = $databaseStorage.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
     $backupSource = $backupStorage.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
+    $rootSource = $storageRoot.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
     $random = New-Object byte[] 32
     $randomGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
     try {
@@ -61,6 +105,8 @@ function Ensure-PrivateEnvironment {
         "DATABASE_URL=postgresql+psycopg://growmaster:$password@database:5432/growmaster",
         "POSTGRES_DATA_SOURCE=`"$databaseSource`"",
         "BACKUP_DATA_SOURCE=`"$backupSource`"",
+        "GROWMASTER_DATA_ROOT=`"$rootSource`"",
+        "GROWMASTER_WINDOWS_INSTALL=true",
         "BACKUP_DIR=/data/backups",
         "COOKIE_SECURE=false",
         "CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost,https://localhost,capacitor://localhost"
@@ -80,6 +126,7 @@ try {
     }
 
     Ensure-PrivateEnvironment
+    Ensure-StorageMetadata
     $desktopCandidates = @(
         (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
         (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\Docker Desktop.exe")

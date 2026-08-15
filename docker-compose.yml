@@ -20,6 +20,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://growmaster:change-me@database:5432/growmaster}
       BACKUP_DIR: ${BACKUP_DIR:-/data/backups}
+      GROWMASTER_DATA_ROOT: ${GROWMASTER_DATA_ROOT:-}
+      GROWMASTER_WINDOWS_INSTALL: ${GROWMASTER_WINDOWS_INSTALL:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost,https://localhost,capacitor://localhost}
     volumes:

@@ -28,7 +28,11 @@ jobs:
           $errors = @()
           [System.Management.Automation.Language.Parser]::ParseFile("installer/Start-GrowMaster.ps1", [ref]$null, [ref]$errors) | Out-Null
           [System.Management.Automation.Language.Parser]::ParseFile("installer/Stop-GrowMaster.ps1", [ref]$null, [ref]$errors) | Out-Null
+          [System.Management.Automation.Language.Parser]::ParseFile("installer/Move-GrowMasterData.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count) { $errors | Format-List | Out-String | Write-Error }
+      - name: Test data-folder migration helpers on Windows PowerShell 5.1
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "installer/Move-GrowMasterData.ps1" -SelfTest
       - name: Validate Windows PowerShell 5.1 cryptography
         shell: powershell
         run: |

@@ -1,6 +1,6 @@
 # Data safety
 
-GrowMaster keeps its PostgreSQL data and automatic backup files in separate Docker volumes. The **Podatki** screen provides scheduled daily copies, a portable manual backup and a controlled restore workflow.
+GrowMaster keeps its PostgreSQL data and automatic backup files in separate persistent locations. The Windows installer uses `database` and `backups` directories under the location selected by the user; older installations can continue using Docker-managed volumes. The **Podatki** screen provides storage relocation, scheduled daily copies, a portable manual backup and a controlled restore workflow.
 
 ## Schema upgrades
 
@@ -33,13 +33,13 @@ The production-readiness panel reopens the newest daily file and verifies its ch
 
 The UI requires the exact confirmation `OBNOVI`. Before changing the database, GrowMaster writes a full automatic recovery copy of the current state. It then replaces application data in one database transaction. A failed insert rolls the whole transaction back, leaving the original data unchanged.
 
-The ten newest automatic recovery copies are retained in the `growmaster_backups` Docker volume and can be downloaded from the **Podatki** screen. PostgreSQL identity sequences are moved to the restored maximum identifiers so new records continue safely.
+The ten newest automatic recovery copies are retained in the configured `backups` storage and can be downloaded from the **Podatki** screen. PostgreSQL identity sequences are moved to the restored maximum identifiers so new records continue safely.
 
 ## Operator recommendations
 
 - Regularly download one of the daily or manual backups and keep at least one copy outside the computer running GrowMaster.
 - Keep backup files private: they can contain customer, invoice and financial data and are not encrypted.
 - Download the newest automatic recovery copy after any restore until the restored data has been checked.
-- Back up the Docker volumes before changing the host, Docker installation or storage layout.
+- On Windows, use **Podatki → Izberi novo mapo** to change the storage layout. Do not copy a running PostgreSQL directory manually.
 
-The PostgreSQL data volume remains `growmaster_postgres`; scheduled daily and automatic pre-restore copies use `growmaster_backups`.
+The Windows relocation helper stops PostgreSQL before copying, verifies file counts and sizes, updates the private environment file atomically, restarts the application and rolls back the configuration if the health check fails. The previous database is retained as a recovery copy until the administrator removes it after verification.

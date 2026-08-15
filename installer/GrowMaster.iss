@@ -1,5 +1,5 @@
 #define MyAppName "GrowMaster"
-#define MyAppVersion "1.18.1"
+#define MyAppVersion "1.19.0"
 #define MyAppPublisher "GrowMaster"
 #define MyAppURL "https://github.com/imp050t0r/GrowMaster"
 
@@ -29,14 +29,22 @@ Name: "slovenian"; MessagesFile: "compiler:Languages\Slovenian.isl"
 Name: "desktopicon"; Description: "Ustvari ikono GrowMaster na namizju"; GroupDescription: "Bližnjice:"; Flags: checkedonce
 
 [Files]
-Source: "..\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".git\*,.env,frontend\node_modules\*,frontend\dist\*,tmp\*,*.db,backups\*,installer\output\*,installer\GrowMaster.iss,installer\Start-GrowMaster.ps1,installer\Stop-GrowMaster.ps1,installer\assets\*"
+Source: "..\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".git\*,.env,frontend\node_modules\*,frontend\dist\*,tmp\*,*.db,backups\*,installer\output\*,installer\GrowMaster.iss,installer\Start-GrowMaster.ps1,installer\Stop-GrowMaster.ps1,installer\Move-GrowMasterData.ps1,installer\assets\*"
 Source: "Start-GrowMaster.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Stop-GrowMaster.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Move-GrowMasterData.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\GrowMaster.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
+Name: "{group}\GrowMaster - prestavi podatke"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Move-GrowMasterData.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
 Name: "{autodesktop}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"; Tasks: desktopicon
+
+[Registry]
+Root: HKA; Subkey: "Software\Classes\growmaster-storage"; ValueType: string; ValueName: ""; ValueData: "URL:GrowMaster data storage"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\growmaster-storage"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\growmaster-storage\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\GrowMaster.ico,0"
+Root: HKA; Subkey: "Software\Classes\growmaster-storage\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """powershell.exe"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Move-GrowMasterData.ps1"" ""%1"""
 
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Start-GrowMaster.ps1"" -Build -DataDirectory ""{code:GetDataDirectory}"""; Description: "Zaženi GrowMaster"; Flags: postinstall skipifsilent nowait

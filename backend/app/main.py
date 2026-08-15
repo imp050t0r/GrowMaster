@@ -152,7 +152,7 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
-APP_VERSION = "1.18.1"
+APP_VERSION = "1.19.0"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
@@ -599,6 +599,11 @@ def change_password(
 def data_safety_status(db: Session = Depends(get_db)) -> dict:
     return {
         **database_summary(db),
+        "storage_location": os.getenv("GROWMASTER_DATA_ROOT") or None,
+        "storage_move_supported": os.getenv(
+            "GROWMASTER_WINDOWS_INSTALL", "false"
+        ).lower()
+        == "true",
         "daily_backups": list_daily_backups(),
         "daily_backup_retention": DAILY_BACKUP_RETENTION,
         "automatic_backups": list_automatic_backups(),
