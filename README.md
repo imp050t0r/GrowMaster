@@ -2,6 +2,8 @@
 
 GrowMaster is a local-first farm management application for professional market gardens.
 
+Version 1.19 adds the integrated **Gredičnik** module for metric bed-layout calculations, standard and baby-leaf sowing, 6-row seeding with a double pass for 12 rows, seed estimates, expected yield and succession plans saved directly into GrowMaster planning.
+
 ## Current MVP
 
 - crop library with domestic, Asian, Indian and baby-leaf crops and multiple varieties
