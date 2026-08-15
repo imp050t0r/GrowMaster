@@ -2,10 +2,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, MetaData, String, Table, select
+from sqlalchemy import Column, DateTime, MetaData, String, Table, inspect, select, text
 from sqlalchemy.engine import Connection
 
 from app.database import Base, engine
+from app.maturity import estimated_seasonal_days
 import app.models  # noqa: F401  Registers the complete schema before migrations run.
 
 
@@ -35,9 +36,53 @@ def create_authentication_schema(connection: Connection) -> None:
     app.models.AuthSession.__table__.create(bind=connection, checkfirst=True)
 
 
+def add_seasonal_maturity(connection: Connection) -> None:
+    """Add four maturity estimates while retaining every existing variety."""
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("varieties")
+    }
+    for column_name in ("days_spring", "days_summer", "days_autumn", "days_winter"):
+        if column_name not in existing_columns:
+            connection.execute(
+                text(f"ALTER TABLE varieties ADD COLUMN {column_name} INTEGER")
+            )
+    rows = connection.execute(
+        text(
+            "SELECT id, days_to_harvest, days_spring, days_summer, "
+            "days_autumn, days_winter FROM varieties"
+        )
+    ).mappings().all()
+    for row in rows:
+        estimates = estimated_seasonal_days(row["days_to_harvest"])
+        connection.execute(
+            text(
+                "UPDATE varieties SET days_spring = :spring, days_summer = :summer, "
+                "days_autumn = :autumn, days_winter = :winter WHERE id = :id"
+            ),
+            {
+                "id": row["id"],
+                "spring": row["days_spring"] or estimates["spring"],
+                "summer": row["days_summer"] or estimates["summer"],
+                "autumn": row["days_autumn"] or estimates["autumn"],
+                "winter": row["days_winter"] or estimates["winter"],
+            },
+        )
+
+
+def add_variety_composition(connection: Connection) -> None:
+    """Add an optional human-readable recipe for seed and baby-leaf mixtures."""
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("varieties")
+    }
+    if "composition" not in existing_columns:
+        connection.execute(text("ALTER TABLE varieties ADD COLUMN composition TEXT"))
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
+    Migration("0003_seasonal_maturity", add_seasonal_maturity),
+    Migration("0004_variety_composition", add_variety_composition),
 )
 
 

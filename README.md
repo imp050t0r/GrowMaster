@@ -4,12 +4,16 @@ GrowMaster is a local-first farm management application for professional market 
 
 ## Current MVP
 
-- crop library with multiple varieties per crop
+- crop library with domestic, Asian, Indian and baby-leaf crops and multiple varieties
+- spring, summer, autumn and winter maturity estimates selected from the sowing date
+- visible composition recipes for seed and baby-leaf mixtures
 - mobile dashboard with today's work, active beds and next harvest
 - bed creation, occupancy status, detail view and crop history
 - sowing form: crop, variety, date and bed
 - automatic assignment of a sowing to the selected bed
 - crop-rotation warning with an explicit user override
+- smart planting suggestions using four-cycle bed history, season and planned occupancy
+- selectable local database and backup directory during a new Windows installation
 - three automatic follow-up tasks for every sowing
 - daily task center with date, priority, bed, duration, material use and notes
 - workers and family/owner labor with reusable hourly rates
@@ -82,6 +86,11 @@ GrowMaster is a local-first farm management application for professional market 
 - in-app production-readiness checks for the database, schema, backups and farm setup
 - production frontend image with Nginx, same-origin API proxying and service health checks
 - PostgreSQL, FastAPI and React/Vite in Docker Compose
+- installable PWA with the GrowMaster carrot icon and privacy-safe application-shell caching
+- Android and iPhone Capacitor builds with a configurable farm-server connection
+- revocable native-device sessions for real-time desktop/mobile synchronization
+- guided Windows installer that preserves data across upgrades and uninstall/reinstall
+- optional Caddy HTTPS deployment for synchronized access outside the local network
 
 ## Start
 
@@ -110,3 +119,5 @@ Database upgrades, portable backups and recovery behavior are documented in [doc
 Local password setup, sessions and deployment guidance are documented in [docs/authentication.md](docs/authentication.md).
 First-use demo handling and the consolidated farm profile are documented in [docs/onboarding.md](docs/onboarding.md).
 The production startup and readiness checklist are documented in [docs/production.md](docs/production.md).
+Windows packaging is documented in [docs/installation.md](docs/installation.md).
+Android, iPhone, PWA and synchronization behavior are documented in [docs/mobile.md](docs/mobile.md).

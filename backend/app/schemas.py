@@ -10,6 +10,11 @@ class VarietyOut(BaseModel):
     id: int
     name: str
     days_to_harvest: int
+    days_spring: int
+    days_summer: int
+    days_autumn: int
+    days_winter: int
+    composition: str | None
 
 
 class CropOut(BaseModel):
@@ -22,8 +27,29 @@ class CropOut(BaseModel):
     varieties: list[VarietyOut]
 
 
+class CropCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    family: str = Field(min_length=1, max_length=120)
+    category: str = Field(min_length=1, max_length=120)
+
+
+class VarietyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    days_to_harvest: int = Field(ge=1, le=730)
+    days_spring: int | None = Field(default=None, ge=1, le=730)
+    days_summer: int | None = Field(default=None, ge=1, le=730)
+    days_autumn: int | None = Field(default=None, ge=1, le=730)
+    days_winter: int | None = Field(default=None, ge=1, le=730)
+    composition: str | None = Field(default=None, max_length=1000)
+
+
 class BedCreate(BaseModel):
     name: str = Field(min_length=1, max_length=40)
+    width_m: float = Field(gt=0, le=100)
+    length_m: float = Field(gt=0, le=1000)
+
+
+class BedSizeUpdate(BaseModel):
     width_m: float = Field(gt=0, le=100)
     length_m: float = Field(gt=0, le=1000)
 
@@ -34,6 +60,12 @@ class PlantingCreate(BaseModel):
     bed_id: int
     sowing_date: date
     override_rotation: bool = False
+
+
+class PlantingSuggestionRequest(BaseModel):
+    crop_id: int
+    variety_id: int
+    sowing_date: date
 
 
 class RotationPreview(BaseModel):

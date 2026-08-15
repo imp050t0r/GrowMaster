@@ -1,0 +1,12 @@
+{
+  "appId": "si.growmaster.app",
+  "appName": "GrowMaster",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

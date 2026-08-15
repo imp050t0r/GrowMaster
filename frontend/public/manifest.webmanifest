@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "GrowMaster",
+  "short_name": "GrowMaster",
+  "description": "Lokalno in mobilno upravljanje tržne kmetije.",
+  "lang": "sl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f7f2",
+  "theme_color": "#143c2f",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/icons/growmaster-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/growmaster-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/growmaster-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

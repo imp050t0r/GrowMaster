@@ -1,8 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import {
+  apiFetch,
+  apiRequest,
+  configuredServerUrl,
+  forgetServer,
+  isNativeApp,
+  registerGrowMasterServiceWorker,
+  saveNativeSession,
+  saveServerUrl,
+  testServerConnection,
+} from "./platform";
 
-const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
 const now = new Date();
 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 const monthStart = `${today.slice(0, 7)}-01`;
@@ -11,6 +21,42 @@ const inDays = (days) => {
   const value = new Date(now); value.setDate(value.getDate() + days);
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 };
+
+const maturitySeasonForDate = (dateValue) => {
+  const month = Number(String(dateValue || "").slice(5, 7));
+  if ([3, 4, 5].includes(month)) return { key: "spring", label: "pomlad" };
+  if ([6, 7, 8].includes(month)) return { key: "summer", label: "poletje" };
+  if ([9, 10, 11].includes(month)) return { key: "autumn", label: "jesen" };
+  return { key: "winter", label: "zima" };
+};
+const maturityDaysForDate = (variety, dateValue) => {
+  const season = maturitySeasonForDate(dateValue);
+  return variety?.[`days_${season.key}`] ?? variety?.days_to_harvest ?? "—";
+};
+
+async function downloadProtectedFile(path, filename, openInNewWindow = false) {
+  const previewWindow = openInNewWindow ? window.open("", "_blank") : null;
+  const response = await apiFetch(path);
+  if (!response.ok) {
+    previewWindow?.close();
+    throw new Error("Datoteke ni mogoče prenesti.");
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  if (previewWindow) {
+    previewWindow.opener = null;
+    previewWindow.location = objectUrl;
+  } else {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    link.click();
+  }
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
+function ProtectedDownloadButton({ path, filename, children, className = "secondary-button", open = false }) {
+  return <button type="button" className={className} onClick={() => downloadProtectedFile(path, filename, open).catch((error) => window.alert(error.message))}>{children}</button>;
+}
 
 const taskTypeLabels = {
   general: "Splošno",
@@ -22,27 +68,14 @@ const taskTypeLabels = {
   harvest_check: "Kontrola žetve",
 };
 
-async function apiFetch(path, options = {}) {
-  return fetch(`${API_URL}${path}`, { ...options, credentials: "include" });
-}
-
-async function apiRequest(path, options = {}) {
-  const response = await apiFetch(path, options);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401 && !path.startsWith("/api/auth/")) {
-      window.dispatchEvent(new Event("growmaster:unauthorized"));
-    }
-    const detail = data.detail;
-    throw new Error(typeof detail === "string" ? detail : detail?.message || "Zahteva ni uspela.");
-  }
-  return data;
-}
-
 function App() {
+  const [serverReady, setServerReady] = useState(!isNativeApp || Boolean(configuredServerUrl()));
+  const [online, setOnline] = useState(navigator.onLine);
+  const [installPrompt, setInstallPrompt] = useState(null);
   const [auth, setAuth] = useState({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30, demo_data_available: false });
   const [authForm, setAuthForm] = useState({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
   const [view, setView] = useState("dashboard");
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [crops, setCrops] = useState([]);
   const [beds, setBeds] = useState([]);
   const [plantings, setPlantings] = useState([]);
@@ -97,6 +130,8 @@ function App() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [rotationWarning, setRotationWarning] = useState(null);
+  const [plantingSuggestions, setPlantingSuggestions] = useState(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [completionTaskId, setCompletionTaskId] = useState(null);
 
   const [plantingForm, setPlantingForm] = useState({
@@ -106,6 +141,9 @@ function App() {
     sowing_date: today,
   });
   const [bedForm, setBedForm] = useState({ name: "", width_m: "0.8", length_m: "15" });
+  const [bedSizeForm, setBedSizeForm] = useState({ width_m: "", length_m: "" });
+  const [cropForm, setCropForm] = useState({ name: "", family: "", category: "" });
+  const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "", composition: "" });
   const [taskForm, setTaskForm] = useState({
     title: "",
     task_type: "general",
@@ -234,6 +272,7 @@ function App() {
       return { ...current, harvest_id: selected?.harvest_id || "", price_per_kg_eur: sameSelection && current.price_per_kg_eur ? current.price_per_kg_eur : selected?.suggested_price_per_kg_eur || "" };
     });
     setPriceForm((current) => ({ ...current, crop_id: current.crop_id || cropData[0]?.id || "" }));
+    setVarietyForm((current) => ({ ...current, crop_id: current.crop_id || cropData[0]?.id || "" }));
     setPurchaseForm((current) => ({
       ...current,
       supplier_id: current.supplier_id || supplierData[0]?.id || "",
@@ -271,12 +310,29 @@ function App() {
   }
 
   useEffect(() => {
+    if (!serverReady) return;
     apiRequest("/api/auth/status")
       .then((status) => setAuth({ ...status, loading: false }))
       .catch((loadError) => { setAuth((current) => ({ ...current, loading: false })); setError(loadError.message); });
     const handleUnauthorized = () => setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
     window.addEventListener("growmaster:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("growmaster:unauthorized", handleUnauthorized);
+  }, [serverReady]);
+
+  useEffect(() => {
+    const updateOnlineState = () => setOnline(navigator.onLine);
+    const captureInstallPrompt = (event) => {
+      event.preventDefault();
+      setInstallPrompt(event);
+    };
+    window.addEventListener("online", updateOnlineState);
+    window.addEventListener("offline", updateOnlineState);
+    window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    return () => {
+      window.removeEventListener("online", updateOnlineState);
+      window.removeEventListener("offline", updateOnlineState);
+      window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
+    };
   }, []);
 
   useEffect(() => {
@@ -327,6 +383,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(setup ? { display_name: authForm.display_name, farm_name: authForm.farm_name, keep_demo_data: authForm.keep_demo_data, password: authForm.password } : { password: authForm.password }),
       });
+      saveNativeSession(data.session_token);
       setAuth({ ...data, loading: false });
       setAuthForm({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
       setNotice(data.message);
@@ -337,6 +394,7 @@ function App() {
     clearMessages();
     try {
       await apiRequest("/api/auth/logout", { method: "POST" });
+      saveNativeSession("");
       setAuth((current) => ({ ...current, authenticated: false, display_name: null }));
       setAuthForm({ display_name: "", farm_name: "", keep_demo_data: false, password: "", confirmation: "" });
     } catch (requestError) { setError(requestError.message); }
@@ -368,6 +426,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ current_password: passwordForm.current_password, new_password: passwordForm.new_password }),
       });
+      saveNativeSession(data.session_token);
       setAccount(data);
       setPasswordForm({ current_password: "", new_password: "", confirmation: "" });
       setNotice(data.message);
@@ -403,6 +462,41 @@ function App() {
       variety_id: crop?.varieties[0]?.id || "",
     }));
     setRotationWarning(null);
+    setPlantingSuggestions(null);
+  }
+
+  async function requestPlantingSuggestions() {
+    clearMessages();
+    setSuggestionsLoading(true);
+    try {
+      const data = await apiRequest("/api/planting-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          crop_id: Number(plantingForm.crop_id),
+          variety_id: Number(plantingForm.variety_id),
+          sowing_date: plantingForm.sowing_date,
+        }),
+      });
+      setPlantingSuggestions(data);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }
+
+  function applyPlantingSuggestion(suggestion) {
+    setPlantingForm((current) => ({
+      ...current,
+      crop_id: suggestion.crop_id,
+      variety_id: suggestion.variety_id,
+      bed_id: suggestion.bed_id,
+    }));
+    setRotationWarning(null);
+    setNotice(
+      `Predlog je pripravljen: ${suggestion.crop} ${suggestion.variety} na gredici ${suggestion.bed}.`,
+    );
   }
 
   async function savePlanting(overrideRotation = false) {
@@ -431,6 +525,7 @@ function App() {
     }
 
     setRotationWarning(null);
+    setPlantingSuggestions(null);
     setNotice(data.message);
     await loadData();
     setView("beds");
@@ -457,11 +552,78 @@ function App() {
     }
   }
 
+  async function createCrop(event) {
+    event.preventDefault();
+    clearMessages();
+    try {
+      const data = await apiRequest("/api/crops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cropForm),
+      });
+      setCropForm({ name: "", family: "", category: "" });
+      setVarietyForm((current) => ({ ...current, crop_id: data.id }));
+      setNotice(`${data.name} je dodan med zelenjavo. Zdaj lahko dodaš še sorte.`);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function createVariety(event) {
+    event.preventDefault();
+    clearMessages();
+    try {
+      const data = await apiRequest(`/api/crops/${varietyForm.crop_id}/varieties`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: varietyForm.name,
+          days_to_harvest: Number(varietyForm.days_spring),
+          days_spring: Number(varietyForm.days_spring),
+          days_summer: Number(varietyForm.days_summer),
+          days_autumn: Number(varietyForm.days_autumn),
+          days_winter: Number(varietyForm.days_winter),
+          composition: varietyForm.composition || null,
+        }),
+      });
+      setVarietyForm((current) => ({ ...current, name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "", composition: "" }));
+      setNotice(`Sorta ${data.name} je dodana.`);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   async function openBed(bedId) {
     clearMessages();
     try {
       const detail = await apiRequest(`/api/beds/${bedId}`);
       setSelectedBed(detail);
+      setBedSizeForm({ width_m: String(detail.width_m), length_m: String(detail.length_m) });
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function updateBedSize(event) {
+    event.preventDefault();
+    if (!selectedBed) return;
+    clearMessages();
+    try {
+      const updated = await apiRequest(`/api/beds/${selectedBed.id}/size`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          width_m: Number(bedSizeForm.width_m),
+          length_m: Number(bedSizeForm.length_m),
+        }),
+      });
+      await loadData();
+      const detail = await apiRequest(`/api/beds/${selectedBed.id}`);
+      setSelectedBed(detail);
+      setBedSizeForm({ width_m: String(detail.width_m), length_m: String(detail.length_m) });
+      setNotice(updated.message);
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -651,8 +813,10 @@ function App() {
     } catch (requestError) { setError(requestError.message); }
   }
 
-  function openInvoicePdf(invoiceId) {
-    window.open(`${API_URL}/api/invoices/${invoiceId}/pdf`, "_blank", "noopener,noreferrer");
+  async function openInvoicePdf(invoiceId) {
+    clearMessages();
+    try { await downloadProtectedFile(`/api/invoices/${invoiceId}/pdf`, `racun-${invoiceId}.pdf`, true); }
+    catch (requestError) { setError(requestError.message); }
   }
 
   async function saveFiscalConfirmation(invoiceId, creditNoteId = null) {
@@ -932,29 +1096,56 @@ function App() {
     catch (requestError) { setError(requestError.message); }
   }
 
-  const navigation = [
+  const primaryNavigation = [
     ["dashboard", "Domov", "⌂"],
     ["beds", "Gredice", "▦"],
-    ["planting", "Setev", "+"],
     ["tasks", "Opravila", "✓"],
+    ["orders", "Prodaja", "▤"],
+  ];
+  const moreNavigation = [
+    ["planting", "Setev", "+"],
     ["labor", "Delo", "◷"],
     ["economics", "Žetev €", "€"],
     ["profitability", "Analitika", "◎"],
     ["expenses", "Stroški", "−"],
-    ["orders", "Naročila", "▤"],
     ["invoices", "Računi", "R"],
-    ["reports", "Prodaja", "Σ"],
+    ["reports", "Poročila prodaje", "Σ"],
     ["receivables", "Terjatve", "↔"],
     ["cashflow", "Denar", "◒"],
     ["closing", "Zaključek", "✓"],
     ["purchasing", "Nabava", "↓"],
     ["planning", "Plan", "◫"],
+    ["crops", "Zelenjava in sorte", "♧"],
     ["data", "Podatki", "⬇"],
     ["settings", "Nastavitve", "⚙"],
   ];
+  const moreMenuActive = moreNavigation.some(([key]) => key === view);
+
+  function openView(key) {
+    setView(key);
+    setMoreMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function changeServer() {
+    forgetServer();
+    setAuth({ loading: true, configured: false, authenticated: false, display_name: null, session_days: 30, demo_data_available: false });
+    setServerReady(false);
+    clearMessages();
+  }
+
+  async function installWebApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    setInstallPrompt(null);
+  }
+
+  if (!serverReady) {
+    return <ConnectionView onConnected={(serverUrl) => { saveServerUrl(serverUrl); setServerReady(true); }} />;
+  }
 
   if (auth.loading || !auth.authenticated) {
-    return <AuthenticationView auth={auth} form={authForm} setForm={setAuthForm} submit={submitAuthentication} error={error} />;
+    return <AuthenticationView auth={auth} form={authForm} setForm={setAuthForm} submit={submitAuthentication} error={error} changeServer={isNativeApp ? changeServer : null} serverUrl={configuredServerUrl()} />;
   }
 
   return (
@@ -966,19 +1157,43 @@ function App() {
           <p>{farmProfile.farm_name ? `${farmProfile.farm_name} · gredice, setve in dnevno delo.` : "Gredice, setve in dnevno delo na enem mestu."}</p>
         </div>
         <div className="account-summary">
-          <span className="status-pill">MVP 1.14</span>
+          <span className={`connection-pill ${online ? "online" : "offline"}`}>{online ? "● POVEZANO" : "● BREZ POVEZAVE"}</span>
+          <span className="status-pill">1.18</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
+          {installPrompt && <button type="button" onClick={installWebApp}>NAMESTI APLIKACIJO</button>}
+          {isNativeApp && <button type="button" onClick={changeServer}>STREŽNIK</button>}
           <button type="button" onClick={logout}>ODJAVA</button>
         </div>
       </header>
 
       <nav className="main-nav" aria-label="Glavna navigacija">
-        {navigation.map(([key, label, icon]) => (
-          <button key={key} className={view === key ? "active" : ""} onClick={() => setView(key)}>
+        {primaryNavigation.map(([key, label, icon]) => (
+          <button key={key} className={view === key ? "active" : ""} onClick={() => openView(key)}>
             <span>{icon}</span>{label}
           </button>
         ))}
+        <button className={moreMenuActive || moreMenuOpen ? "active" : ""} onClick={() => setMoreMenuOpen((current) => !current)} aria-expanded={moreMenuOpen} aria-controls="more-navigation">
+          <span>•••</span>Več
+        </button>
       </nav>
+
+      {moreMenuOpen && (
+        <>
+          <button type="button" className="more-menu-backdrop" aria-label="Zapri meni" onClick={() => setMoreMenuOpen(false)} />
+          <section className="more-menu" id="more-navigation" aria-label="Vsi moduli">
+            <div className="more-menu-heading"><div><p className="eyebrow">Vsi moduli</p><h2>Kam želiš?</h2></div><button type="button" className="icon-button" aria-label="Zapri meni" onClick={() => setMoreMenuOpen(false)}>✕</button></div>
+            <div className="more-menu-grid">
+              {moreNavigation.map(([key, label, icon]) => (
+                <button type="button" key={key} className={view === key ? "active" : ""} onClick={() => openView(key)}>
+                  <span>{icon}</span><strong>{label}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+
+      {!online && <div className="offline-banner">Brez povezave. Pregled odprtega zaslona ostane na voljo, novih vnosov pa trenutno ni mogoče varno shraniti.</div>}
 
       {notice && <div className="message success">✓ {notice}</div>}
       {error && <div className="message error">⚠ {error}</div>}
@@ -996,6 +1211,9 @@ function App() {
           openBed={openBed}
           selectedBed={selectedBed}
           setSelectedBed={setSelectedBed}
+          bedSizeForm={bedSizeForm}
+          setBedSizeForm={setBedSizeForm}
+          updateBedSize={updateBedSize}
           finishPlanting={finishPlanting}
         />
       )}
@@ -1012,6 +1230,11 @@ function App() {
           savePlanting={savePlanting}
           rotationWarning={rotationWarning}
           setRotationWarning={setRotationWarning}
+          suggestions={plantingSuggestions}
+          suggestionsLoading={suggestionsLoading}
+          requestSuggestions={requestPlantingSuggestions}
+          applySuggestion={applyPlantingSuggestion}
+          clearSuggestions={() => setPlantingSuggestions(null)}
         />
       )}
 
@@ -1104,6 +1327,10 @@ function App() {
           form={planForm} setForm={setPlanForm} selectedCrop={selectedPlanCrop} changeCrop={changePlanCrop} createPlan={createPlan}
           activatePlan={activatePlan} cancelPlan={cancelPlan} start={planStart} setStart={setPlanStart} end={planEnd} setEnd={setPlanEnd} />
       )}
+      {view === "crops" && (
+        <CropCatalogView crops={crops} cropForm={cropForm} setCropForm={setCropForm} createCrop={createCrop}
+          varietyForm={varietyForm} setVarietyForm={setVarietyForm} createVariety={createVariety} />
+      )}
       {view === "data" && (
         <DataSafetyView status={dataSafety} readiness={readiness} restoreFile={restoreFile} setRestoreFile={setRestoreFile}
           confirmation={restoreConfirmation} setConfirmation={setRestoreConfirmation} restoreData={restoreData} />
@@ -1137,7 +1364,8 @@ function DashboardView({ dashboard, beds, setView }) {
   );
 }
 
-function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, setSelectedBed, finishPlanting }) {
+function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, setSelectedBed, bedSizeForm, setBedSizeForm, updateBedSize, finishPlanting }) {
+  const previewArea = Number(bedSizeForm.width_m) * Number(bedSizeForm.length_m);
   return (
     <>
       <section className="panel">
@@ -1169,6 +1397,13 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
       {selectedBed && (
         <section className="panel bed-detail">
           <div className="section-heading"><div><p className="eyebrow">Podrobnosti gredice</p><h2>{selectedBed.name} · {selectedBed.area_m2} m²</h2></div><button className="icon-button" onClick={() => setSelectedBed(null)}>✕</button></div>
+          <form className="bed-size-form" onSubmit={updateBedSize}>
+            <div><p className="eyebrow">Mere gredice</p><strong>Popravi velikost</strong></div>
+            <label>Širina (m)<input type="number" step="0.01" min="0.01" max="100" value={bedSizeForm.width_m} onChange={(event) => setBedSizeForm({ ...bedSizeForm, width_m: event.target.value })} required /></label>
+            <label>Dolžina (m)<input type="number" step="0.01" min="0.01" max="1000" value={bedSizeForm.length_m} onChange={(event) => setBedSizeForm({ ...bedSizeForm, length_m: event.target.value })} required /></label>
+            <div className="bed-area-preview"><span>Nova površina</span><strong>{Number.isFinite(previewArea) ? previewArea.toFixed(2) : "—"} m²</strong></div>
+            <button className="secondary-button" type="submit">SHRANI VELIKOST</button>
+          </form>
           {selectedBed.current_planting ? (
             <div className="current-cycle"><div><span>Trenutno raste</span><strong>{selectedBed.current_planting.crop} {selectedBed.current_planting.variety}</strong><small>{selectedBed.current_planting.sowing_date} → {selectedBed.current_planting.expected_harvest_date}</small></div><button className="secondary-button" onClick={() => finishPlanting(selectedBed.current_planting.id)}>ZAKLJUČI CIKEL</button></div>
           ) : <div className="empty-state-box">Gredica je prazna in pripravljena za setev.</div>}
@@ -1182,23 +1417,106 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
   );
 }
 
-function PlantingView({ crops, beds, plantings, form, setForm, selectedCrop, changeCrop, savePlanting, rotationWarning, setRotationWarning }) {
+function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm, setVarietyForm, createVariety }) {
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const normalizedQuery = catalogQuery.trim().toLocaleLowerCase("sl");
+  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.flatMap((variety) => [variety.name, variety.composition || ""])].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
+  const categoryOrder = new Map([["Domača", 0], ["Azijska", 1], ["Indijska", 2], ["Baby leaf", 3]]);
+  const catalogGroups = Object.entries(visibleCrops.reduce((groups, crop) => {
+    const category = crop.category || "Drugo";
+    return { ...groups, [category]: [...(groups[category] || []), crop] };
+  }, {})).sort(([left], [right]) => (categoryOrder.get(left) ?? 99) - (categoryOrder.get(right) ?? 99) || left.localeCompare(right, "sl"));
+  return (
+    <>
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Lastni šifrant</p><h2>Zelenjava in sorte</h2><p className="muted">Dodani vnosi so takoj na voljo pri setvi, načrtovanju, žetvi in ceniku.</p></div><span>{crops.length} vrst</span></div>
+        <div className="crop-catalog-forms">
+          <form className="catalog-form" onSubmit={createCrop}>
+            <div><p className="eyebrow">Nova zelenjava</p><h3>Dodaj vrsto zelenjave</h3></div>
+            <label>Ime<input value={cropForm.name} onChange={(event) => setCropForm({ ...cropForm, name: event.target.value })} placeholder="npr. Paradižnik" required /></label>
+            <label>Rastlinska družina<input value={cropForm.family} onChange={(event) => setCropForm({ ...cropForm, family: event.target.value })} placeholder="npr. Solanaceae" required /></label>
+            <label>Kategorija<input value={cropForm.category} onChange={(event) => setCropForm({ ...cropForm, category: event.target.value })} placeholder="npr. Plodovke" required /></label>
+            <button className="primary-button" type="submit">DODAJ ZELENJAVO</button>
+          </form>
+
+          <form className="catalog-form" onSubmit={createVariety}>
+            <div><p className="eyebrow">Nova sorta</p><h3>Dodaj sorto izbrani zelenjavi</h3></div>
+            <label>Zelenjava<select value={varietyForm.crop_id} onChange={(event) => setVarietyForm({ ...varietyForm, crop_id: event.target.value })} required disabled={!crops.length}><option value="">Izberi zelenjavo</option>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
+            <label>Ime sorte<input value={varietyForm.name} onChange={(event) => setVarietyForm({ ...varietyForm, name: event.target.value })} placeholder="npr. Volovsko srce" required /></label>
+            <div className="seasonal-maturity-fields">
+              <label>Pomlad (dni)<input type="number" min="1" max="730" value={varietyForm.days_spring} onChange={(event) => setVarietyForm({ ...varietyForm, days_spring: event.target.value })} placeholder="npr. 45" required /></label>
+              <label>Poletje (dni)<input type="number" min="1" max="730" value={varietyForm.days_summer} onChange={(event) => setVarietyForm({ ...varietyForm, days_summer: event.target.value })} placeholder="npr. 35" required /></label>
+              <label>Jesen (dni)<input type="number" min="1" max="730" value={varietyForm.days_autumn} onChange={(event) => setVarietyForm({ ...varietyForm, days_autumn: event.target.value })} placeholder="npr. 55" required /></label>
+              <label>Zima (dni)<input type="number" min="1" max="730" value={varietyForm.days_winter} onChange={(event) => setVarietyForm({ ...varietyForm, days_winter: event.target.value })} placeholder="npr. 75" required /></label>
+            </div>
+            <label>Sestava mešanice (neobvezno)<textarea maxLength="1000" value={varietyForm.composition} onChange={(event) => setVarietyForm({ ...varietyForm, composition: event.target.value })} placeholder="Npr. mizuna, tatsoi, pak choi ..." /></label>
+            <button className="primary-button" type="submit" disabled={!crops.length}>DODAJ SORTO</button>
+          </form>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">Pregled šifranta</p><h2>Vsa zelenjava</h2></div><label className="catalog-search">Išči<input type="search" value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="Zelenjava ali sorta" /></label></div>
+        <div className="crop-catalog-groups">
+          {catalogGroups.map(([category, categoryCrops]) => (
+            <section className="crop-category-section" key={category}>
+              <div className="crop-category-heading"><h3>{category}</h3><span>{categoryCrops.length} vrst</span></div>
+              <div className="crop-catalog-grid">
+                {categoryCrops.map((crop) => (
+                  <article className="crop-catalog-card" key={crop.id}>
+                    <div><h3>{crop.name}</h3><span>{crop.family}</span></div>
+                    <div className="variety-list">
+                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.composition && <em className="variety-composition"><b>Sestava:</b> {variety.composition}</em>}<small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small><small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small></span>)}
+                      {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+          {!crops.length && <p className="empty-state">Dodaj prvo zelenjavo in nato njeno sorto.</p>}
+          {crops.length > 0 && !visibleCrops.length && <p className="empty-state">Za ta iskalni niz ni zadetkov.</p>}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function PlantingView({ crops, beds, plantings, form, setForm, selectedCrop, changeCrop, savePlanting, rotationWarning, setRotationWarning, suggestions, suggestionsLoading, requestSuggestions, applySuggestion, clearSuggestions }) {
   return (
     <>
       <section className="panel">
         <div className="section-heading"><div><p className="eyebrow">Načrt setve</p><h2>Dodaj novo setev</h2></div></div>
         <form className="planting-form" onSubmit={(event) => { event.preventDefault(); savePlanting(false); }}>
           <label>Kultura<select value={form.crop_id} onChange={changeCrop} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
-          <label>Sorta<select value={form.variety_id} onChange={(event) => setForm({ ...form, variety_id: event.target.value })} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name} · {variety.days_to_harvest} dni</option>)}</select></label>
-          <label>Datum setve<input type="date" value={form.sowing_date} onChange={(event) => setForm({ ...form, sowing_date: event.target.value })} required /></label>
+          <label>Sorta<select value={form.variety_id} onChange={(event) => { setForm({ ...form, variety_id: event.target.value }); clearSuggestions(); }} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name} · {maturityDaysForDate(variety, form.sowing_date)} dni ({maturitySeasonForDate(form.sowing_date).label})</option>)}</select></label>
+          <label>Datum setve<input type="date" value={form.sowing_date} onChange={(event) => { setForm({ ...form, sowing_date: event.target.value }); clearSuggestions(); }} required /></label>
           <label>Gredica<select value={form.bed_id} onChange={(event) => { setForm({ ...form, bed_id: event.target.value }); setRotationWarning(null); }} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.status === "empty" ? "prazna" : "zasedena"} · {bed.area_m2} m²</option>)}</select></label>
-          <button className="primary-button" type="submit">DODAJ SETEV</button>
+          <div className="planting-actions"><button className="secondary-button" type="button" onClick={requestSuggestions} disabled={suggestionsLoading}>{suggestionsLoading ? "RAČUNAM PREDLOG ..." : "PAMETNI PREDLOG"}</button><button className="primary-button" type="submit">DODAJ SETEV</button></div>
         </form>
         {rotationWarning && <div className="rotation-warning"><strong>Opozorilo kolobarja</strong><p>{rotationWarning.message}</p><p>{rotationWarning.warnings?.[0]}</p><div className="warning-actions"><button type="button" onClick={() => setRotationWarning(null)}>IZBERI DRUGO GREDICO</button><button type="button" className="danger-button" onClick={() => savePlanting(true)}>VSEENO POSEJ</button></div></div>}
       </section>
+      {suggestions && <PlantingSuggestions suggestions={suggestions} applySuggestion={applySuggestion} />}
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Aktivni rastni cikli</p><h2>Setve</h2></div><span>{plantings.length} aktivnih</span></div>{plantings.length === 0 ? <p className="empty-state">Prva setev še ni dodana.</p> : <div className="planting-list">{plantings.map((planting) => <article key={planting.id}><strong>{planting.bed} · {planting.crop} {planting.variety}</strong><span>{planting.sowing_date} → {planting.expected_harvest_date}</span>{planting.rotation_override && <small>Kolobar je uporabnik zavestno preglasil.</small>}</article>)}</div>}</section>
     </>
   );
+}
+
+function PlantingSuggestions({ suggestions, applySuggestion }) {
+  const SuggestionCard = ({ item, showCrop = false }) => <article className={`advisor-card ${item.rating}`}>
+    <div className="advisor-card-head"><div><span>Gredica {item.bed} · {item.area_m2} m²</span><strong>{showCrop ? `${item.crop} ${item.variety}` : `${suggestions.selected_crop} ${suggestions.selected_variety}`}</strong></div><span className={`advisor-rating ${item.rating}`}>{item.rating_label}</span></div>
+    <div className="advisor-dates"><span>Setev {item.sowing_date}</span><span>Žetev okoli {item.expected_harvest_date}</span></div>
+    {item.recent_history.length > 0 && <small className="advisor-history">Zadnji cikli: {item.recent_history.map((entry) => entry.crop).join(" → ")}</small>}
+    <ul>{item.reasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}</ul>
+    {item.warnings.length > 0 && <div className="advisor-warnings">{item.warnings.map((warning) => <span key={warning}>⚠ {warning}</span>)}</div>}
+    <button type="button" className="secondary-button" onClick={() => applySuggestion(item)}>UPORABI PREDLOG</button>
+  </article>;
+  return <section className="panel advisor-panel">
+    <div className="section-heading"><div><p className="eyebrow">Kolobar in zgodovina</p><h2>Pametni predlog zasaditve</h2><p className="muted">Pregledani so zadnji štirje cikli, termin setve in že načrtovane zasedenosti.</p></div><span>{suggestions.empty_beds} praznih gredic</span></div>
+    <div className="advisor-section"><h3>Najboljše gredice za {suggestions.selected_crop}</h3><div className="advisor-grid">{suggestions.recommended_beds.slice(0, 3).map((item) => <SuggestionCard key={`bed-${item.bed_id}`} item={item} />)}</div>{suggestions.recommended_beds.length === 0 && <p className="empty-state">Trenutno ni proste gredice za predlog.</p>}</div>
+    <div className="advisor-section"><h3>Predlog kulture za vsako prazno gredico</h3><div className="advisor-grid">{suggestions.planting_ideas.map((item) => <SuggestionCard key={`idea-${item.bed_id}`} item={item} showCrop />)}</div></div>
+    <p className="advisor-note">{suggestions.note}</p>
+  </section>;
 }
 
 function TasksView({ tasks, beds, workers, taskDate, setTaskDate, taskForm, setTaskForm, createTask, completionTaskId, setCompletionTaskId, completion, setCompletion, completeTask }) {
@@ -1359,7 +1677,7 @@ function ProfitabilityView({ data, start, setStart, end, setEnd }) {
   return <>
     <section className="panel report-heading">
       <div><p className="eyebrow">Sezonski rezultat</p><h2>Dobičkonosnost pridelave</h2><p className="muted">{data.note}</p></div>
-      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/profitability-report/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div>
+      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><ProtectedDownloadButton className="secondary-button export-button" path={`/api/profitability-report/export.csv?start=${start}&end=${end}`} filename={`donosnost-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton></div>
     </section>
     <section className="metric-grid profitability-metrics">
       <article className="metric-card"><span>Dobiček</span><strong className={Number(summary.profit_eur || 0) >= 0 ? "positive" : "negative"}>{money(summary.profit_eur)}</strong><small>marža {ratio(summary.margin_pct, "%")}</small></article>
@@ -1486,7 +1804,7 @@ function InvoicesView({ invoices, profile, setProfile, saveProfile, openPdf, con
       {invoices.length === 0 ? <p className="empty-state">Račun še ni izdan. Izdate ga pri dostavljenem poslovnem naročilu ali poslovni hitri prodaji.</p> : <div className="invoice-list">{invoices.map((invoice) => <article key={invoice.id} className={invoice.status}>
         <div className="invoice-main"><div><span className={`fiscal-badge ${invoice.fiscal_status}`}>{fiscalLabel(invoice.fiscal_status)}</span><strong>{invoice.number} · {invoice.customer.name}</strong><span>Izdano {invoice.issued_on} · dobava {invoice.supply_date} · rok {invoice.due_date}</span><span>{paymentLabel(invoice.payment_method)} · {invoice.source_type === "order" ? "naročilo" : "hitra prodaja"} #{invoice.source_id}</span></div><div><strong>{invoice.total_eur.toFixed(2)} €</strong><span>{invoice.status === "credited" ? "Dobropisano" : `${invoice.outstanding_eur.toFixed(2)} € odprto`}</span></div></div>
         <div className="order-actions">{invoice.fiscal_status === "pending" && <button className="secondary-button" onClick={() => confirmFiscal(invoice.id)}>VPIŠI EOR</button>}{invoice.fiscal_status !== "pending" && <button className="secondary-button" onClick={() => openPdf(invoice.id)}>ODPRI PDF</button>}{invoice.status !== "credited" && <button className="text-button danger-text" onClick={() => issueCreditNote(invoice.id)}>IZDAJ DOBROPIS</button>}</div>
-        {invoice.credit_note && <div className="credit-note-row"><div className="credit-note-details"><strong>{invoice.credit_note.number}</strong><span>{invoice.credit_note.issued_on} · {invoice.credit_note.reason}</span><span>Vrnjeno {invoice.credit_note.refunded_eur.toFixed(2)} € · še vračljivo {invoice.credit_note.refundable_eur.toFixed(2)} €</span>{invoice.credit_note.refunds.length > 0 && <div className="refund-history">{invoice.credit_note.refunds.map((refund) => <span key={refund.id}>{refund.refund_date} · {refund.amount_eur.toFixed(2)} € · {paymentLabel(refund.payment_method)}{refund.notes ? ` · ${refund.notes}` : ""}</span>)}</div>}</div><div className="order-actions">{invoice.credit_note.fiscal_status === "pending" ? <button className="secondary-button" onClick={() => confirmFiscal(invoice.id, invoice.credit_note.id)}>VPIŠI EOR DOBROPISA</button> : <><a className="secondary-button export-button" href={`${API_URL}/api/credit-notes/${invoice.credit_note.id}/pdf`} target="_blank" rel="noreferrer">PDF DOBROPISA</a>{invoice.credit_note.refundable_eur > 0 && <button className="primary-button" onClick={() => recordRefund(invoice.credit_note, invoice)}>EVIDENTIRAJ VRAČILO</button>}</>}</div></div>}
+        {invoice.credit_note && <div className="credit-note-row"><div className="credit-note-details"><strong>{invoice.credit_note.number}</strong><span>{invoice.credit_note.issued_on} · {invoice.credit_note.reason}</span><span>Vrnjeno {invoice.credit_note.refunded_eur.toFixed(2)} € · še vračljivo {invoice.credit_note.refundable_eur.toFixed(2)} €</span>{invoice.credit_note.refunds.length > 0 && <div className="refund-history">{invoice.credit_note.refunds.map((refund) => <span key={refund.id}>{refund.refund_date} · {refund.amount_eur.toFixed(2)} € · {paymentLabel(refund.payment_method)}{refund.notes ? ` · ${refund.notes}` : ""}</span>)}</div>}</div><div className="order-actions">{invoice.credit_note.fiscal_status === "pending" ? <button className="secondary-button" onClick={() => confirmFiscal(invoice.id, invoice.credit_note.id)}>VPIŠI EOR DOBROPISA</button> : <><ProtectedDownloadButton path={`/api/credit-notes/${invoice.credit_note.id}/pdf`} filename={`dobropis-${invoice.credit_note.number}.pdf`} open>PDF DOBROPISA</ProtectedDownloadButton>{invoice.credit_note.refundable_eur > 0 && <button className="primary-button" onClick={() => recordRefund(invoice.credit_note, invoice)}>EVIDENTIRAJ VRAČILO</button>}</>}</div></div>}
       </article>)}</div>}
     </section>
   </>;
@@ -1498,7 +1816,7 @@ function SalesReportView({ report, start, setStart, end, setEnd }) {
   return <>
     <section className="panel report-heading">
       <div><p className="eyebrow">Dnevni register</p><h2>Pregled prodaje</h2><p className="muted">{report.note}</p></div>
-      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/sales-report/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div>
+      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><ProtectedDownloadButton className="secondary-button export-button" path={`/api/sales-report/export.csv?start=${start}&end=${end}`} filename={`prodaja-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton></div>
     </section>
     <section className="metric-grid report-metrics">
       <article className="metric-card"><span>Skupaj</span><strong>{(summary.total_eur || 0).toFixed(2)} €</strong><small>{summary.transactions || 0} prodaj · nerazvrščeno {(summary.unclassified_eur || 0).toFixed(2)} €</small></article>
@@ -1540,7 +1858,7 @@ function CashFlowView({ data, start, setStart, end, setEnd }) {
   const methodLabels = { cash: "Gotovina", card: "Kartica", bank_transfer: "Nakazilo" };
   const sourceLabel = (source) => ({ retail_sale: "hitra prodaja", order_payment: "plačilo računa", cost: "strošek", farm_expense: "splošni strošek", refund: "vračilo kupcu", supplier_payment: "plačilo dobavitelju" }[source] || source);
   return <>
-    <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><a className="secondary-button export-button" href={`${API_URL}/api/cash-flow/export.csv?start=${start}&end=${end}`}>IZVOZI CSV</a></div></section>
+    <section className="panel report-heading"><div><p className="eyebrow">Dejanski premiki</p><h2>Denarni tok</h2><p className="muted">{data.note}</p></div><div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><ProtectedDownloadButton className="secondary-button export-button" path={`/api/cash-flow/export.csv?start=${start}&end=${end}`} filename={`denarni-tok-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton></div></section>
     <section className="metric-grid cashflow-metrics">
       <article className="metric-card"><span>Prilivi</span><strong className="positive">{(summary.inflow_eur || 0).toFixed(2)} €</strong><small>{summary.inflow_count || 0} prejemkov</small></article>
       <article className="metric-card"><span>Odlivi</span><strong className="negative">{(summary.outflow_eur || 0).toFixed(2)} €</strong><small>{summary.outflow_count || 0} odlivov · vračila {(summary.refund_eur || 0).toFixed(2)} € · dobavitelji {(summary.supplier_payments_eur || 0).toFixed(2)} €</small></article>
@@ -1684,7 +2002,7 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
       <form className="planning-form" onSubmit={createPlan}>
         <label>Gredica<select value={form.bed_id} onChange={(e) => setForm({ ...form, bed_id: e.target.value })} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.area_m2} m²</option>)}</select></label>
         <label>Kultura<select value={form.crop_id} onChange={changeCrop} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
-        <label>Sorta<select value={form.variety_id} onChange={(e) => setForm({ ...form, variety_id: e.target.value })} required>{(selectedCrop?.varieties || []).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.days_to_harvest} dni</option>)}</select></label>
+        <label>Sorta<select value={form.variety_id} onChange={(e) => setForm({ ...form, variety_id: e.target.value })} required>{(selectedCrop?.varieties || []).map((item) => <option key={item.id} value={item.id}>{item.name} · {maturityDaysForDate(item, form.sowing_date)} dni ({maturitySeasonForDate(form.sowing_date).label})</option>)}</select></label>
         <label>Setev<input type="date" value={form.sowing_date} onChange={(e) => setForm({ ...form, sowing_date: e.target.value })} required /></label>
         <label>Presajanje<input type="date" value={form.transplant_date} onChange={(e) => setForm({ ...form, transplant_date: e.target.value })} /></label>
         <label>Pričakovano (kg)<input type="number" min="0.1" step="0.1" value={form.expected_yield_kg} onChange={(e) => setForm({ ...form, expected_yield_kg: e.target.value })} required /></label>
@@ -1722,12 +2040,12 @@ function DataSafetyView({ status, readiness, restoreFile, setRestoreFile, confir
     </section>
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Vsakodnevna zaščita</p><h2>Samodejne dnevne kopije</h2><p className="muted">Nova kopija nastane ob zagonu in nato enkrat na dan, dokler GrowMaster deluje. Vsebuje poslovne podatke, ne pa gesla ali aktivnih prijav.</p></div><span>{dailyBackups.length} shranjenih</span></div>
-      {dailyBackups.length === 0 ? <p className="empty-state">Prva dnevna kopija bo ustvarjena ob naslednjem zagonu GrowMasterja.</p> : <div className="automatic-backup-list">{dailyBackups.map((backup) => <article key={backup.filename}><div><strong>{new Date(`${backup.backup_date}T12:00:00`).toLocaleDateString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><a className="secondary-button" href={`${API_URL}/api/system/backups/daily/${encodeURIComponent(backup.filename)}`}>PRENESI</a></article>)}</div>}
+      {dailyBackups.length === 0 ? <p className="empty-state">Prva dnevna kopija bo ustvarjena ob naslednjem zagonu GrowMasterja.</p> : <div className="automatic-backup-list">{dailyBackups.map((backup) => <article key={backup.filename}><div><strong>{new Date(`${backup.backup_date}T12:00:00`).toLocaleDateString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><ProtectedDownloadButton path={`/api/system/backups/daily/${encodeURIComponent(backup.filename)}`} filename={backup.filename}>PRENESI</ProtectedDownloadButton></article>)}</div>}
     </section>
     <section className="data-safety-grid">
       <section className="panel backup-export-card">
         <div><p className="eyebrow">Shrani zunaj aplikacije</p><h2>Nova varnostna kopija</h2><p className="muted">Datoteka vsebuje gredice, pridelke, prodajo, račune, dokumente, zalogo in finančne zapise. Shrani jo na varen disk ali v svojo oblačno mapo.</p></div>
-        <a className="primary-button backup-download" href={`${API_URL}/api/system/backups/export`}>PRENESI CELOTNO KOPIJO</a>
+        <ProtectedDownloadButton className="primary-button backup-download" path="/api/system/backups/export" filename={`growmaster-kopija-${today}.json`}>PRENESI CELOTNO KOPIJO</ProtectedDownloadButton>
       </section>
       <form className="panel restore-form" onSubmit={restoreData}>
         <div><p className="eyebrow">Nadzorovana obnovitev</p><h2>Obnovi iz datoteke</h2><p className="muted">Datoteka se pred obnovitvijo preveri. Če je poškodovana ali iz druge različice, se podatki ne spremenijo.</p></div>
@@ -1739,16 +2057,53 @@ function DataSafetyView({ status, readiness, restoreFile, setRestoreFile, confir
     </section>
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Samodejna zaščita</p><h2>Povratne kopije pred obnovitvijo</h2></div><span>{backups.length} shranjenih</span></div>
-      {backups.length === 0 ? <p className="empty-state">Povratna kopija bo ustvarjena tik pred prvo obnovitvijo.</p> : <div className="automatic-backup-list">{backups.map((backup) => <article key={backup.filename}><div><strong>{new Date(backup.created_at).toLocaleString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><a className="secondary-button" href={`${API_URL}/api/system/backups/automatic/${encodeURIComponent(backup.filename)}`}>PRENESI</a></article>)}</div>}
+      {backups.length === 0 ? <p className="empty-state">Povratna kopija bo ustvarjena tik pred prvo obnovitvijo.</p> : <div className="automatic-backup-list">{backups.map((backup) => <article key={backup.filename}><div><strong>{new Date(backup.created_at).toLocaleString("sl-SI")}</strong><span>{backup.filename} · {sizeLabel(backup.size_bytes)}</span></div><ProtectedDownloadButton path={`/api/system/backups/automatic/${encodeURIComponent(backup.filename)}`} filename={backup.filename}>PRENESI</ProtectedDownloadButton></article>)}</div>}
       <p className="backup-privacy-note">Varnostne kopije lahko vsebujejo osebne in finančne podatke kupcev, nikoli pa gesla ali aktivne prijave. Hrani jih na mestu, do katerega nima dostopa nepooblaščena oseba.</p>
     </section>
   </>;
 }
 
-function AuthenticationView({ auth, form, setForm, submit, error }) {
+function ConnectionView({ onConnected }) {
+  const [serverUrl, setServerUrl] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
+
+  async function connect(event) {
+    event.preventDefault();
+    setChecking(true);
+    setConnectionError("");
+    try {
+      const result = await testServerConnection(serverUrl);
+      onConnected(result.serverUrl);
+    } catch (error) {
+      setConnectionError(error.message || "Povezava ni uspela.");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return <main className="auth-shell connection-shell">
+    <section className="auth-intro">
+      <img className="auth-logo" src="/icons/growmaster-192.png" alt="" />
+      <p className="eyebrow">Mobilni GrowMaster</p>
+      <h1>Poveži svojo kmetijo</h1>
+      <p>Vpiši naslov GrowMasterja na računalniku ali zasebnem spletnem strežniku. Telefon in računalnik bosta nato uporabljala iste podatke.</p>
+    </section>
+    <form className="auth-card" onSubmit={connect}>
+      <div><p className="eyebrow">Prva povezava</p><h2>Naslov strežnika</h2></div>
+      <label>Naslov GrowMasterja<input type="url" inputMode="url" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://moja-kmetija.example.si" autoCapitalize="none" autoCorrect="off" required autoFocus /></label>
+      <p className="auth-hint">Za uporabo samo v domačem omrežju je lahko naslov npr. http://192.168.1.20:3000. Za uporabo kjerkoli priporočamo zasebni naslov HTTPS.</p>
+      {connectionError && <div className="message error">⚠ {connectionError}</div>}
+      <button className="primary-button" type="submit" disabled={checking}>{checking ? "PREVERJAM …" : "POVEŽI"}</button>
+    </form>
+  </main>;
+}
+
+function AuthenticationView({ auth, form, setForm, submit, error, changeServer, serverUrl }) {
   const setup = !auth.configured;
   return <main className="auth-shell">
     <section className="auth-intro">
+      <img className="auth-logo" src="/icons/growmaster-192.png" alt="" />
       <p className="eyebrow">Lokalno upravljanje kmetije</p>
       <h1>🌱 GrowMaster</h1>
       <p>{auth.loading ? "Preverjam zaščito aplikacije …" : setup ? "Pred prvo uporabo zaščiti podatke kmetije z enim skrbniškim geslom." : "Vnesi skrbniško geslo za dostop do podatkov kmetije."}</p>
@@ -1764,6 +2119,7 @@ function AuthenticationView({ auth, form, setForm, submit, error }) {
       {error && <div className="message error">⚠ {error}</div>}
       <button className="primary-button" type="submit">{setup ? "ZAŠČITI IN NADALJUJ" : "PRIJAVA"}</button>
       {!setup && <p className="auth-hint">Prijava velja {auth.session_days || 30} dni na tej napravi ali do odjave.</p>}
+      {changeServer && <div className="server-choice"><small>Povezano: {serverUrl}</small><button type="button" className="text-button" onClick={changeServer}>IZBERI DRUG STREŽNIK</button></div>}
     </form>}
   </main>;
 }
@@ -1815,4 +2171,5 @@ function SettingsView({ profile, setProfile, saveProfile, account, accountForm, 
   </>;
 }
 
+registerGrowMasterServiceWorker();
 createRoot(document.getElementById("root")).render(<React.StrictMode><App /></React.StrictMode>);

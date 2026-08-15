@@ -13,6 +13,7 @@ from app.models import AdminCredential, AuthSession
 
 
 SESSION_COOKIE = "growmaster_session"
+MOBILE_CLIENT_HEADER = "x-growmaster-client"
 PASSWORD_ALGORITHM = "scrypt-v1"
 SESSION_LIFETIME = timedelta(days=30)
 SCRYPT_N = 2**14
@@ -169,6 +170,22 @@ def authenticated_credential(db: Session, token: str | None) -> AdminCredential 
         db.commit()
         return None
     return db.get(AdminCredential, session.credential_id)
+
+
+def request_session_token(request) -> str | None:
+    """Accept the HTTP-only browser cookie or a native-app bearer token."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, value = authorization.partition(" ")
+    if scheme.lower() == "bearer" and value.strip():
+        return value.strip()
+    return request.cookies.get(SESSION_COOKIE)
+
+
+def native_session_payload(request, token: str) -> dict[str, str]:
+    """Return a token only to the isolated Android/iOS application client."""
+    if request.headers.get(MOBILE_CLIENT_HEADER, "").strip().lower() == "mobile":
+        return {"session_token": token}
+    return {}
 
 
 def revoke_session(db: Session, token: str | None) -> None:

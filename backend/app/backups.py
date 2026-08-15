@@ -13,6 +13,7 @@ from sqlalchemy import Integer, func, select, text
 from sqlalchemy.orm import Session
 
 from app.database import Base
+from app.maturity import estimated_seasonal_days
 from app.migrations import latest_revision
 import app.models  # noqa: F401  Ensures every mapped table is registered.
 
@@ -247,15 +248,44 @@ def parse_backup(content: bytes) -> ParsedBackup:
                 f"Podatki tabele {table_name} niso v pričakovani obliki."
             )
         expected_columns = {column.name for column in table.columns}
+        seasonal_columns = {
+            "days_spring",
+            "days_summer",
+            "days_autumn",
+            "days_winter",
+        }
+        allowed_columns = {frozenset(expected_columns)}
+        if table_name == "varieties":
+            allowed_columns.update(
+                {
+                    frozenset(expected_columns - {"composition"}),
+                    frozenset(expected_columns - seasonal_columns),
+                    frozenset(expected_columns - seasonal_columns - {"composition"}),
+                }
+            )
         decoded_rows: list[dict] = []
         for encoded_row in encoded_rows:
-            if not isinstance(encoded_row, dict) or set(encoded_row) != expected_columns:
+            row_columns = set(encoded_row) if isinstance(encoded_row, dict) else set()
+            if frozenset(row_columns) not in allowed_columns:
                 raise BackupValidationError(
                     f"Zapis v tabeli {table_name} nima pričakovanih polj."
                 )
-            decoded_rows.append(
-                {key: decode_value(value) for key, value in encoded_row.items()}
-            )
+            decoded_row = {
+                key: decode_value(value) for key, value in encoded_row.items()
+            }
+            if table_name == "varieties" and not seasonal_columns <= row_columns:
+                estimates = estimated_seasonal_days(decoded_row["days_to_harvest"])
+                decoded_row.update(
+                    {
+                        "days_spring": estimates["spring"],
+                        "days_summer": estimates["summer"],
+                        "days_autumn": estimates["autumn"],
+                        "days_winter": estimates["winter"],
+                    }
+                )
+            if table_name == "varieties" and "composition" not in row_columns:
+                decoded_row["composition"] = None
+            decoded_rows.append(decoded_row)
         rows_by_table[table_name] = decoded_rows
         record_count += len(decoded_rows)
 

@@ -1,4 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -14,14 +16,17 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
 
 from app.backups import (  # noqa: E402
+    canonical_json,
     ensure_daily_backup,
     list_daily_backups,
+    parse_backup,
     refresh_daily_backup,
 )
 from app.database import SessionLocal, engine  # noqa: E402
 from app.main import app, demo_data_available, prepare_farm_on_first_setup  # noqa: E402
 from app.migrations import run_migrations, schema_migrations  # noqa: E402
-from app.models import Bed, Task  # noqa: E402
+from app.models import Bed, Crop, Planting, Task, Variety  # noqa: E402
+from app.seed import seed_database  # noqa: E402
 
 
 def test_bed_planting_and_task_workflow() -> None:
@@ -31,7 +36,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.14.0",
+            "version": "1.18.0",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -106,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0002_authentication"
-        assert run_migrations() == "0002_authentication"
+        assert run_migrations() == "0004_variety_composition"
+        assert run_migrations() == "0004_variety_composition"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 2
+            ) == 4
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -135,7 +140,160 @@ def test_bed_planting_and_task_workflow() -> None:
         beds = client.get("/api/beds").json()
         crops = client.get("/api/crops").json()
         assert len(beds) == 6
-        assert crops
+        assert len(crops) >= 50
+        assert {crop["category"] for crop in crops} >= {
+            "Domača",
+            "Azijska",
+            "Indijska",
+            "Baby leaf",
+        }
+        baby_leaf_names = {
+            crop["name"] for crop in crops if crop["category"] == "Baby leaf"
+        }
+        assert baby_leaf_names >= {
+            "Baby leaf mešanica",
+            "Divja rukola",
+            "Salatni trpotec",
+            "Cikorija",
+            "Mladi listi rdeče pese",
+            "Baby leaf špinača",
+            "Baby leaf ohrovt",
+            "Baby leaf listna solata",
+            "Baby leaf hrastov list",
+            "Baby leaf rimska solata",
+            "Baby leaf batavia",
+            "Baby leaf endivija",
+            "Baby leaf radič",
+            "Baby leaf blitva",
+            "Baby leaf gorčica",
+            "Baby leaf mizuna",
+            "Baby leaf tatsoi",
+            "Baby leaf pak choi",
+            "Baby leaf komatsuna",
+            "Baby leaf kitajsko zelje",
+        }
+        assert len(baby_leaf_names) >= 20
+        leaf_lettuce = next(
+            crop for crop in crops if crop["name"] == "Baby leaf listna solata"
+        )
+        assert {variety["name"] for variety in leaf_lettuce["varieties"]} >= {
+            "Green Saladbowl",
+            "Red Saladbowl",
+            "Tango",
+            "Red Sails",
+        }
+        mixture_crop = next(crop for crop in crops if crop["name"] == "Baby leaf mešanica")
+        classic_mixture = next(
+            variety
+            for variety in mixture_crop["varieties"]
+            if variety["name"] == "Klasična solatna mešanica"
+        )
+        assert "baby špinača" in classic_mixture["composition"]
+        assert "rdeče pese" in classic_mixture["composition"]
+        with SessionLocal() as db:
+            crop_count = db.scalar(select(func.count()).select_from(Crop))
+            variety_count = db.scalar(select(func.count()).select_from(Variety))
+            seed_database(db)
+            seed_database(db)
+            assert db.scalar(select(func.count()).select_from(Crop)) == crop_count
+            assert (
+                db.scalar(select(func.count()).select_from(Variety))
+                == variety_count
+            )
+
+        new_crop = client.post(
+            "/api/crops",
+            json={
+                "name": "Testna zelenjava",
+                "family": "Testaceae",
+                "category": "Lastna",
+            },
+        )
+        assert new_crop.status_code == 201
+        assert new_crop.json()["varieties"] == []
+        assert client.post(
+            "/api/crops",
+            json={
+                "name": "testna zelenjava",
+                "family": "Testaceae",
+                "category": "Lastna",
+            },
+        ).status_code == 409
+        assert client.post(
+            "/api/crops",
+            json={"name": " ", "family": " ", "category": "Plodovke"},
+        ).status_code == 422
+        new_variety = client.post(
+            f"/api/crops/{new_crop.json()['id']}/varieties",
+            json={
+                "name": "Testna sorta",
+                "days_to_harvest": 80,
+                "days_spring": 80,
+                "days_summer": 60,
+                "days_autumn": 95,
+                "days_winter": 120,
+                "composition": "  Testna solata, rukola in špinača.  ",
+            },
+        )
+        assert new_variety.status_code == 201
+        assert new_variety.json()["days_to_harvest"] == 80
+        assert new_variety.json()["composition"] == (
+            "Testna solata, rukola in špinača."
+        )
+        assert {
+            key: new_variety.json()[key]
+            for key in (
+                "days_spring",
+                "days_summer",
+                "days_autumn",
+                "days_winter",
+            )
+        } == {
+            "days_spring": 80,
+            "days_summer": 60,
+            "days_autumn": 95,
+            "days_winter": 120,
+        }
+        assert client.post(
+            f"/api/crops/{new_crop.json()['id']}/varieties",
+            json={"name": "testna sorta", "days_to_harvest": 90},
+        ).status_code == 409
+        refreshed_crops = client.get("/api/crops").json()
+        refreshed_crop = next(
+            item for item in refreshed_crops if item["name"] == "Testna zelenjava"
+        )
+        assert refreshed_crop["varieties"] == [new_variety.json()]
+
+        crop = next(item for item in crops if item["name"] == "Rukola")
+        variety = next(item for item in crop["varieties"] if item["name"] == "Astro")
+        bed = next(item for item in beds if item["name"] == "A3")
+        suggestions = client.post(
+            "/api/planting-suggestions",
+            json={
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-08-05",
+            },
+        )
+        assert suggestions.status_code == 200
+        suggestion_data = suggestions.json()
+        assert suggestion_data["empty_beds"] == 6
+        assert suggestion_data["occupied_beds"] == 0
+        assert len(suggestion_data["recommended_beds"]) == 5
+        assert all(
+            item["rotation_safe"] for item in suggestion_data["recommended_beds"]
+        )
+        assert "A1" not in {
+            item["bed"] for item in suggestion_data["recommended_beds"]
+        }
+        assert len(suggestion_data["planting_ideas"]) == 6
+        assert len(
+            {item["bed_id"] for item in suggestion_data["planting_ideas"]}
+        ) == 6
+        assert all(
+            item["rotation_safe"] and not item["has_plan_conflict"]
+            for item in suggestion_data["planting_ideas"]
+        )
 
         new_bed = client.post(
             "/api/beds",
@@ -143,10 +301,20 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert new_bed.status_code == 201
         assert new_bed.json()["area_m2"] == 12.0
+        resized_bed = client.put(
+            f"/api/beds/{new_bed.json()['id']}/size",
+            json={"width_m": 1.2, "length_m": 20},
+        )
+        assert resized_bed.status_code == 200
+        assert resized_bed.json()["area_m2"] == 24.0
+        assert client.get(f"/api/beds/{new_bed.json()['id']}").json()[
+            "length_m"
+        ] == 20
+        assert client.put(
+            f"/api/beds/{new_bed.json()['id']}/size",
+            json={"width_m": 0, "length_m": 20},
+        ).status_code == 422
 
-        crop = next(item for item in crops if item["name"] == "Rukola")
-        variety = next(item for item in crop["varieties"] if item["name"] == "Astro")
-        bed = next(item for item in beds if item["name"] == "A3")
         planting = client.post(
             "/api/plantings",
             json={
@@ -158,6 +326,10 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert planting.status_code == 201
         assert "tri opravila" in planting.json()["message"]
+        assert planting.json()["maturity_season"] == "summer"
+        assert planting.json()["maturity_season_label"] == "poletje"
+        assert planting.json()["maturity_days"] == variety["days_summer"]
+        assert planting.json()["expected_harvest_date"] == "2026-09-06"
 
         detail = client.get(f"/api/beds/{bed['id']}")
         assert detail.status_code == 200
@@ -259,6 +431,55 @@ def test_bed_planting_and_task_workflow() -> None:
         refreshed_bed = client.get(f"/api/beds/{bed['id']}").json()
         assert refreshed_bed["status"] == "empty"
         assert refreshed_bed["last_crop_family"] == "Brassicaceae"
+        suggestions_after_cycle = client.post(
+            "/api/planting-suggestions",
+            json={
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-09-20",
+            },
+        ).json()
+        assert "A3" not in {
+            item["bed"] for item in suggestions_after_cycle["recommended_beds"]
+        }
+
+        with SessionLocal() as db:
+            lettuce = db.scalar(select(Crop).where(Crop.name == "Solata"))
+            lettuce_variety = db.scalar(
+                select(Variety)
+                .where(Variety.crop_id == lettuce.id)
+                .order_by(Variety.id)
+            )
+            stored_bed = db.get(Bed, bed["id"])
+            second_cycle = Planting(
+                farm_id=1,
+                bed_id=stored_bed.id,
+                crop_id=lettuce.id,
+                variety_id=lettuce_variety.id,
+                sowing_date=date(2026, 9, 20),
+                expected_harvest_date=date(2026, 11, 5),
+                status="completed",
+            )
+            db.add(second_cycle)
+            stored_bed.last_crop_family = lettuce.family
+            db.commit()
+            second_cycle_id = second_cycle.id
+        suggestions_after_two_cycles = client.post(
+            "/api/planting-suggestions",
+            json={
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-11-10",
+            },
+        ).json()
+        assert "A3" not in {
+            item["bed"]
+            for item in suggestions_after_two_cycles["recommended_beds"]
+        }
+        with SessionLocal() as db:
+            db.delete(db.get(Planting, second_cycle_id))
+            db.get(Bed, bed["id"]).last_crop_family = crop["family"]
+            db.commit()
 
         harvest = client.post(
             "/api/harvests",
@@ -561,6 +782,13 @@ def test_bed_planting_and_task_workflow() -> None:
         assert plan_series.status_code == 201
         assert len(plan_series.json()["plans"]) == 2
         assert plan_series.json()["warnings"]
+        assert plan_series.json()["plans"][0]["maturity_season"] == "autumn"
+        assert plan_series.json()["plans"][0]["maturity_days"] == variety[
+            "days_autumn"
+        ]
+        assert plan_series.json()["plans"][0]["expected_harvest_date"] == (
+            "2026-10-30"
+        )
 
         calendar = client.get(
             "/api/planning/calendar?start=2026-09-20&end=2026-11-30"
@@ -1746,7 +1974,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0002_authentication"
+        assert data_safety_summary["schema_revision"] == "0004_variety_composition"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["table_count"] == 37
         assert data_safety_summary["record_count"] > 0
@@ -1756,7 +1984,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.14.0"
+        assert production_readiness.json()["version"] == "1.18.0"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(
@@ -1812,6 +2040,44 @@ def test_bed_planting_and_task_workflow() -> None:
         assert len(backup_document["payload"]["tables"]) == 37
         assert "admin_credentials" not in backup_document["payload"]["tables"]
         assert "auth_sessions" not in backup_document["payload"]["tables"]
+        backup_variety = backup_document["payload"]["tables"]["varieties"][0]
+        assert {
+            "days_spring",
+            "days_summer",
+            "days_autumn",
+            "days_winter",
+        } <= set(backup_variety)
+        assert "composition" in backup_variety
+
+        precomposition_document = json.loads(portable_backup.content)
+        for row in precomposition_document["payload"]["tables"]["varieties"]:
+            row.pop("composition")
+        precomposition_document["checksum_sha256"] = hashlib.sha256(
+            canonical_json(precomposition_document["payload"])
+        ).hexdigest()
+        parsed_precomposition = parse_backup(
+            json.dumps(precomposition_document, ensure_ascii=False).encode("utf-8")
+        )
+        assert parsed_precomposition.rows_by_table["varieties"][0][
+            "composition"
+        ] is None
+
+        legacy_document = json.loads(json.dumps(precomposition_document))
+        for row in legacy_document["payload"]["tables"]["varieties"]:
+            for field in (
+                "days_spring",
+                "days_summer",
+                "days_autumn",
+                "days_winter",
+            ):
+                row.pop(field)
+        legacy_document["checksum_sha256"] = hashlib.sha256(
+            canonical_json(legacy_document["payload"])
+        ).hexdigest()
+        parsed_legacy = parse_backup(
+            json.dumps(legacy_document, ensure_ascii=False).encode("utf-8")
+        )
+        assert parsed_legacy.rows_by_table["varieties"][0]["days_winter"] > 0
 
         assert client.post(
             "/api/system/backups/restore?confirmation=NAPAČNO",
@@ -1945,6 +2211,36 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert new_login.status_code == 200
         assert new_login.json()["display_name"] == "Vodja kmetije"
+        assert "session_token" not in new_login.json()
+
+        with TestClient(app) as mobile_client:
+            mobile_login = mobile_client.post(
+                "/api/auth/login",
+                json={"password": "Novo varno geslo 2027!"},
+                headers={
+                    "X-GrowMaster-Client": "mobile",
+                    "Origin": "capacitor://localhost",
+                },
+            )
+            assert mobile_login.status_code == 200
+            mobile_token = mobile_login.json()["session_token"]
+            assert len(mobile_token) >= 32
+            mobile_client.cookies.clear()
+            mobile_headers = {
+                "Authorization": f"Bearer {mobile_token}",
+                "X-GrowMaster-Client": "mobile",
+                "Origin": "capacitor://localhost",
+            }
+            mobile_beds = mobile_client.get("/api/beds", headers=mobile_headers)
+            assert mobile_beds.status_code == 200
+            assert mobile_beds.headers["access-control-allow-origin"] == (
+                "capacitor://localhost"
+            )
+            assert mobile_client.get("/api/auth/status", headers=mobile_headers).json()[
+                "authenticated"
+            ] is True
+            assert mobile_client.post("/api/auth/logout", headers=mobile_headers).status_code == 200
+            assert mobile_client.get("/api/beds", headers=mobile_headers).status_code == 401
 
         with SessionLocal() as db:
             for day in range(1, 16):

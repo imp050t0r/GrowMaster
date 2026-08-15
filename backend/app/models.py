@@ -74,6 +74,11 @@ class Variety(Base):
     crop_id: Mapped[int] = mapped_column(ForeignKey("crops.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(120))
     days_to_harvest: Mapped[int]
+    days_spring: Mapped[int] = mapped_column(Integer)
+    days_summer: Mapped[int] = mapped_column(Integer)
+    days_autumn: Mapped[int] = mapped_column(Integer)
+    days_winter: Mapped[int] = mapped_column(Integer)
+    composition: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     crop: Mapped[Crop] = relationship(back_populates="varieties")
 
