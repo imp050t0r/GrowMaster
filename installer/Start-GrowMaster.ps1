@@ -47,7 +47,12 @@ function Ensure-PrivateEnvironment {
     $databaseSource = $databaseStorage.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
     $backupSource = $backupStorage.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
     $random = New-Object byte[] 32
-    [Security.Cryptography.RandomNumberGenerator]::Fill($random)
+    $randomGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $randomGenerator.GetBytes($random)
+    } finally {
+        $randomGenerator.Dispose()
+    }
     $password = [Convert]::ToBase64String($random).TrimEnd('=').Replace('+', '-').Replace('/', '_')
     @(
         "POSTGRES_DB=growmaster",
