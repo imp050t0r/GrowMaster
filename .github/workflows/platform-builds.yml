@@ -29,6 +29,19 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("installer/Start-GrowMaster.ps1", [ref]$null, [ref]$errors) | Out-Null
           [System.Management.Automation.Language.Parser]::ParseFile("installer/Stop-GrowMaster.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count) { $errors | Format-List | Out-String | Write-Error }
+      - name: Validate Windows PowerShell 5.1 cryptography
+        shell: powershell
+        run: |
+          $launcher = Get-Content "installer/Start-GrowMaster.ps1" -Raw
+          if ($launcher -match 'RandomNumberGenerator\]\s*::Fill') {
+            throw "RandomNumberGenerator.Fill is unavailable in Windows PowerShell 5.1."
+          }
+          $random = New-Object byte[] 32
+          $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+          try { $generator.GetBytes($random) } finally { $generator.Dispose() }
+          if (($random | Where-Object { $_ -ne 0 }).Count -eq 0) {
+            throw "Secure random byte generation failed."
+          }
       - name: Install Inno Setup
         shell: pwsh
         run: if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
