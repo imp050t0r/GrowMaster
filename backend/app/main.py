@@ -58,6 +58,11 @@ from app.maturity import (
     maturity_days_for_date,
     maturity_details,
 )
+from app.planting_advisor import (
+    rotation_families,
+    score_candidate,
+    seasonal_assessment,
+)
 from app.models import (
     Bed,
     Cost,
@@ -129,6 +134,7 @@ from app.schemas import (
     RetailSaleCreate,
     RefundCreate,
     PlantingCreate,
+    PlantingSuggestionRequest,
     RotationPreview,
     SaleCreate,
     SalesSettingsUpdate,
@@ -146,7 +152,7 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
-APP_VERSION = "1.17.0"
+APP_VERSION = "1.18.0"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
@@ -1043,7 +1049,7 @@ def resolve_selection(payload: PlantingCreate, db: Session) -> tuple[Crop, Varie
 
 
 def rotation_preview(payload: PlantingCreate, db: Session) -> RotationPreview:
-    crop, _, bed = resolve_selection(payload, db)
+    crop, variety, bed = resolve_selection(payload, db)
     active = active_planting_for_bed(db, bed.id)
     if active is not None:
         return RotationPreview(
@@ -1052,19 +1058,272 @@ def rotation_preview(payload: PlantingCreate, db: Session) -> RotationPreview:
             message=f"Gredica {bed.name} je že zasedena: {active.crop.name} {active.variety.name}.",
         )
 
-    if bed.last_crop_family == crop.family:
+    previous = db.scalar(
+        select(Planting)
+        .where(Planting.bed_id == bed.id, Planting.status == "completed")
+        .options(selectinload(Planting.crop), selectinload(Planting.variety))
+        .order_by(Planting.sowing_date.desc(), Planting.id.desc())
+        .limit(1)
+    )
+    candidate_families = rotation_families(crop.name, crop.family, variety.name)
+    previous_families = (
+        rotation_families(
+            previous.crop.name,
+            previous.crop.family,
+            previous.variety.name,
+        )
+        if previous is not None
+        else ({bed.last_crop_family} if bed.last_crop_family else set())
+    )
+    repeated_families = candidate_families & previous_families
+    if repeated_families:
+        family_label = ", ".join(sorted(repeated_families))
         return RotationPreview(
             allowed=True,
             requires_override=True,
             code="ROTATION_WARNING",
             message=(
-                f"Na gredici {bed.name} je bila nazadnje družina {bed.last_crop_family}. "
-                f"Tudi {crop.name} spada v isto družino."
+                f"Na gredici {bed.name} je bila nazadnje družina {family_label}. "
+                f"Izbrana zasaditev vključuje isto družino."
             ),
             warnings=["Priporočena je druga gredica ali daljši presledek v kolobarju."],
         )
 
     return RotationPreview(allowed=True, message="Gredica je prosta in kolobar je ustrezen.")
+
+
+@app.post("/api/planting-suggestions")
+def planting_suggestions(
+    payload: PlantingSuggestionRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    selected_crop = db.scalar(
+        select(Crop)
+        .where(Crop.id == payload.crop_id)
+        .options(selectinload(Crop.varieties))
+    )
+    selected_variety = db.get(Variety, payload.variety_id)
+    if selected_crop is None or selected_variety is None:
+        raise HTTPException(status_code=404, detail="Kultura ali sorta ne obstaja.")
+    if selected_variety.crop_id != selected_crop.id:
+        raise HTTPException(status_code=422, detail="Sorta ne pripada izbrani kulturi.")
+
+    beds = list(
+        db.scalars(
+            select(Bed)
+            .where(Bed.farm_id == DEFAULT_FARM_ID)
+            .order_by(Bed.name, Bed.id)
+        ).all()
+    )
+    active_plantings = list(
+        db.scalars(
+            select(Planting).where(
+                Planting.farm_id == DEFAULT_FARM_ID,
+                Planting.status == "active",
+            )
+        ).all()
+    )
+    active_bed_ids = {planting.bed_id for planting in active_plantings}
+    empty_beds = [bed for bed in beds if bed.id not in active_bed_ids]
+
+    history_rows = list(
+        db.scalars(
+            select(Planting)
+            .where(
+                Planting.farm_id == DEFAULT_FARM_ID,
+                Planting.status == "completed",
+            )
+            .options(
+                selectinload(Planting.crop),
+                selectinload(Planting.variety),
+                selectinload(Planting.harvests),
+            )
+            .order_by(Planting.bed_id, Planting.sowing_date.desc(), Planting.id.desc())
+        ).all()
+    )
+    history_by_bed: dict[int, list[Planting]] = {}
+    for planting in history_rows:
+        history_by_bed.setdefault(planting.bed_id, []).append(planting)
+
+    planned_rows = list(
+        db.scalars(
+            select(CropPlan).where(
+                CropPlan.farm_id == DEFAULT_FARM_ID,
+                CropPlan.status == "planned",
+            )
+        ).all()
+    )
+    plans_by_bed: dict[int, list[CropPlan]] = {}
+    for plan in planned_rows:
+        plans_by_bed.setdefault(plan.bed_id, []).append(plan)
+
+    all_crops = list(
+        db.scalars(
+            select(Crop).options(selectinload(Crop.varieties)).order_by(Crop.name)
+        ).all()
+    )
+
+    def candidate_for(bed: Bed, crop: Crop, variety: Variety) -> dict:
+        maturity_days = maturity_days_for_date(variety, payload.sowing_date)
+        expected_harvest_date = payload.sowing_date + timedelta(days=maturity_days)
+        bed_history = history_by_bed.get(bed.id, [])
+        recent_history = bed_history[:4]
+        recent_family_sets = [
+            rotation_families(
+                planting.crop.name,
+                planting.crop.family,
+                planting.variety.name,
+            )
+            for planting in recent_history
+        ]
+        if not recent_family_sets and bed.last_crop_family:
+            recent_family_sets = [{bed.last_crop_family}]
+        candidate_family_set = rotation_families(
+            crop.name,
+            crop.family,
+            variety.name,
+        )
+        has_plan_conflict = any(
+            plan.sowing_date <= expected_harvest_date
+            and plan.expected_harvest_date >= payload.sowing_date
+            for plan in plans_by_bed.get(bed.id, [])
+        )
+        previous_yields = [
+            sum(harvest.quantity_kg for harvest in planting.harvests) / bed.area_m2
+            for planting in bed_history
+            if planting.crop_id == crop.id and planting.harvests and bed.area_m2 > 0
+        ]
+        previous_yield = (
+            round(sum(previous_yields) / len(previous_yields), 2)
+            if previous_yields
+            else None
+        )
+        seasonal_score, seasonal_reason, seasonal_warning = seasonal_assessment(
+            crop.name,
+            crop.category,
+            payload.sowing_date,
+        )
+        result = score_candidate(
+            candidate_family_set,
+            recent_family_sets,
+            maturity_days,
+            seasonal_score,
+            has_plan_conflict,
+            previous_yield,
+        )
+        result["reasons"].insert(0, seasonal_reason)
+        if seasonal_warning:
+            result["warnings"].append(seasonal_warning)
+            if result["rating"] == "recommended":
+                result["rating"] = "acceptable"
+                result["rating_label"] = "Primerno s preverbo"
+        rotation_safe = not any(
+            candidate_family_set & previous_families
+            for previous_families in recent_family_sets[:4]
+        )
+        return {
+            "bed_id": bed.id,
+            "bed": bed.name,
+            "area_m2": bed.area_m2,
+            "crop_id": crop.id,
+            "crop": crop.name,
+            "crop_family": crop.family,
+            "variety_id": variety.id,
+            "variety": variety.name,
+            "sowing_date": payload.sowing_date,
+            "expected_harvest_date": expected_harvest_date,
+            "maturity_days": maturity_days,
+            "rotation_safe": rotation_safe,
+            "has_plan_conflict": has_plan_conflict,
+            "recent_history": [
+                {
+                    "crop": planting.crop.name,
+                    "variety": planting.variety.name,
+                    "sowing_date": planting.sowing_date,
+                    "families": sorted(
+                        rotation_families(
+                            planting.crop.name,
+                            planting.crop.family,
+                            planting.variety.name,
+                        )
+                    ),
+                }
+                for planting in recent_history
+            ],
+            "_rotation_families": candidate_family_set,
+            "_seasonal_score": seasonal_score,
+            **result,
+        }
+
+    recommended_beds = [
+        candidate_for(bed, selected_crop, selected_variety) for bed in empty_beds
+    ]
+    recommended_beds.sort(key=lambda item: (-item["score"], item["bed"]))
+
+    used_crops: set[int] = set()
+    used_families: set[str] = set()
+    planting_ideas: list[dict] = []
+    for bed in empty_beds[:12]:
+        candidates: list[dict] = []
+        for crop in all_crops:
+            if not crop.varieties:
+                continue
+            variety = min(
+                crop.varieties,
+                key=lambda item: (
+                    maturity_days_for_date(item, payload.sowing_date),
+                    item.name,
+                ),
+            )
+            candidate = candidate_for(bed, crop, variety)
+            if candidate["_seasonal_score"] <= -25:
+                continue
+            diversity_penalty = 0
+            if crop.id in used_crops:
+                diversity_penalty += 20
+            if candidate["_rotation_families"] & used_families:
+                diversity_penalty += 18
+            candidate["_selection_score"] = candidate["score"] - diversity_penalty
+            candidates.append(candidate)
+        safe_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate["rotation_safe"] and not candidate["has_plan_conflict"]
+        ]
+        pool = safe_candidates or candidates
+        if not pool:
+            continue
+        choice = max(
+            pool,
+            key=lambda item: (
+                item["_selection_score"],
+                -item["maturity_days"],
+                item["crop"],
+            ),
+        )
+        used_crops.add(choice["crop_id"])
+        used_families.update(choice["_rotation_families"])
+        planting_ideas.append(choice)
+
+    for item in [*recommended_beds, *planting_ideas]:
+        item.pop("_rotation_families", None)
+        item.pop("_seasonal_score", None)
+        item.pop("_selection_score", None)
+
+    return {
+        "message": "Predlog je izračunan iz zadnjih štirih ciklov, termina in načrtov.",
+        "sowing_date": payload.sowing_date,
+        "selected_crop": selected_crop.name,
+        "selected_variety": selected_variety.name,
+        "occupied_beds": len(active_bed_ids),
+        "empty_beds": len(empty_beds),
+        "recommended_beds": recommended_beds[:5],
+        "planting_ideas": planting_ideas,
+        "note": (
+            "Predlog je pomoč pri odločitvi. Upoštevaj tudi tla, vreme, bolezni, "
+            "razpoložljivo zaščito in lastne izkušnje."
+        ),
+    }
 
 
 @app.post("/api/plantings/preview", response_model=RotationPreview)
@@ -3109,8 +3368,18 @@ def get_invoice_profile(db: Session) -> InvoiceProfile:
     if profile is None:
         profile = InvoiceProfile(farm_id=DEFAULT_FARM_ID)
         db.add(profile)
-        db.commit()
-        db.refresh(profile)
+        try:
+            db.commit()
+        except IntegrityError:
+            # The dashboard requests the farm and invoice profiles in parallel.
+            # On a fresh installation both requests may try to create this
+            # singleton row at the same time, so reuse the row that won the race.
+            db.rollback()
+            profile = db.get(InvoiceProfile, DEFAULT_FARM_ID)
+            if profile is None:
+                raise
+        else:
+            db.refresh(profile)
     return profile
 
 

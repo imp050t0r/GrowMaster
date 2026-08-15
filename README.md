@@ -12,6 +12,8 @@ GrowMaster is a local-first farm management application for professional market 
 - sowing form: crop, variety, date and bed
 - automatic assignment of a sowing to the selected bed
 - crop-rotation warning with an explicit user override
+- smart planting suggestions using four-cycle bed history, season and planned occupancy
+- selectable local database and backup directory during a new Windows installation
 - three automatic follow-up tasks for every sowing
 - daily task center with date, priority, bed, duration, material use and notes
 - workers and family/owner labor with reusable hourly rates

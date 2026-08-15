@@ -1,6 +1,7 @@
 param(
     [switch]$Build,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [string]$DataDirectory
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +34,18 @@ function Find-DockerExecutable {
 function Ensure-PrivateEnvironment {
     if (Test-Path -LiteralPath $envFile) { return }
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+    $storageRoot = if ([string]::IsNullOrWhiteSpace($DataDirectory)) {
+        Join-Path $env:LOCALAPPDATA "GrowMasterData"
+    } else {
+        [Environment]::ExpandEnvironmentVariables($DataDirectory.Trim())
+    }
+    $storageRoot = [IO.Path]::GetFullPath($storageRoot).TrimEnd('\', '/')
+    $databaseStorage = Join-Path $storageRoot "database"
+    $backupStorage = Join-Path $storageRoot "backups"
+    New-Item -ItemType Directory -Path $databaseStorage -Force | Out-Null
+    New-Item -ItemType Directory -Path $backupStorage -Force | Out-Null
+    $databaseSource = $databaseStorage.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
+    $backupSource = $backupStorage.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
     $random = New-Object byte[] 32
     [Security.Cryptography.RandomNumberGenerator]::Fill($random)
     $password = [Convert]::ToBase64String($random).TrimEnd('=').Replace('+', '-').Replace('/', '_')
@@ -41,11 +54,13 @@ function Ensure-PrivateEnvironment {
         "POSTGRES_USER=growmaster",
         "POSTGRES_PASSWORD=$password",
         "DATABASE_URL=postgresql+psycopg://growmaster:$password@database:5432/growmaster",
+        "POSTGRES_DATA_SOURCE=`"$databaseSource`"",
+        "BACKUP_DATA_SOURCE=`"$backupSource`"",
         "BACKUP_DIR=/data/backups",
         "COOKIE_SECURE=false",
         "CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost,https://localhost,capacitor://localhost"
     ) | Set-Content -LiteralPath $envFile -Encoding UTF8
-    Write-LauncherLog "Created a private environment file."
+    Write-LauncherLog "Created a private environment file and data directories under $storageRoot."
 }
 
 try {

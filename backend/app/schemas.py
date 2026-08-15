@@ -62,6 +62,12 @@ class PlantingCreate(BaseModel):
     override_rotation: bool = False
 
 
+class PlantingSuggestionRequest(BaseModel):
+    crop_id: int
+    variety_id: int
+    sowing_date: date
+
+
 class RotationPreview(BaseModel):
     allowed: bool
     requires_override: bool = False

@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-growmaster}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
-      - growmaster_postgres:/var/lib/postgresql/data
+      - "${POSTGRES_DATA_SOURCE:-growmaster_postgres}:/var/lib/postgresql/data"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-growmaster} -d ${POSTGRES_DB:-growmaster}"]
       interval: 5s
@@ -23,7 +23,7 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost,https://localhost,capacitor://localhost}
     volumes:
-      - growmaster_backups:/data/backups
+      - "${BACKUP_DATA_SOURCE:-growmaster_backups}:/data/backups"
     depends_on:
       database:
         condition: service_healthy

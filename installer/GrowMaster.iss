@@ -1,5 +1,5 @@
 #define MyAppName "GrowMaster"
-#define MyAppVersion "1.17.0"
+#define MyAppVersion "1.18.0"
 #define MyAppPublisher "GrowMaster"
 #define MyAppURL "https://github.com/imp050t0r/GrowMaster"
 
@@ -39,7 +39,40 @@ Name: "{group}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile 
 Name: "{autodesktop}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Start-GrowMaster.ps1"" -Build"; Description: "Zaženi GrowMaster"; Flags: postinstall skipifsilent nowait
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Start-GrowMaster.ps1"" -Build -DataDirectory ""{code:GetDataDirectory}"""; Description: "Zaženi GrowMaster"; Flags: postinstall skipifsilent nowait
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Stop-GrowMaster.ps1"""; Flags: runhidden; RunOnceId: "StopGrowMaster"
+
+[Code]
+var
+  DataDirectoryPage: TInputDirWizardPage;
+
+procedure InitializeWizard;
+begin
+  DataDirectoryPage := CreateInputDirPage(
+    wpSelectDir,
+    'Mapa za podatke',
+    'Izberi, kam naj GrowMaster shrani podatke.',
+    'V izbrani mapi bosta podmapi za PostgreSQL bazo in varnostne kopije. Priporočen je lokalni disk, ki je vedno priključen.',
+    False,
+    ''
+  );
+  DataDirectoryPage.Add('');
+  DataDirectoryPage.Values[0] := ExpandConstant('{localappdata}\GrowMasterData');
+end;
+
+function ExistingEnvironmentFile: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{userappdata}\GrowMaster\.env'));
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = DataDirectoryPage.ID) and ExistingEnvironmentFile;
+end;
+
+function GetDataDirectory(Param: String): String;
+begin
+  Result := DataDirectoryPage.Values[0];
+end;

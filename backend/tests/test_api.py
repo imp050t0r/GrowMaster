@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import hashlib
 import json
 import os
@@ -25,7 +25,7 @@ from app.backups import (  # noqa: E402
 from app.database import SessionLocal, engine  # noqa: E402
 from app.main import app, demo_data_available, prepare_farm_on_first_setup  # noqa: E402
 from app.migrations import run_migrations, schema_migrations  # noqa: E402
-from app.models import Bed, Crop, Task, Variety  # noqa: E402
+from app.models import Bed, Crop, Planting, Task, Variety  # noqa: E402
 from app.seed import seed_database  # noqa: E402
 
 
@@ -36,7 +36,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.17.0",
+            "version": "1.18.0",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -264,6 +264,37 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert refreshed_crop["varieties"] == [new_variety.json()]
 
+        crop = next(item for item in crops if item["name"] == "Rukola")
+        variety = next(item for item in crop["varieties"] if item["name"] == "Astro")
+        bed = next(item for item in beds if item["name"] == "A3")
+        suggestions = client.post(
+            "/api/planting-suggestions",
+            json={
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-08-05",
+            },
+        )
+        assert suggestions.status_code == 200
+        suggestion_data = suggestions.json()
+        assert suggestion_data["empty_beds"] == 6
+        assert suggestion_data["occupied_beds"] == 0
+        assert len(suggestion_data["recommended_beds"]) == 5
+        assert all(
+            item["rotation_safe"] for item in suggestion_data["recommended_beds"]
+        )
+        assert "A1" not in {
+            item["bed"] for item in suggestion_data["recommended_beds"]
+        }
+        assert len(suggestion_data["planting_ideas"]) == 6
+        assert len(
+            {item["bed_id"] for item in suggestion_data["planting_ideas"]}
+        ) == 6
+        assert all(
+            item["rotation_safe"] and not item["has_plan_conflict"]
+            for item in suggestion_data["planting_ideas"]
+        )
+
         new_bed = client.post(
             "/api/beds",
             json={"name": "B1", "width_m": 0.8, "length_m": 15},
@@ -284,9 +315,6 @@ def test_bed_planting_and_task_workflow() -> None:
             json={"width_m": 0, "length_m": 20},
         ).status_code == 422
 
-        crop = next(item for item in crops if item["name"] == "Rukola")
-        variety = next(item for item in crop["varieties"] if item["name"] == "Astro")
-        bed = next(item for item in beds if item["name"] == "A3")
         planting = client.post(
             "/api/plantings",
             json={
@@ -403,6 +431,55 @@ def test_bed_planting_and_task_workflow() -> None:
         refreshed_bed = client.get(f"/api/beds/{bed['id']}").json()
         assert refreshed_bed["status"] == "empty"
         assert refreshed_bed["last_crop_family"] == "Brassicaceae"
+        suggestions_after_cycle = client.post(
+            "/api/planting-suggestions",
+            json={
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-09-20",
+            },
+        ).json()
+        assert "A3" not in {
+            item["bed"] for item in suggestions_after_cycle["recommended_beds"]
+        }
+
+        with SessionLocal() as db:
+            lettuce = db.scalar(select(Crop).where(Crop.name == "Solata"))
+            lettuce_variety = db.scalar(
+                select(Variety)
+                .where(Variety.crop_id == lettuce.id)
+                .order_by(Variety.id)
+            )
+            stored_bed = db.get(Bed, bed["id"])
+            second_cycle = Planting(
+                farm_id=1,
+                bed_id=stored_bed.id,
+                crop_id=lettuce.id,
+                variety_id=lettuce_variety.id,
+                sowing_date=date(2026, 9, 20),
+                expected_harvest_date=date(2026, 11, 5),
+                status="completed",
+            )
+            db.add(second_cycle)
+            stored_bed.last_crop_family = lettuce.family
+            db.commit()
+            second_cycle_id = second_cycle.id
+        suggestions_after_two_cycles = client.post(
+            "/api/planting-suggestions",
+            json={
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-11-10",
+            },
+        ).json()
+        assert "A3" not in {
+            item["bed"]
+            for item in suggestions_after_two_cycles["recommended_beds"]
+        }
+        with SessionLocal() as db:
+            db.delete(db.get(Planting, second_cycle_id))
+            db.get(Bed, bed["id"]).last_crop_family = crop["family"]
+            db.commit()
 
         harvest = client.post(
             "/api/harvests",
@@ -1907,7 +1984,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.17.0"
+        assert production_readiness.json()["version"] == "1.18.0"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(

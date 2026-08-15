@@ -130,6 +130,8 @@ function App() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [rotationWarning, setRotationWarning] = useState(null);
+  const [plantingSuggestions, setPlantingSuggestions] = useState(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [completionTaskId, setCompletionTaskId] = useState(null);
 
   const [plantingForm, setPlantingForm] = useState({
@@ -460,6 +462,41 @@ function App() {
       variety_id: crop?.varieties[0]?.id || "",
     }));
     setRotationWarning(null);
+    setPlantingSuggestions(null);
+  }
+
+  async function requestPlantingSuggestions() {
+    clearMessages();
+    setSuggestionsLoading(true);
+    try {
+      const data = await apiRequest("/api/planting-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          crop_id: Number(plantingForm.crop_id),
+          variety_id: Number(plantingForm.variety_id),
+          sowing_date: plantingForm.sowing_date,
+        }),
+      });
+      setPlantingSuggestions(data);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }
+
+  function applyPlantingSuggestion(suggestion) {
+    setPlantingForm((current) => ({
+      ...current,
+      crop_id: suggestion.crop_id,
+      variety_id: suggestion.variety_id,
+      bed_id: suggestion.bed_id,
+    }));
+    setRotationWarning(null);
+    setNotice(
+      `Predlog je pripravljen: ${suggestion.crop} ${suggestion.variety} na gredici ${suggestion.bed}.`,
+    );
   }
 
   async function savePlanting(overrideRotation = false) {
@@ -488,6 +525,7 @@ function App() {
     }
 
     setRotationWarning(null);
+    setPlantingSuggestions(null);
     setNotice(data.message);
     await loadData();
     setView("beds");
@@ -1120,7 +1158,7 @@ function App() {
         </div>
         <div className="account-summary">
           <span className={`connection-pill ${online ? "online" : "offline"}`}>{online ? "● POVEZANO" : "● BREZ POVEZAVE"}</span>
-          <span className="status-pill">1.15</span>
+          <span className="status-pill">1.18</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
           {installPrompt && <button type="button" onClick={installWebApp}>NAMESTI APLIKACIJO</button>}
           {isNativeApp && <button type="button" onClick={changeServer}>STREŽNIK</button>}
@@ -1192,6 +1230,11 @@ function App() {
           savePlanting={savePlanting}
           rotationWarning={rotationWarning}
           setRotationWarning={setRotationWarning}
+          suggestions={plantingSuggestions}
+          suggestionsLoading={suggestionsLoading}
+          requestSuggestions={requestPlantingSuggestions}
+          applySuggestion={applyPlantingSuggestion}
+          clearSuggestions={() => setPlantingSuggestions(null)}
         />
       )}
 
@@ -1439,23 +1482,41 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
   );
 }
 
-function PlantingView({ crops, beds, plantings, form, setForm, selectedCrop, changeCrop, savePlanting, rotationWarning, setRotationWarning }) {
+function PlantingView({ crops, beds, plantings, form, setForm, selectedCrop, changeCrop, savePlanting, rotationWarning, setRotationWarning, suggestions, suggestionsLoading, requestSuggestions, applySuggestion, clearSuggestions }) {
   return (
     <>
       <section className="panel">
         <div className="section-heading"><div><p className="eyebrow">Načrt setve</p><h2>Dodaj novo setev</h2></div></div>
         <form className="planting-form" onSubmit={(event) => { event.preventDefault(); savePlanting(false); }}>
           <label>Kultura<select value={form.crop_id} onChange={changeCrop} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
-          <label>Sorta<select value={form.variety_id} onChange={(event) => setForm({ ...form, variety_id: event.target.value })} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name} · {maturityDaysForDate(variety, form.sowing_date)} dni ({maturitySeasonForDate(form.sowing_date).label})</option>)}</select></label>
-          <label>Datum setve<input type="date" value={form.sowing_date} onChange={(event) => setForm({ ...form, sowing_date: event.target.value })} required /></label>
+          <label>Sorta<select value={form.variety_id} onChange={(event) => { setForm({ ...form, variety_id: event.target.value }); clearSuggestions(); }} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name} · {maturityDaysForDate(variety, form.sowing_date)} dni ({maturitySeasonForDate(form.sowing_date).label})</option>)}</select></label>
+          <label>Datum setve<input type="date" value={form.sowing_date} onChange={(event) => { setForm({ ...form, sowing_date: event.target.value }); clearSuggestions(); }} required /></label>
           <label>Gredica<select value={form.bed_id} onChange={(event) => { setForm({ ...form, bed_id: event.target.value }); setRotationWarning(null); }} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.status === "empty" ? "prazna" : "zasedena"} · {bed.area_m2} m²</option>)}</select></label>
-          <button className="primary-button" type="submit">DODAJ SETEV</button>
+          <div className="planting-actions"><button className="secondary-button" type="button" onClick={requestSuggestions} disabled={suggestionsLoading}>{suggestionsLoading ? "RAČUNAM PREDLOG ..." : "PAMETNI PREDLOG"}</button><button className="primary-button" type="submit">DODAJ SETEV</button></div>
         </form>
         {rotationWarning && <div className="rotation-warning"><strong>Opozorilo kolobarja</strong><p>{rotationWarning.message}</p><p>{rotationWarning.warnings?.[0]}</p><div className="warning-actions"><button type="button" onClick={() => setRotationWarning(null)}>IZBERI DRUGO GREDICO</button><button type="button" className="danger-button" onClick={() => savePlanting(true)}>VSEENO POSEJ</button></div></div>}
       </section>
+      {suggestions && <PlantingSuggestions suggestions={suggestions} applySuggestion={applySuggestion} />}
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Aktivni rastni cikli</p><h2>Setve</h2></div><span>{plantings.length} aktivnih</span></div>{plantings.length === 0 ? <p className="empty-state">Prva setev še ni dodana.</p> : <div className="planting-list">{plantings.map((planting) => <article key={planting.id}><strong>{planting.bed} · {planting.crop} {planting.variety}</strong><span>{planting.sowing_date} → {planting.expected_harvest_date}</span>{planting.rotation_override && <small>Kolobar je uporabnik zavestno preglasil.</small>}</article>)}</div>}</section>
     </>
   );
+}
+
+function PlantingSuggestions({ suggestions, applySuggestion }) {
+  const SuggestionCard = ({ item, showCrop = false }) => <article className={`advisor-card ${item.rating}`}>
+    <div className="advisor-card-head"><div><span>Gredica {item.bed} · {item.area_m2} m²</span><strong>{showCrop ? `${item.crop} ${item.variety}` : `${suggestions.selected_crop} ${suggestions.selected_variety}`}</strong></div><span className={`advisor-rating ${item.rating}`}>{item.rating_label}</span></div>
+    <div className="advisor-dates"><span>Setev {item.sowing_date}</span><span>Žetev okoli {item.expected_harvest_date}</span></div>
+    {item.recent_history.length > 0 && <small className="advisor-history">Zadnji cikli: {item.recent_history.map((entry) => entry.crop).join(" → ")}</small>}
+    <ul>{item.reasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}</ul>
+    {item.warnings.length > 0 && <div className="advisor-warnings">{item.warnings.map((warning) => <span key={warning}>⚠ {warning}</span>)}</div>}
+    <button type="button" className="secondary-button" onClick={() => applySuggestion(item)}>UPORABI PREDLOG</button>
+  </article>;
+  return <section className="panel advisor-panel">
+    <div className="section-heading"><div><p className="eyebrow">Kolobar in zgodovina</p><h2>Pametni predlog zasaditve</h2><p className="muted">Pregledani so zadnji štirje cikli, termin setve in že načrtovane zasedenosti.</p></div><span>{suggestions.empty_beds} praznih gredic</span></div>
+    <div className="advisor-section"><h3>Najboljše gredice za {suggestions.selected_crop}</h3><div className="advisor-grid">{suggestions.recommended_beds.slice(0, 3).map((item) => <SuggestionCard key={`bed-${item.bed_id}`} item={item} />)}</div>{suggestions.recommended_beds.length === 0 && <p className="empty-state">Trenutno ni proste gredice za predlog.</p>}</div>
+    <div className="advisor-section"><h3>Predlog kulture za vsako prazno gredico</h3><div className="advisor-grid">{suggestions.planting_ideas.map((item) => <SuggestionCard key={`idea-${item.bed_id}`} item={item} showCrop />)}</div></div>
+    <p className="advisor-note">{suggestions.note}</p>
+  </section>;
 }
 
 function TasksView({ tasks, beds, workers, taskDate, setTaskDate, taskForm, setTaskForm, createTask, completionTaskId, setCompletionTaskId, completion, setCompletion, completeTask }) {
