@@ -572,6 +572,12 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .readiness-check em { color: #8a5b0b; font-size: 0.72rem; font-style: normal; font-weight: 800; }
 .data-safety-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .data-safety-metrics .metric-card:first-child strong { font-size: 1.35rem; }
+.storage-location-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.storage-location-card > div { display: grid; gap: 8px; min-width: 0; }
+.storage-location-card h2 { margin: 3px 0 0; }
+.storage-location-card button, .storage-location-card > small { flex: 0 0 auto; }
+.storage-location-card > small { max-width: 260px; color: #647a70; line-height: 1.45; }
+.storage-path { display: block; max-width: 100%; padding: 10px 12px; overflow-wrap: anywhere; color: #315548; background: #eef4f0; border-radius: 9px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.82rem; }
 .data-safety-grid { display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 14px; }
 .backup-export-card, .restore-form { display: grid; align-content: start; gap: 16px; }
 .backup-export-card h2, .restore-form h2 { margin: 3px 0 8px; }
@@ -658,7 +664,8 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
   .farm-expense-fields .wide { grid-column: 1; }
   .farm-expense-list article { align-items: flex-start; }
   .day-close-heading, .day-close-history article { align-items: stretch; flex-direction: column; }
-  .data-safety-heading, .settings-heading, .automatic-backup-list article { align-items: stretch; flex-direction: column; }
+  .data-safety-heading, .settings-heading, .automatic-backup-list article, .storage-location-card { align-items: stretch; flex-direction: column; }
+  .storage-location-card > small { max-width: none; }
   .automatic-backup-list article a, .automatic-backup-list article button { justify-content: center; }
   .day-close-history article > div:last-child { text-align: left; }
   .day-close-form .section-heading, .day-close-form label:last-of-type, .day-close-form .primary-button, .locked-note { grid-column: 1; }

@@ -2176,6 +2176,7 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
 function DataSafetyView({ status, readiness, restoreFile, setRestoreFile, confirmation, setConfirmation, restoreData }) {
   const backups = status.automatic_backups || [];
   const dailyBackups = status.daily_backups || [];
+  const storageLocation = status.storage_location ? String(status.storage_location).replaceAll("/", "\\") : null;
   const sizeLabel = (bytes) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return <>
     <section className="panel data-safety-heading">
@@ -2191,6 +2192,17 @@ function DataSafetyView({ status, readiness, restoreFile, setRestoreFile, confir
       <article className="metric-card"><span>Vsi zapisi</span><strong>{status.record_count || 0}</strong><small>v {status.table_count || 0} povezanih podatkovnih sklopih</small></article>
       <article className="metric-card"><span>Dnevne kopije</span><strong>{dailyBackups.length}</strong><small>samodejno se ohrani zadnjih {status.daily_backup_retention || 14} dni</small></article>
       <article className="metric-card"><span>Povratne kopije</span><strong>{backups.length}</strong><small>samodejno se ohrani zadnjih 10 obnovitev</small></article>
+    </section>
+    <section className="panel storage-location-card">
+      <div>
+        <p className="eyebrow">Mesto shranjevanja</p>
+        <h2>Mapa baze in varnostnih kopij</h2>
+        <p className="muted">GrowMaster med selitvijo aplikacijo varno ustavi, preveri kopirane podatke in jo nato ponovno zažene. Stara kopija ostane nedotaknjena.</p>
+        <span className="storage-path">{storageLocation || "Trenutno mesto upravlja Docker"}</span>
+      </div>
+      {status.storage_move_supported && !isNativeApp
+        ? <button type="button" className="secondary-button" onClick={() => window.location.assign("growmaster-storage://move")}>IZBERI NOVO MAPO</button>
+        : <small>Mapo lahko prestaviš na računalniku z nameščeno Windows aplikacijo GrowMaster.</small>}
     </section>
     <section className="panel">
       <div className="section-heading"><div><p className="eyebrow">Vsakodnevna zaščita</p><h2>Samodejne dnevne kopije</h2><p className="muted">Nova kopija nastane ob zagonu in nato enkrat na dan, dokler GrowMaster deluje. Vsebuje poslovne podatke, ne pa gesla ali aktivnih prijav.</p></div><span>{dailyBackups.length} shranjenih</span></div>

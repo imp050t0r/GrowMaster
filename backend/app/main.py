@@ -599,6 +599,11 @@ def change_password(
 def data_safety_status(db: Session = Depends(get_db)) -> dict:
     return {
         **database_summary(db),
+        "storage_location": os.getenv("GROWMASTER_DATA_ROOT") or None,
+        "storage_move_supported": os.getenv(
+            "GROWMASTER_WINDOWS_INSTALL", "false"
+        ).lower()
+        == "true",
         "daily_backups": list_daily_backups(),
         "daily_backup_retention": DAILY_BACKUP_RETENTION,
         "automatic_backups": list_automatic_backups(),

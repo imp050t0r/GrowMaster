@@ -1976,11 +1976,23 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety_summary = data_safety.json()
         assert data_safety_summary["schema_revision"] == "0004_variety_composition"
         assert data_safety_summary["backup_format_version"] == 1
+        assert data_safety_summary["storage_location"] is None
+        assert data_safety_summary["storage_move_supported"] is False
         assert data_safety_summary["table_count"] == 37
         assert data_safety_summary["record_count"] > 0
         assert data_safety_summary["daily_backup_retention"] == 14
         assert len(data_safety_summary["daily_backups"]) == 1
         assert data_safety_summary["automatic_backups"] == []
+
+        os.environ["GROWMASTER_DATA_ROOT"] = "D:/GrowMasterData"
+        os.environ["GROWMASTER_WINDOWS_INSTALL"] = "true"
+        try:
+            windows_storage = client.get("/api/system/data-safety").json()
+            assert windows_storage["storage_location"] == "D:/GrowMasterData"
+            assert windows_storage["storage_move_supported"] is True
+        finally:
+            os.environ.pop("GROWMASTER_DATA_ROOT", None)
+            os.environ.pop("GROWMASTER_WINDOWS_INSTALL", None)
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
