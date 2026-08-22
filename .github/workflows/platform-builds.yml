@@ -11,6 +11,10 @@ on:
       - ".github/workflows/platform-builds.yml"
   push:
     branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
 
 jobs:
   windows-installer:
@@ -105,3 +109,34 @@ jobs:
       - name: Build unsigned iPhone simulator app
         working-directory: frontend
         run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-installer, android-app, ios-app]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: GrowMaster-Windows-Setup
+          path: release/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: GrowMaster-Android-APK
+          path: release/android
+      - name: Prepare release files
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mv release/android/app-debug.apk "release/GrowMaster-Android-${version}.apk"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/windows/GrowMaster-Setup-*.exe \
+            release/GrowMaster-Android-*.apk \
+            --verify-tag \
+            --title "GrowMaster ${GITHUB_REF_NAME#v}" \
+            --generate-notes
