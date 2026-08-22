@@ -2166,8 +2166,11 @@ function GredicnikView({ crops, beds, savePlan }) {
     const width = Number(selectedBed?.width_m || 0);
     const length = Number(selectedBed?.length_m || 0);
     const area = Number(selectedBed?.area_m2 || width * length);
-    const fixedRows = form.mode.endsWith("12") ? 12 : form.mode.endsWith("6") ? 6 : null;
+    const fixedRows = form.mode.endsWith("10") || form.mode.endsWith("12") ? 10 : form.mode.endsWith("6") ? 6 : null;
     const rows = fixedRows || Math.max(1, Number(form.rows) || Math.floor(width / (Number(form.row_spacing_cm) / 100)) || 1);
+    const occupiedWidthCm = Math.max(0, rows - 1) * Number(form.row_spacing_cm);
+    const edgeMarginCm = (width * 100 - occupiedWidthCm) / 2;
+    const layoutFits = edgeMarginCm >= 8;
     const plantsPerRow = Math.max(1, Math.floor(length / Math.max(0.01, Number(form.plant_spacing_cm) / 100)));
     const plants = rows * plantsPerRow;
     const profile = babyLeafProfile(selectedCrop?.name);
@@ -2180,7 +2183,7 @@ function GredicnikView({ crops, beds, savePlan }) {
     const harvestDays = Math.max(7, (babyLeaf ? profile.days : Number.isFinite(varietyDays) ? varietyDays : 60) + climateAdjustment);
     const harvest = new Date(`${form.sowing_date}T12:00:00`); harvest.setDate(harvest.getDate() + harvestDays);
     const expectedHarvestDate = Number.isNaN(harvest.getTime()) ? "—" : harvest.toLocaleDateString("sl-SI");
-    return { width, length, area, rows, plantsPerRow, plants, seeds: Math.ceil(plants * 1.15), seedGrams, expectedYield, climateAdjustment, harvestDays, expectedHarvestDate, ...profile };
+    return { width, length, area, rows, occupiedWidthCm, edgeMarginCm, layoutFits, plantsPerRow, plants, seeds: Math.ceil(plants * 1.15), seedGrams, expectedYield, climateAdjustment, harvestDays, expectedHarvestDate, ...profile };
   }, [selectedBed, selectedCrop, selectedVariety, form.mode, form.rows, form.row_spacing_cm, form.plant_spacing_cm, form.region, form.altitude_m, form.sowing_date, babyLeaf]);
 
   function changeCrop(cropId) {
@@ -2204,12 +2207,12 @@ function GredicnikView({ crops, beds, savePlan }) {
     setSaving(true);
     const modeLabel = GREDICNIK_MODES.find((item) => item.value === form.mode)?.label || form.mode;
     const regionLabels = { primorska: "Primorska", panonska: "Panonska Slovenija", centralna: "Osrednja Slovenija", alpska: "Alpski svet" };
-    const notes = `Gredičnik: ${modeLabel}; oprema ${spacingRecommendation.equipment}; ${spacingRecommendation.setup}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; razmik v vrsti ${form.plant_spacing_cm} cm; ${babyLeaf ? `${result.seedGrams.toFixed(1)} g semena; do ${result.cuts} rezov` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
+    const notes = `Gredičnik: ${modeLabel}; oprema ${spacingRecommendation.equipment}; ${spacingRecommendation.setup}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; odmik od robov ${result.edgeMarginCm.toFixed(1)} cm; razmik v vrsti ${form.plant_spacing_cm} cm; ${babyLeaf ? `${result.seedGrams.toFixed(1)} g semena; do ${result.cuts} rezov` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
     await savePlan({ bed_id: Number(form.bed_id), crop_id: Number(form.crop_id), variety_id: Number(form.variety_id), sowing_date: form.sowing_date, transplant_date: null, expected_yield_kg: Number(result.expectedYield.toFixed(2)), succession_count: Number(form.succession_count), succession_interval_days: Number(form.succession_interval_days), notes });
     setSaving(false);
   }
 
-  const ready = selectedBed && selectedCrop && selectedVariety && result.expectedYield > 0;
+  const ready = selectedBed && selectedCrop && selectedVariety && result.expectedYield > 0 && result.layoutFits;
   return <>
     <section className="panel gredicnik-heading">
       <div><p className="eyebrow">Pridelovalni kalkulator</p><h2>Gredičnik</h2><p className="muted">Izračunaj razpored, količino semena in pričakovani pridelek na obstoječih GrowMasterjevih gredicah ter rezultat neposredno dodaj v sezonski načrt.</p></div>
@@ -2234,11 +2237,14 @@ function GredicnikView({ crops, beds, savePlan }) {
               return <button type="button" key={value} className={`${form.mode === value ? "active" : ""}${option?.suitable === false ? " limited" : ""}`} onClick={() => changeMode(value)}><strong>{label}</strong><small>{option ? `${String(option.plantSpacingCm).replace(".", ",")} cm · ${option.equipmentShort}` : "—"}</small>{option?.recommended && <em>priporočeno</em>}</button>;
             })}
           </div>
-          <div className={`spacing-recommendation ${spacingRecommendation.suitable ? "" : "limited"}`}>
+          <div className={`spacing-recommendation ${spacingRecommendation.suitable && result.layoutFits ? "" : "limited"}`}>
             <div><span>Priporočilo za izbrano sorto</span><strong>{String(spacingRecommendation.plantSpacingCm).replace(".", ",")} cm v vrsti</strong></div>
             <b>{spacingRecommendation.equipment}</b>
             <p>{spacingRecommendation.setup}</p>
             <small>{spacingRecommendation.note}</small>
+            <small>{result.layoutFits
+              ? `Na izbrani gredici širine ${(result.width * 100).toFixed(0)} cm ostane približno ${result.edgeMarginCm.toFixed(1).replace(".", ",")} cm do vsakega roba.`
+              : `Razpored je preširok: do vsakega roba mora ostati najmanj 8 cm. Zmanjšaj število vrst ali razmik med njimi.`}</small>
           </div>
           <div className="gredicnik-fields compact-fields">
             <label>Število vrst<input type="number" min="1" max="30" value={result.rows} disabled={form.mode !== "standard"} onChange={(e) => setForm({ ...form, rows: e.target.value })} /></label>
@@ -2260,7 +2266,7 @@ function GredicnikView({ crops, beds, savePlan }) {
             <article className="yield-metric"><span>Pričakovani pridelek</span><strong>{result.expectedYield.toFixed(1)} kg</strong></article>
             <article className="harvest-metric"><span>Okvirna prva žetev</span><strong>{result.expectedHarvestDate}</strong><small>{result.harvestDays} dni po setvi · podnebni popravek {result.climateAdjustment >= 0 ? "+" : ""}{result.climateAdjustment} dni</small></article>
           </div>
-          {(form.mode === "baby12" || form.mode === "seeder12") && spacingRecommendation.equipment === "6 Row Seeder v2" && <p className="seeder-note">Dvanajst vrst se izvede z dvema vzporednima prehodoma 6-vrstne sejalnice.</p>}
+          {(form.mode === "baby10" || form.mode === "seeder10") && spacingRecommendation.equipment === "6 Row Seeder v2" && <p className="seeder-note">Deset vrst se izvede z dvema prilagojenima prehodoma po pet setvenih linij. Pri razmiku 6,4 cm na 80 cm gredici ostane približno 11,2 cm do vsakega roba.</p>}
           <button className="primary-button save-gredicnik" disabled={!ready || saving}>{saving ? "SHRANJUJEM …" : "DODAJ V GROWMASTERJEV PLAN"}</button>
           <p className="calculation-note">Ocene semena in pridelka so načrtovalske vrednosti. Po prvih žetvah jih primerjaj z dejanskim rezultatom sorte in lokacije.</p>
         </aside>

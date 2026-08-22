@@ -1,10 +1,13 @@
 export const GREDICNIK_MODES = [
   { value: "standard", label: "Standardno" },
   { value: "seeder6", label: "6 vrst" },
-  { value: "seeder12", label: "12 vrst" },
+  { value: "seeder10", label: "10 vrst" },
   { value: "baby6", label: "Baby leaf · 6 vrst" },
-  { value: "baby12", label: "Baby leaf · 12 vrst" },
+  { value: "baby10", label: "Baby leaf · 10 vrst" },
 ];
+
+export const STANDARD_BED_WIDTH_CM = 80;
+export const MIN_EDGE_MARGIN_CM = 8;
 
 const normalize = (value = "") => value.toLocaleLowerCase("sl-SI").trim();
 const includesAny = (value, keywords) => keywords.some((keyword) => value.includes(keyword));
@@ -128,33 +131,51 @@ function sixRowSetting(targetCm) {
   ), settings[0]);
 }
 
+function withBedGeometry(recommendation) {
+  const occupiedWidthCm = roundOne(Math.max(0, recommendation.rows - 1) * recommendation.rowSpacingCm);
+  const edgeMarginCm = roundOne((STANDARD_BED_WIDTH_CM - occupiedWidthCm) / 2);
+  const layoutFits = edgeMarginCm >= MIN_EDGE_MARGIN_CM;
+  return {
+    ...recommendation,
+    bedWidthCm: STANDARD_BED_WIDTH_CM,
+    occupiedWidthCm,
+    edgeMarginCm,
+    layoutFits,
+    suitable: recommendation.suitable !== false && layoutFits,
+    geometryNote: layoutFits
+      ? `Na 80 cm široki gredici ostane približno ${String(edgeMarginCm).replace(".", ",")} cm do vsakega roba.`
+      : `Ta razpored pri izbranem razmiku ne pusti varnega odmika najmanj ${MIN_EDGE_MARGIN_CM} cm od roba 80 cm gredice.`,
+  };
+}
+
 export function getGredicnikSpacing(crop = {}, variety = {}, mode = "standard") {
+  const normalizedMode = mode === "seeder12" ? "seeder10" : mode === "baby12" ? "baby10" : mode;
   const base = cropProfile(crop, variety);
   const cropLabel = [crop.name, variety.name].filter(Boolean).join(" · ") || "izbrano sorto";
-  const isBabyMode = mode.startsWith("baby");
-  const fixedRows = mode.endsWith("12") ? 12 : mode.endsWith("6") ? 6 : base.rows;
+  const isBabyMode = normalizedMode.startsWith("baby");
+  const fixedRows = normalizedMode.endsWith("10") ? 10 : normalizedMode.endsWith("6") ? 6 : base.rows;
 
   if (isBabyMode) {
-    return {
-      mode,
+    return withBedGeometry({
+      mode: normalizedMode,
       plantSpacingCm: 2.5,
       finalSpacingCm: 2.5,
       rowSpacingCm: 6.4,
       rows: fixedRows,
       equipment: "6 Row Seeder v2",
       equipmentShort: "6 Row v2",
-      setup: "Nastavitev 1″: jermen na notranjih jermenicah; pred setvijo naredi kratek preizkus odmerjanja.",
+      setup: `Nastavitev 1″: jermen na notranjih jermenicah; pred setvijo naredi kratek preizkus odmerjanja.${normalizedMode === "baby10" ? " Za 10 vrst naredi dva prilagojena prehoda po pet setvenih linij." : ""}`,
       note: base.babyCompatible
         ? `Gostota je namenjena pridelavi ${cropLabel} kot baby leaf.`
         : `${cropLabel} se praviloma ne prideluje kot baby leaf; ta način uporabi le po lastnem preizkusu.`,
       suitable: base.babyCompatible,
-      recommended: base.isBabyCrop && mode === "baby6",
-    };
+      recommended: base.isBabyCrop && normalizedMode === "baby6",
+    });
   }
 
   if (base.system === "manual") {
-    return {
-      mode,
+    return withBedGeometry({
+      mode: normalizedMode,
       plantSpacingCm: base.plantCm,
       finalSpacingCm: base.plantCm,
       rowSpacingCm: base.rowCm,
@@ -162,18 +183,18 @@ export function getGredicnikSpacing(crop = {}, variety = {}, mode = "standard") 
       equipment: "Ročno sajenje",
       equipmentShort: "Ročno",
       setup: "Ta pridelek ni primeren za Jang JP-1, 6-vrstno sejalnico ali običajno Paperpot verigo.",
-      note: mode === "standard"
+      note: normalizedMode === "standard"
         ? "Uporabi navedeni končni razmik in ga prilagodi bujnosti sorte."
-        : "Razpored 6 ali 12 vrst za ta pridelek praviloma ni primeren.",
-      suitable: mode === "standard",
-      recommended: mode === "standard",
-    };
+        : "Razpored 6 ali 10 vrst za ta pridelek praviloma ni primeren.",
+      suitable: normalizedMode === "standard",
+      recommended: normalizedMode === "standard",
+    });
   }
 
   if (base.system === "paperpot") {
     const paperpot = paperpotSetup(base.plantCm);
-    return {
-      mode,
+    return withBedGeometry({
+      mode: normalizedMode,
       plantSpacingCm: paperpot.actualCm,
       finalSpacingCm: paperpot.actualCm,
       rowSpacingCm: base.rowCm,
@@ -184,14 +205,14 @@ export function getGredicnikSpacing(crop = {}, variety = {}, mode = "standard") 
       note: base.large
         ? "Večja sadika lahko preraste majhno Paperpot celico; presadi jo mlado ali uporabi večji plato in ročno sajenje."
         : "Razmik je prilagojen dejanskemu koraku Paperpot verige; po potrebi sejejo le izbrani lončki.",
-      suitable: mode !== "seeder12" || base.plantCm <= 15,
-      recommended: mode === "standard",
-    };
+      suitable: true,
+      recommended: normalizedMode === "standard",
+    });
   }
 
-  if (mode === "standard") {
-    return {
-      mode,
+  if (normalizedMode === "standard") {
+    return withBedGeometry({
+      mode: normalizedMode,
       plantSpacingCm: base.plantCm,
       finalSpacingCm: base.plantCm,
       rowSpacingCm: base.rowCm,
@@ -202,26 +223,26 @@ export function getGredicnikSpacing(crop = {}, variety = {}, mode = "standard") 
       note: "Pred setvijo naredi nekaj metrov preizkusa, ker velikost semena, valjček in drsenje kolesa vplivajo na dejanski razmik.",
       suitable: true,
       recommended: !base.isBabyCrop,
-    };
+    });
   }
 
   const setting = sixRowSetting(base.plantCm);
   const needsThinning = base.plantCm > setting.cm + 0.2;
-  return {
-    mode,
+  return withBedGeometry({
+    mode: normalizedMode,
     plantSpacingCm: setting.cm,
     finalSpacingCm: base.plantCm,
     rowSpacingCm: 6.4,
     rows: fixedRows,
     equipment: "6 Row Seeder v2",
     equipmentShort: "6 Row v2",
-    setup: `Nastavitev ${setting.inches}: ${setting.setup}.${mode === "seeder12" ? " Za 12 vrst naredi dva vzporedna prehoda." : ""}`,
+    setup: `Nastavitev ${setting.inches}: ${setting.setup}.${normalizedMode === "seeder10" ? " Za 10 vrst naredi dva prilagojena prehoda po pet setvenih linij." : ""}`,
     note: needsThinning
       ? `Sej na ${String(setting.cm).replace(".", ",")} cm in po vzniku redči na končnih ${String(base.plantCm).replace(".", ",")} cm.`
       : "Izbrana nastavitev je najbližja standardnemu razmiku te kulture.",
     suitable: base.plantCm <= 20,
     recommended: false,
-  };
+  });
 }
 
 export function getGredicnikSpacingOptions(crop = {}, variety = {}) {
