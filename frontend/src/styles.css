@@ -243,9 +243,18 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .crop-catalog-card > div:first-child span, .variety-list small { color: #647a70; font-size: 0.82rem; }
 .variety-list { display: flex; flex-wrap: wrap; gap: 7px; }
 .variety-list > span { display: grid; gap: 2px; padding: 7px 9px; color: #5c7167; background: #e9f2ec; border-radius: 9px; font-size: 0.76rem; }
+.variety-list > span.supplier-variety { border: 1px solid #c8dfd0; background: #f1f8f3; }
 .variety-list > span strong { color: #254538; font-size: 0.82rem; }
 .variety-list > span small { color: #5c7167; font-size: 0.7rem; white-space: nowrap; }
 .variety-composition { max-width: 360px; margin: 3px 0; color: #35594a; font-size: 0.73rem; font-style: normal; line-height: 1.4; }
+.variety-catalog-note, .variety-slovenia-note { max-width: 360px; margin: 3px 0; color: #35594a; font-size: 0.73rem; font-style: normal; line-height: 1.4; }
+.variety-slovenia-note { color: #345f42; }
+.variety-list > span small.variety-supplier-badge { width: fit-content; margin-top: 3px; padding: 2px 6px; color: #17603f; background: #dcefe2; border-radius: 999px; font-weight: 800; white-space: normal; }
+.variety-details { margin-top: 3px; }
+.variety-details summary { color: #17603f; cursor: pointer; font-size: 0.72rem; font-weight: 800; }
+.variety-details[open] { display: grid; gap: 4px; padding-top: 3px; }
+.variety-source { margin-top: 3px; color: #17603f; font-size: 0.7rem; font-weight: 800; text-decoration: none; }
+.variety-source:hover { text-decoration: underline; }
 
 .task-list { display: grid; gap: 12px; }
 .task-list.compact { gap: 8px; }

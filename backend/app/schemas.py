@@ -15,6 +15,15 @@ class VarietyOut(BaseModel):
     days_autumn: int
     days_winter: int
     composition: str | None
+    source_name: str | None
+    source_url: str | None
+    seed_forms: str | None
+    traits: str | None
+    slovenia_note: str | None
+    days_baby: int | None
+    seed_rate_g_m2: float | None
+    seed_spacing_cm: float | None
+    row_spacing_cm: float | None
 
 
 class CropOut(BaseModel):

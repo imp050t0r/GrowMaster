@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0004_variety_composition"
-        assert run_migrations() == "0004_variety_composition"
+        assert run_migrations() == "0005_variety_catalog_metadata"
+        assert run_migrations() == "0005_variety_catalog_metadata"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 4
+            ) == 5
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -190,6 +190,33 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert "baby špinača" in classic_mixture["composition"]
         assert "rdeče pese" in classic_mixture["composition"]
+        supplier_varieties = [
+            variety
+            for crop in crops
+            for variety in crop["varieties"]
+            if variety["source_name"] == "Johnny's Selected Seeds"
+        ]
+        assert len(supplier_varieties) == 37
+        astro = next(
+            variety
+            for variety in next(crop for crop in crops if crop["name"] == "Rukola")[
+                "varieties"
+            ]
+            if variety["name"] == "Astro"
+        )
+        assert astro["days_to_harvest"] == 35
+        assert astro["days_baby"] == 21
+        assert astro["seed_spacing_cm"] == 0.5
+        assert "zaporedne setve" in astro["slovenia_note"]
+        mountain_magic = next(
+            variety
+            for variety in next(
+                crop for crop in crops if crop["name"] == "Paradižnik"
+            )["varieties"]
+            if variety["name"] == "Mountain Magic"
+        )
+        assert mountain_magic["days_to_harvest"] == 66
+        assert "krompirjevi plesni" in mountain_magic["traits"]
         with SessionLocal() as db:
             crop_count = db.scalar(select(func.count()).select_from(Crop))
             variety_count = db.scalar(select(func.count()).select_from(Variety))
@@ -2044,7 +2071,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0004_variety_composition"
+        assert data_safety_summary["schema_revision"] == "0005_variety_catalog_metadata"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
@@ -2131,7 +2158,35 @@ def test_bed_planting_and_task_workflow() -> None:
         } <= set(backup_variety)
         assert "composition" in backup_variety
 
-        precomposition_document = json.loads(portable_backup.content)
+        metadata_fields = {
+            "source_name",
+            "source_url",
+            "seed_forms",
+            "traits",
+            "slovenia_note",
+            "days_baby",
+            "seed_rate_g_m2",
+            "seed_spacing_cm",
+            "row_spacing_cm",
+        }
+        assert metadata_fields <= set(backup_variety)
+
+        premetadata_document = json.loads(portable_backup.content)
+        for row in premetadata_document["payload"]["tables"]["varieties"]:
+            for field in metadata_fields:
+                row.pop(field)
+        premetadata_document["checksum_sha256"] = hashlib.sha256(
+            canonical_json(premetadata_document["payload"])
+        ).hexdigest()
+        parsed_premetadata = parse_backup(
+            json.dumps(premetadata_document, ensure_ascii=False).encode("utf-8")
+        )
+        assert all(
+            parsed_premetadata.rows_by_table["varieties"][0][field] is None
+            for field in metadata_fields
+        )
+
+        precomposition_document = json.loads(json.dumps(premetadata_document))
         for row in precomposition_document["payload"]["tables"]["varieties"]:
             row.pop("composition")
         precomposition_document["checksum_sha256"] = hashlib.sha256(

@@ -1516,10 +1516,28 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
   );
 }
 
+function VarietyCatalogItem({ variety }) {
+  return <span className={variety.source_name ? "supplier-variety" : ""}>
+    <strong>{variety.name}</strong>
+    {variety.composition && <em className="variety-composition"><b>Sestava:</b> {variety.composition}</em>}
+    <small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small>
+    <small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small>
+    {variety.source_name && <small className="variety-supplier-badge">Izbrano za slovenske razmere</small>}
+    {variety.source_name && <details className="variety-details"><summary>Podrobnosti in vir</summary>
+      {variety.traits && <em className="variety-catalog-note">{variety.traits}</em>}
+      {variety.slovenia_note && <em className="variety-slovenia-note"><b>Slovenija:</b> {variety.slovenia_note}</em>}
+      {variety.seed_forms && <small>Oblike semena: {variety.seed_forms}</small>}
+      {variety.days_baby && <small>Baby leaf oziroma baby pridelek: {variety.days_baby} dni</small>}
+      {variety.source_url && <a className="variety-source" href={variety.source_url} target="_blank" rel="noreferrer">Vir: {variety.source_name} ↗</a>}
+    </details>}
+  </span>;
+}
+
 function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm, setVarietyForm, createVariety }) {
   const [catalogQuery, setCatalogQuery] = useState("");
   const normalizedQuery = catalogQuery.trim().toLocaleLowerCase("sl");
-  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.flatMap((variety) => [variety.name, variety.composition || ""])].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
+  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.flatMap((variety) => [variety.name, variety.composition, variety.source_name, variety.seed_forms, variety.traits, variety.slovenia_note].filter(Boolean))].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
+  const supplierVarietyCount = crops.reduce((count, crop) => count + crop.varieties.filter((variety) => variety.source_name).length, 0);
   const categoryOrder = new Map([["Domača", 0], ["Azijska", 1], ["Indijska", 2], ["Baby leaf", 3]]);
   const catalogGroups = Object.entries(visibleCrops.reduce((groups, crop) => {
     const category = crop.category || "Drugo";
@@ -1528,7 +1546,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
   return (
     <>
       <section className="panel">
-        <div className="section-heading"><div><p className="eyebrow">Lastni šifrant</p><h2>Zelenjava in sorte</h2><p className="muted">Dodani vnosi so takoj na voljo pri setvi, načrtovanju, žetvi in ceniku.</p></div><span>{crops.length} vrst</span></div>
+        <div className="section-heading"><div><p className="eyebrow">Lastni šifrant</p><h2>Zelenjava in sorte</h2><p className="muted">Dodani vnosi so takoj na voljo pri setvi, načrtovanju, žetvi in ceniku.</p></div><span>{crops.length} vrst · {supplierVarietyCount} preverjenih sort</span></div>
         <div className="crop-catalog-forms">
           <form className="catalog-form" onSubmit={createCrop}>
             <div><p className="eyebrow">Nova zelenjava</p><h3>Dodaj vrsto zelenjave</h3></div>
@@ -1565,7 +1583,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
                   <article className="crop-catalog-card" key={crop.id}>
                     <div><h3>{crop.name}</h3><span>{crop.family}</span></div>
                     <div className="variety-list">
-                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.composition && <em className="variety-composition"><b>Sestava:</b> {variety.composition}</em>}<small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small><small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small></span>)}
+                      {crop.varieties.map((variety) => <VarietyCatalogItem key={variety.id} variety={variety} />)}
                       {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
                     </div>
                   </article>
@@ -2174,16 +2192,20 @@ function GredicnikView({ crops, beds, savePlan }) {
     const plantsPerRow = Math.max(1, Math.floor(length / Math.max(0.01, Number(form.plant_spacing_cm) / 100)));
     const plants = rows * plantsPerRow;
     const profile = babyLeafProfile(selectedCrop?.name);
-    const seedGrams = area * profile.seedRate;
+    const catalogSeedRate = Number(selectedVariety?.seed_rate_g_m2);
+    const seedRate = Number.isFinite(catalogSeedRate) && catalogSeedRate > 0 ? catalogSeedRate : profile.seedRate;
+    const seedGrams = area * seedRate;
     const expectedYield = babyLeaf ? area * profile.yieldRate * profile.cuts : plants * standardYieldPerPlant(selectedCrop?.name);
     const regionAdjustments = { primorska: -12, panonska: -4, centralna: 0, alpska: 12 };
     const altitudeAdjustment = Math.max(-3, Math.round((Number(form.altitude_m || 300) - 300) / 60));
     const climateAdjustment = regionAdjustments[form.region] + altitudeAdjustment;
     const varietyDays = Number(maturityDaysForDate(selectedVariety, form.sowing_date));
-    const harvestDays = Math.max(7, (babyLeaf ? profile.days : Number.isFinite(varietyDays) ? varietyDays : 60) + climateAdjustment);
+    const catalogBabyDays = Number(selectedVariety?.days_baby);
+    const babyDays = Number.isFinite(catalogBabyDays) && catalogBabyDays > 0 ? catalogBabyDays : profile.days;
+    const harvestDays = Math.max(7, (babyLeaf ? babyDays : Number.isFinite(varietyDays) ? varietyDays : 60) + climateAdjustment);
     const harvest = new Date(`${form.sowing_date}T12:00:00`); harvest.setDate(harvest.getDate() + harvestDays);
     const expectedHarvestDate = Number.isNaN(harvest.getTime()) ? "—" : harvest.toLocaleDateString("sl-SI");
-    return { width, length, area, rows, occupiedWidthCm, edgeMarginCm, layoutFits, plantsPerRow, plants, seeds: Math.ceil(plants * 1.15), seedGrams, expectedYield, climateAdjustment, harvestDays, expectedHarvestDate, ...profile };
+    return { width, length, area, rows, occupiedWidthCm, edgeMarginCm, layoutFits, plantsPerRow, plants, seeds: Math.ceil(plants * 1.15), seedGrams, expectedYield, climateAdjustment, harvestDays, expectedHarvestDate, ...profile, seedRate, days: babyDays };
   }, [selectedBed, selectedCrop, selectedVariety, form.mode, form.rows, form.row_spacing_cm, form.plant_spacing_cm, form.region, form.altitude_m, form.sowing_date, babyLeaf]);
 
   function changeCrop(cropId) {

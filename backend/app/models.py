@@ -79,6 +79,15 @@ class Variety(Base):
     days_autumn: Mapped[int] = mapped_column(Integer)
     days_winter: Mapped[int] = mapped_column(Integer)
     composition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seed_forms: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    traits: Mapped[str | None] = mapped_column(Text, nullable=True)
+    slovenia_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    days_baby: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    seed_rate_g_m2: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seed_spacing_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    row_spacing_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     crop: Mapped[Crop] = relationship(back_populates="varieties")
 

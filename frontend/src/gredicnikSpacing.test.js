@@ -89,6 +89,23 @@ test("80 cm bed keeps a safe edge margin and rejects layouts that are too wide",
   assert.match(lettuceSix.geometryNote, /najmanj 8 cm/);
 });
 
+test("supplier metadata refines standard spacing without changing fixed seeder layouts", () => {
+  const crop = { name: "Rukola", category: "Domača" };
+  const astro = {
+    name: "Astro",
+    seed_spacing_cm: 0.5,
+    row_spacing_cm: 5.1,
+  };
+  const standard = getGredicnikSpacing(crop, astro, "standard");
+  const tenRows = getGredicnikSpacing(crop, astro, "seeder10");
+
+  assert.equal(standard.plantSpacingCm, 0.5);
+  assert.equal(standard.rowSpacingCm, 5.1);
+  assert.equal(tenRows.rows, 10);
+  assert.equal(tenRows.rowSpacingCm, 6.4);
+  assert.equal(tenRows.edgeMarginCm, 11.2);
+});
+
 test("every catalog crop receives values for all five layouts", () => {
   const catalogCrops = [
     "Rukola", "Solata", "Paradižnik", "Paprika", "Feferon", "Jajčevec", "Kumara", "Bučka", "Buča",

@@ -89,6 +89,15 @@ function cropProfile(crop = {}, variety = {}) {
   if (cropName === "rdeča pesa" && varietyName.includes("cylindra")) profile.plantCm = 10;
   if (cropName === "rukola" && varietyName.includes("sylvetta")) profile.plantCm = 5;
 
+  const catalogPlantCm = Number(variety.seed_spacing_cm);
+  const catalogRowCm = Number(variety.row_spacing_cm);
+  if (Number.isFinite(catalogPlantCm) && catalogPlantCm > 0) {
+    profile.plantCm = catalogPlantCm;
+  }
+  if (Number.isFinite(catalogRowCm) && catalogRowCm > 0) {
+    profile.rowCm = catalogRowCm;
+  }
+
   profile.babyCompatible = includesAny(cropName, BABY_LEAF_KEYWORDS);
   profile.isBabyCrop = false;
   return profile;

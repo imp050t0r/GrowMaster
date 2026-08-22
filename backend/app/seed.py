@@ -3,6 +3,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.johnnys_catalog import JOHNNYS_SLOVENIA_VARIETIES
 from app.maturity import estimated_seasonal_days
 from app.models import Bed, Crop, Farm, Task, Variety
 
@@ -732,6 +733,54 @@ def seed_database(db: Session) -> None:
                 )
             )
             existing_varieties[name.casefold()] = crop.varieties[-1]
+
+    # Supplier catalog enrichment is additive: an existing crop or variety is
+    # never removed and its maturity values are never overwritten.  Missing
+    # metadata is filled, while user-entered metadata remains authoritative.
+    metadata_fields = (
+        "source_name",
+        "source_url",
+        "seed_forms",
+        "traits",
+        "slovenia_note",
+        "days_baby",
+        "seed_rate_g_m2",
+        "seed_spacing_cm",
+        "row_spacing_cm",
+    )
+    for item in JOHNNYS_SLOVENIA_VARIETIES:
+        crop = existing_crops.get(item["crop"].casefold())
+        if crop is None:
+            crop = Crop(
+                name=item["crop"],
+                family=item["family"],
+                category=item["category"],
+            )
+            db.add(crop)
+            db.flush()
+            existing_crops[crop.name.casefold()] = crop
+        existing_varieties = {
+            variety.name.casefold(): variety for variety in crop.varieties
+        }
+        existing_variety = existing_varieties.get(item["name"].casefold())
+        if existing_variety is not None:
+            for field in metadata_fields:
+                if getattr(existing_variety, field) is None and item[field] is not None:
+                    setattr(existing_variety, field, item[field])
+            continue
+        estimates = estimated_seasonal_days(item["days"])
+        crop.varieties.append(
+            Variety(
+                name=item["name"],
+                days_to_harvest=item["days"],
+                days_spring=estimates["spring"],
+                days_summer=estimates["summer"],
+                days_autumn=estimates["autumn"],
+                days_winter=estimates["winter"],
+                composition=None,
+                **{field: item[field] for field in metadata_fields},
+            )
+        )
     db.flush()
 
     if db.scalar(select(Task).limit(1)) is None and farm.name == DEMO_FARM_NAME:
