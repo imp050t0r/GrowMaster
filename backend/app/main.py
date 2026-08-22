@@ -63,6 +63,7 @@ from app.planting_advisor import (
     score_candidate,
     seasonal_assessment,
 )
+from app.planting_calendar import default_calendar_for_crop
 from app.models import (
     Bed,
     Cost,
@@ -750,6 +751,7 @@ def create_variety(
         )
     estimates = estimated_seasonal_days(payload.days_to_harvest)
     composition = payload.composition.strip() if payload.composition else None
+    planting_calendar = default_calendar_for_crop(crop.name, crop.category)
     variety = Variety(
         crop_id=crop.id,
         name=name,
@@ -759,6 +761,7 @@ def create_variety(
         days_autumn=payload.days_autumn or estimates["autumn"],
         days_winter=payload.days_winter or estimates["winter"],
         composition=composition or None,
+        **planting_calendar,
     )
     db.add(variety)
     db.commit()

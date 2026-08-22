@@ -31,6 +31,26 @@ DAILY_BACKUP_RETENTION = 14
 DAILY_BACKUP_PATTERN = re.compile(
     r"^growmaster-daily-(\d{8})-[0-9a-f]{8}\.json$"
 )
+VARIETY_OPTIONAL_COLUMNS = {
+    "composition",
+    "source_name",
+    "source_url",
+    "seed_forms",
+    "traits",
+    "slovenia_note",
+    "days_baby",
+    "seed_rate_g_m2",
+    "seed_spacing_cm",
+    "row_spacing_cm",
+    "planting_method",
+    "outdoor_months",
+    "protected_months",
+    "heat_tolerance",
+    "cold_tolerance",
+    "planting_calendar_note",
+    "succession_interval_days",
+    "calendar_source_url",
+}
 
 
 class BackupValidationError(ValueError):
@@ -254,19 +274,24 @@ def parse_backup(content: bytes) -> ParsedBackup:
             "days_autumn",
             "days_winter",
         }
-        allowed_columns = {frozenset(expected_columns)}
-        if table_name == "varieties":
-            allowed_columns.update(
-                {
-                    frozenset(expected_columns - {"composition"}),
-                    frozenset(expected_columns - seasonal_columns),
-                    frozenset(expected_columns - seasonal_columns - {"composition"}),
-                }
-            )
         decoded_rows: list[dict] = []
         for encoded_row in encoded_rows:
             row_columns = set(encoded_row) if isinstance(encoded_row, dict) else set()
-            if frozenset(row_columns) not in allowed_columns:
+            valid_columns = row_columns == expected_columns
+            if table_name == "varieties":
+                required_columns = (
+                    expected_columns - VARIETY_OPTIONAL_COLUMNS - seasonal_columns
+                )
+                seasonal_columns_valid = (
+                    seasonal_columns <= row_columns
+                    or not seasonal_columns & row_columns
+                )
+                valid_columns = (
+                    required_columns <= row_columns
+                    and row_columns <= expected_columns
+                    and seasonal_columns_valid
+                )
+            if not valid_columns:
                 raise BackupValidationError(
                     f"Zapis v tabeli {table_name} nima pričakovanih polj."
                 )
@@ -283,8 +308,9 @@ def parse_backup(content: bytes) -> ParsedBackup:
                         "days_winter": estimates["winter"],
                     }
                 )
-            if table_name == "varieties" and "composition" not in row_columns:
-                decoded_row["composition"] = None
+            if table_name == "varieties":
+                for column_name in VARIETY_OPTIONAL_COLUMNS - row_columns:
+                    decoded_row[column_name] = None
             decoded_rows.append(decoded_row)
         rows_by_table[table_name] = decoded_rows
         record_count += len(decoded_rows)

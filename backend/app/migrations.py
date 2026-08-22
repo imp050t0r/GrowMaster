@@ -78,11 +78,64 @@ def add_variety_composition(connection: Connection) -> None:
         connection.execute(text("ALTER TABLE varieties ADD COLUMN composition TEXT"))
 
 
+def add_variety_catalog_metadata(connection: Connection) -> None:
+    """Add optional supplier facts without changing an existing catalog entry."""
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("varieties")
+    }
+    columns = {
+        "source_name": "VARCHAR(160)",
+        "source_url": "TEXT",
+        "seed_forms": "VARCHAR(240)",
+        "traits": "TEXT",
+        "slovenia_note": "TEXT",
+        "days_baby": "INTEGER",
+        "seed_rate_g_m2": "FLOAT",
+        "seed_spacing_cm": "FLOAT",
+        "row_spacing_cm": "FLOAT",
+    }
+    for column_name, column_type in columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                text(
+                    f"ALTER TABLE varieties ADD COLUMN {column_name} "
+                    f"{column_type}"
+                )
+            )
+
+
+def add_variety_planting_calendar(connection: Connection) -> None:
+    """Add optional timing guidance while retaining every catalog value."""
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("varieties")
+    }
+    columns = {
+        "planting_method": "VARCHAR(30)",
+        "outdoor_months": "VARCHAR(40)",
+        "protected_months": "VARCHAR(40)",
+        "heat_tolerance": "VARCHAR(20)",
+        "cold_tolerance": "VARCHAR(20)",
+        "planting_calendar_note": "TEXT",
+        "succession_interval_days": "INTEGER",
+        "calendar_source_url": "TEXT",
+    }
+    for column_name, column_type in columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                text(
+                    f"ALTER TABLE varieties ADD COLUMN {column_name} "
+                    f"{column_type}"
+                )
+            )
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
     Migration("0003_seasonal_maturity", add_seasonal_maturity),
     Migration("0004_variety_composition", add_variety_composition),
+    Migration("0005_variety_catalog_metadata", add_variety_catalog_metadata),
+    Migration("0006_variety_planting_calendar", add_variety_planting_calendar),
 )
 
 

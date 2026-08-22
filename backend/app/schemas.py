@@ -15,6 +15,23 @@ class VarietyOut(BaseModel):
     days_autumn: int
     days_winter: int
     composition: str | None
+    source_name: str | None
+    source_url: str | None
+    seed_forms: str | None
+    traits: str | None
+    slovenia_note: str | None
+    days_baby: int | None
+    seed_rate_g_m2: float | None
+    seed_spacing_cm: float | None
+    row_spacing_cm: float | None
+    planting_method: str | None
+    outdoor_months: str | None
+    protected_months: str | None
+    heat_tolerance: str | None
+    cold_tolerance: str | None
+    planting_calendar_note: str | None
+    succession_interval_days: int | None
+    calendar_source_url: str | None
 
 
 class CropOut(BaseModel):

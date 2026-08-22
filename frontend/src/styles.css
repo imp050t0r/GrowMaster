@@ -243,9 +243,19 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgba(49, 143, 99,
 .crop-catalog-card > div:first-child span, .variety-list small { color: #647a70; font-size: 0.82rem; }
 .variety-list { display: flex; flex-wrap: wrap; gap: 7px; }
 .variety-list > span { display: grid; gap: 2px; padding: 7px 9px; color: #5c7167; background: #e9f2ec; border-radius: 9px; font-size: 0.76rem; }
+.variety-list > span.supplier-variety { border: 1px solid #c8dfd0; background: #f1f8f3; }
 .variety-list > span strong { color: #254538; font-size: 0.82rem; }
 .variety-list > span small { color: #5c7167; font-size: 0.7rem; white-space: nowrap; }
 .variety-composition { max-width: 360px; margin: 3px 0; color: #35594a; font-size: 0.73rem; font-style: normal; line-height: 1.4; }
+.variety-catalog-note, .variety-slovenia-note { max-width: 360px; margin: 3px 0; color: #35594a; font-size: 0.73rem; font-style: normal; line-height: 1.4; }
+.variety-slovenia-note { color: #345f42; }
+.variety-calendar-note { max-width: 360px; margin: 4px 0; padding: 6px 7px; color: #4f5f3c; background: #f4f5e8; border-radius: 7px; font-size: 0.72rem; font-style: normal; line-height: 1.4; }
+.variety-list > span small.variety-supplier-badge { width: fit-content; margin-top: 3px; padding: 2px 6px; color: #17603f; background: #dcefe2; border-radius: 999px; font-weight: 800; white-space: normal; }
+.variety-details { margin-top: 3px; }
+.variety-details summary { color: #17603f; cursor: pointer; font-size: 0.72rem; font-weight: 800; }
+.variety-details[open] { display: grid; gap: 4px; padding-top: 3px; }
+.variety-source { margin-top: 3px; color: #17603f; font-size: 0.7rem; font-weight: 800; text-decoration: none; }
+.variety-source:hover { text-decoration: underline; }
 
 .task-list { display: grid; gap: 12px; }
 .task-list.compact { gap: 8px; }
@@ -556,6 +566,19 @@ label.review-suggestion:has(input:checked) { border-color: #75ad8d; box-shadow: 
 .spacing-recommendation small { color: #5f746a; }
 .spacing-recommendation.limited { color: #6e3c00; background: #fff4df; border-color: #edcf92; }
 .spacing-recommendation.limited > b { color: #7c4d18; }
+.planting-calendar-recommendation { display: grid; grid-template-columns: 1fr auto; gap: 7px 14px; padding: 14px; border: 1px solid; border-radius: 12px; }
+.planting-calendar-recommendation.recommended { color: #274c3c; background: #edf7f1; border-color: #c8e2d2; }
+.planting-calendar-recommendation.outside { color: #6e3c00; background: #fff4df; border-color: #edcf92; }
+.planting-calendar-recommendation > div:first-child { display: grid; gap: 2px; }
+.planting-calendar-recommendation > div:first-child span { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; }
+.planting-calendar-recommendation > div:first-child strong { font-size: 1.15rem; }
+.planting-calendar-recommendation > b { align-self: start; padding: 5px 8px; background: white; border-radius: 999px; font-size: 0.68rem; }
+.planting-calendar-recommendation p, .planting-calendar-recommendation > small, .planting-calendar-recommendation > a, .tolerance-badges { grid-column: 1 / -1; margin: 0; }
+.planting-calendar-recommendation p { font-size: 0.82rem; font-weight: 750; line-height: 1.45; }
+.planting-calendar-recommendation > small { opacity: 0.82; line-height: 1.45; }
+.planting-calendar-recommendation > a { width: fit-content; color: inherit; font-size: 0.72rem; font-weight: 850; }
+.tolerance-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.tolerance-badges small { padding: 4px 7px; background: rgba(255, 255, 255, 0.8); border-radius: 999px; font-weight: 800; }
 .gredicnik-result { position: sticky; top: 86px; }
 .gredicnik-result h2 { margin: 3px 0 5px; }
 .gredicnik-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
@@ -708,6 +731,9 @@ label.review-suggestion:has(input:checked) { border-color: #75ad8d; box-shadow: 
   .spacing-recommendation { grid-template-columns: 1fr; }
   .spacing-recommendation > b { justify-self: start; }
   .spacing-recommendation p, .spacing-recommendation small { grid-column: 1; }
+  .planting-calendar-recommendation { grid-template-columns: 1fr; }
+  .planting-calendar-recommendation > b { justify-self: start; }
+  .planting-calendar-recommendation p, .planting-calendar-recommendation > small, .planting-calendar-recommendation > a, .tolerance-badges { grid-column: 1; }
   .advisor-grid { grid-template-columns: 1fr; }
   .planting-actions { flex-direction: column; }
   .planting-actions .secondary-button { width: 100%; }

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { GREDICNIK_MODES, getGredicnikSpacing, getGredicnikSpacingOptions } from "./gredicnikSpacing";
+import { formatPlantingMonths, PLANTING_ENVIRONMENTS, plantingTiming, toleranceLabel } from "./plantingCalendar";
 import {
   apiFetch,
   apiRequest,
@@ -1516,10 +1517,35 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
   );
 }
 
+function VarietyCatalogItem({ variety }) {
+  const actionLabel = variety.planting_method === "transplant" ? "Presajanje" : "Setev";
+  return <span className={variety.source_name ? "supplier-variety" : ""}>
+    <strong>{variety.name}</strong>
+    {variety.composition && <em className="variety-composition"><b>Sestava:</b> {variety.composition}</em>}
+    <small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small>
+    <small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small>
+    {variety.source_name && <small className="variety-supplier-badge">Izbrano za slovenske razmere</small>}
+    {variety.source_name && <details className="variety-details"><summary>Podrobnosti in vir</summary>
+      {variety.traits && <em className="variety-catalog-note">{variety.traits}</em>}
+      {variety.slovenia_note && <em className="variety-slovenia-note"><b>Slovenija:</b> {variety.slovenia_note}</em>}
+      {variety.seed_forms && <small>Oblike semena: {variety.seed_forms}</small>}
+      {variety.days_baby && <small>Baby leaf oziroma baby pridelek: {variety.days_baby} dni</small>}
+      {variety.outdoor_months && <small><b>{actionLabel} na prostem:</b> {formatPlantingMonths(variety.outdoor_months)}</small>}
+      {variety.protected_months && <small><b>{actionLabel} v tunelu:</b> {formatPlantingMonths(variety.protected_months)}</small>}
+      {(variety.heat_tolerance || variety.cold_tolerance) && <small>Vročina: {toleranceLabel(variety.heat_tolerance)} · mraz: {toleranceLabel(variety.cold_tolerance)}</small>}
+      {variety.succession_interval_days && <small>Zaporedna setev: približno vsakih {variety.succession_interval_days} dni</small>}
+      {variety.planting_calendar_note && <em className="variety-calendar-note">{variety.planting_calendar_note}</em>}
+      {variety.source_url && <a className="variety-source" href={variety.source_url} target="_blank" rel="noreferrer">Vir: {variety.source_name} ↗</a>}
+      {variety.calendar_source_url && variety.calendar_source_url !== variety.source_url && <a className="variety-source" href={variety.calendar_source_url} target="_blank" rel="noreferrer">Vir koledarja ↗</a>}
+    </details>}
+  </span>;
+}
+
 function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm, setVarietyForm, createVariety }) {
   const [catalogQuery, setCatalogQuery] = useState("");
   const normalizedQuery = catalogQuery.trim().toLocaleLowerCase("sl");
-  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.flatMap((variety) => [variety.name, variety.composition || ""])].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
+  const visibleCrops = normalizedQuery ? crops.filter((crop) => [crop.name, crop.family, crop.category, ...crop.varieties.flatMap((variety) => [variety.name, variety.composition, variety.source_name, variety.seed_forms, variety.traits, variety.slovenia_note].filter(Boolean))].some((value) => value.toLocaleLowerCase("sl").includes(normalizedQuery))) : crops;
+  const supplierVarietyCount = crops.reduce((count, crop) => count + crop.varieties.filter((variety) => variety.source_name).length, 0);
   const categoryOrder = new Map([["Domača", 0], ["Azijska", 1], ["Indijska", 2], ["Baby leaf", 3]]);
   const catalogGroups = Object.entries(visibleCrops.reduce((groups, crop) => {
     const category = crop.category || "Drugo";
@@ -1528,7 +1554,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
   return (
     <>
       <section className="panel">
-        <div className="section-heading"><div><p className="eyebrow">Lastni šifrant</p><h2>Zelenjava in sorte</h2><p className="muted">Dodani vnosi so takoj na voljo pri setvi, načrtovanju, žetvi in ceniku.</p></div><span>{crops.length} vrst</span></div>
+        <div className="section-heading"><div><p className="eyebrow">Lastni šifrant</p><h2>Zelenjava in sorte</h2><p className="muted">Dodani vnosi so takoj na voljo pri setvi, načrtovanju, žetvi in ceniku.</p></div><span>{crops.length} vrst · {supplierVarietyCount} preverjenih sort</span></div>
         <div className="crop-catalog-forms">
           <form className="catalog-form" onSubmit={createCrop}>
             <div><p className="eyebrow">Nova zelenjava</p><h3>Dodaj vrsto zelenjave</h3></div>
@@ -1565,7 +1591,7 @@ function CropCatalogView({ crops, cropForm, setCropForm, createCrop, varietyForm
                   <article className="crop-catalog-card" key={crop.id}>
                     <div><h3>{crop.name}</h3><span>{crop.family}</span></div>
                     <div className="variety-list">
-                      {crop.varieties.map((variety) => <span key={variety.id}><strong>{variety.name}</strong>{variety.composition && <em className="variety-composition"><b>Sestava:</b> {variety.composition}</em>}<small>Pomlad {variety.days_spring} · Poletje {variety.days_summer}</small><small>Jesen {variety.days_autumn} · Zima {variety.days_winter} dni</small></span>)}
+                      {crop.varieties.map((variety) => <VarietyCatalogItem key={variety.id} variety={variety} />)}
                       {!crop.varieties.length && <small>Sorta še ni dodana.</small>}
                     </div>
                   </article>
@@ -2124,11 +2150,12 @@ const standardYieldPerPlant = (cropName = "") => {
 };
 
 function GredicnikView({ crops, beds, savePlan }) {
-  const [form, setForm] = useState({ bed_id: "", crop_id: "", variety_id: "", region: "centralna", altitude_m: "300", mode: "standard", rows: "3", row_spacing_cm: "25", plant_spacing_cm: "25", sowing_date: today, succession_count: "1", succession_interval_days: "14" });
+  const [form, setForm] = useState({ bed_id: "", crop_id: "", variety_id: "", region: "centralna", environment: "outdoor", altitude_m: "300", mode: "standard", rows: "3", row_spacing_cm: "25", plant_spacing_cm: "25", sowing_date: today, succession_count: "1", succession_interval_days: "14" });
   const [saving, setSaving] = useState(false);
   const selectedBed = beds.find((bed) => String(bed.id) === String(form.bed_id));
   const selectedCrop = crops.find((crop) => String(crop.id) === String(form.crop_id));
   const selectedVariety = selectedCrop?.varieties.find((variety) => String(variety.id) === String(form.variety_id));
+  const timing = plantingTiming(selectedVariety, form.environment, form.sowing_date, form.region);
   const babyLeaf = form.mode.startsWith("baby");
   const spacingOptions = useMemo(
     () => getGredicnikSpacingOptions(selectedCrop, selectedVariety),
@@ -2157,7 +2184,7 @@ function GredicnikView({ crops, beds, savePlan }) {
         const crop = crops[0];
         const variety = crop.varieties[0];
         const mode = crop.category === "Baby leaf" ? "baby6" : "standard";
-        return withSpacingRecommendation({ ...current, crop_id: String(crop.id), variety_id: String(variety?.id || "") }, crop, variety, mode);
+        return withSpacingRecommendation({ ...current, crop_id: String(crop.id), variety_id: String(variety?.id || ""), succession_interval_days: String(variety?.succession_interval_days || current.succession_interval_days) }, crop, variety, mode);
       });
     }
   }, [crops, form.crop_id]);
@@ -2166,33 +2193,40 @@ function GredicnikView({ crops, beds, savePlan }) {
     const width = Number(selectedBed?.width_m || 0);
     const length = Number(selectedBed?.length_m || 0);
     const area = Number(selectedBed?.area_m2 || width * length);
-    const fixedRows = form.mode.endsWith("12") ? 12 : form.mode.endsWith("6") ? 6 : null;
+    const fixedRows = form.mode.endsWith("10") || form.mode.endsWith("12") ? 10 : form.mode.endsWith("6") ? 6 : null;
     const rows = fixedRows || Math.max(1, Number(form.rows) || Math.floor(width / (Number(form.row_spacing_cm) / 100)) || 1);
+    const occupiedWidthCm = Math.max(0, rows - 1) * Number(form.row_spacing_cm);
+    const edgeMarginCm = (width * 100 - occupiedWidthCm) / 2;
+    const layoutFits = edgeMarginCm >= 8;
     const plantsPerRow = Math.max(1, Math.floor(length / Math.max(0.01, Number(form.plant_spacing_cm) / 100)));
     const plants = rows * plantsPerRow;
     const profile = babyLeafProfile(selectedCrop?.name);
-    const seedGrams = area * profile.seedRate;
+    const catalogSeedRate = Number(selectedVariety?.seed_rate_g_m2);
+    const seedRate = Number.isFinite(catalogSeedRate) && catalogSeedRate > 0 ? catalogSeedRate : profile.seedRate;
+    const seedGrams = area * seedRate;
     const expectedYield = babyLeaf ? area * profile.yieldRate * profile.cuts : plants * standardYieldPerPlant(selectedCrop?.name);
     const regionAdjustments = { primorska: -12, panonska: -4, centralna: 0, alpska: 12 };
     const altitudeAdjustment = Math.max(-3, Math.round((Number(form.altitude_m || 300) - 300) / 60));
     const climateAdjustment = regionAdjustments[form.region] + altitudeAdjustment;
     const varietyDays = Number(maturityDaysForDate(selectedVariety, form.sowing_date));
-    const harvestDays = Math.max(7, (babyLeaf ? profile.days : Number.isFinite(varietyDays) ? varietyDays : 60) + climateAdjustment);
+    const catalogBabyDays = Number(selectedVariety?.days_baby);
+    const babyDays = Number.isFinite(catalogBabyDays) && catalogBabyDays > 0 ? catalogBabyDays : profile.days;
+    const harvestDays = Math.max(7, (babyLeaf ? babyDays : Number.isFinite(varietyDays) ? varietyDays : 60) + climateAdjustment);
     const harvest = new Date(`${form.sowing_date}T12:00:00`); harvest.setDate(harvest.getDate() + harvestDays);
     const expectedHarvestDate = Number.isNaN(harvest.getTime()) ? "—" : harvest.toLocaleDateString("sl-SI");
-    return { width, length, area, rows, plantsPerRow, plants, seeds: Math.ceil(plants * 1.15), seedGrams, expectedYield, climateAdjustment, harvestDays, expectedHarvestDate, ...profile };
+    return { width, length, area, rows, occupiedWidthCm, edgeMarginCm, layoutFits, plantsPerRow, plants, seeds: Math.ceil(plants * 1.15), seedGrams, expectedYield, climateAdjustment, harvestDays, expectedHarvestDate, ...profile, seedRate, days: babyDays };
   }, [selectedBed, selectedCrop, selectedVariety, form.mode, form.rows, form.row_spacing_cm, form.plant_spacing_cm, form.region, form.altitude_m, form.sowing_date, babyLeaf]);
 
   function changeCrop(cropId) {
     const crop = crops.find((item) => String(item.id) === String(cropId));
     const variety = crop?.varieties[0];
     const mode = crop?.category === "Baby leaf" ? "baby6" : form.mode.startsWith("baby") ? "standard" : form.mode;
-    setForm(withSpacingRecommendation({ ...form, crop_id: cropId, variety_id: String(variety?.id || "") }, crop, variety, mode));
+    setForm(withSpacingRecommendation({ ...form, crop_id: cropId, variety_id: String(variety?.id || ""), succession_interval_days: String(variety?.succession_interval_days || form.succession_interval_days) }, crop, variety, mode));
   }
 
   function changeVariety(varietyId) {
     const variety = selectedCrop?.varieties.find((item) => String(item.id) === String(varietyId));
-    setForm(withSpacingRecommendation({ ...form, variety_id: varietyId }, selectedCrop, variety, form.mode));
+    setForm(withSpacingRecommendation({ ...form, variety_id: varietyId, succession_interval_days: String(variety?.succession_interval_days || form.succession_interval_days) }, selectedCrop, variety, form.mode));
   }
 
   function changeMode(mode) {
@@ -2204,12 +2238,13 @@ function GredicnikView({ crops, beds, savePlan }) {
     setSaving(true);
     const modeLabel = GREDICNIK_MODES.find((item) => item.value === form.mode)?.label || form.mode;
     const regionLabels = { primorska: "Primorska", panonska: "Panonska Slovenija", centralna: "Osrednja Slovenija", alpska: "Alpski svet" };
-    const notes = `Gredičnik: ${modeLabel}; oprema ${spacingRecommendation.equipment}; ${spacingRecommendation.setup}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; razmik v vrsti ${form.plant_spacing_cm} cm; ${babyLeaf ? `${result.seedGrams.toFixed(1)} g semena; do ${result.cuts} rezov` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
+    const environmentLabel = form.environment === "protected" ? "neogrevan tunel" : "na prostem";
+    const notes = `Gredičnik: ${modeLabel}; oprema ${spacingRecommendation.equipment}; ${spacingRecommendation.setup}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; ${environmentLabel}; izbrani termin ${timing.recommended ? "je v priporočenem oknu" : "je zunaj priporočenega okna"} (${timing.monthsLabel}); podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; odmik od robov ${result.edgeMarginCm.toFixed(1)} cm; razmik v vrsti ${form.plant_spacing_cm} cm; ${babyLeaf ? `${result.seedGrams.toFixed(1)} g semena; do ${result.cuts} rezov` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
     await savePlan({ bed_id: Number(form.bed_id), crop_id: Number(form.crop_id), variety_id: Number(form.variety_id), sowing_date: form.sowing_date, transplant_date: null, expected_yield_kg: Number(result.expectedYield.toFixed(2)), succession_count: Number(form.succession_count), succession_interval_days: Number(form.succession_interval_days), notes });
     setSaving(false);
   }
 
-  const ready = selectedBed && selectedCrop && selectedVariety && result.expectedYield > 0;
+  const ready = selectedBed && selectedCrop && selectedVariety && result.expectedYield > 0 && result.layoutFits;
   return <>
     <section className="panel gredicnik-heading">
       <div><p className="eyebrow">Pridelovalni kalkulator</p><h2>Gredičnik</h2><p className="muted">Izračunaj razpored, količino semena in pričakovani pridelek na obstoječih GrowMasterjevih gredicah ter rezultat neposredno dodaj v sezonski načrt.</p></div>
@@ -2223,9 +2258,18 @@ function GredicnikView({ crops, beds, savePlan }) {
             <label>Gredica<select value={form.bed_id} onChange={(e) => setForm({ ...form, bed_id: e.target.value })} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.width_m} × {bed.length_m} m</option>)}</select></label>
             <label>Kultura<select value={form.crop_id} onChange={(e) => changeCrop(e.target.value)} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
             <label>Sorta<select value={form.variety_id} onChange={(e) => changeVariety(e.target.value)} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name}</option>)}</select></label>
-            <label>Datum setve<input type="date" value={form.sowing_date} onChange={(e) => setForm({ ...form, sowing_date: e.target.value })} required /></label>
+            <label>Datum {timing.methodLabel === "presajanje" ? "presajanja" : "setve"}<input type="date" value={form.sowing_date} onChange={(e) => setForm({ ...form, sowing_date: e.target.value })} required /></label>
+            <label>Način pridelave<select value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })}>{PLANTING_ENVIRONMENTS.map((environment) => <option key={environment.value} value={environment.value}>{environment.label}</option>)}</select></label>
             <label>Pridelovalna regija<select value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })}><option value="centralna">Osrednja Slovenija</option><option value="primorska">Primorska</option><option value="panonska">Panonska Slovenija</option><option value="alpska">Alpski svet</option></select></label>
             <label>Nadmorska višina (m)<input type="number" min="0" max="2000" step="10" value={form.altitude_m} onChange={(e) => setForm({ ...form, altitude_m: e.target.value })} required /></label>
+          </div>
+          <div className={`planting-calendar-recommendation ${timing.recommended ? "recommended" : "outside"}`}>
+            <div><span>Najprimernejši čas za {timing.methodLabel} {timing.environmentLabel}</span><strong>{timing.monthsLabel}</strong></div>
+            <b>{timing.recommended ? "IZBRANI DATUM JE PRIMEREN" : "PREVERI IZBRANI DATUM"}</b>
+            <p>{selectedVariety?.planting_calendar_note}</p>
+            <div className="tolerance-badges"><small>Vročina: {toleranceLabel(selectedVariety?.heat_tolerance)}</small><small>Mraz: {toleranceLabel(selectedVariety?.cold_tolerance)}</small>{selectedVariety?.succession_interval_days && <small>Nov turnus: {selectedVariety.succession_interval_days} dni</small>}</div>
+            <small>{timing.regionNote} Dejanski termin vedno prilagodi trenutni slani, temperaturi tal in zaščiti.</small>
+            {selectedVariety?.calendar_source_url && <a href={selectedVariety.calendar_source_url} target="_blank" rel="noreferrer">Odpri vir koledarja ↗</a>}
           </div>
           <div className="section-heading gredicnik-step"><div><p className="eyebrow">2. Način</p><h2>Razpored setve</h2></div></div>
           <div className="mode-picker">
@@ -2234,11 +2278,14 @@ function GredicnikView({ crops, beds, savePlan }) {
               return <button type="button" key={value} className={`${form.mode === value ? "active" : ""}${option?.suitable === false ? " limited" : ""}`} onClick={() => changeMode(value)}><strong>{label}</strong><small>{option ? `${String(option.plantSpacingCm).replace(".", ",")} cm · ${option.equipmentShort}` : "—"}</small>{option?.recommended && <em>priporočeno</em>}</button>;
             })}
           </div>
-          <div className={`spacing-recommendation ${spacingRecommendation.suitable ? "" : "limited"}`}>
+          <div className={`spacing-recommendation ${spacingRecommendation.suitable && result.layoutFits ? "" : "limited"}`}>
             <div><span>Priporočilo za izbrano sorto</span><strong>{String(spacingRecommendation.plantSpacingCm).replace(".", ",")} cm v vrsti</strong></div>
             <b>{spacingRecommendation.equipment}</b>
             <p>{spacingRecommendation.setup}</p>
             <small>{spacingRecommendation.note}</small>
+            <small>{result.layoutFits
+              ? `Na izbrani gredici širine ${(result.width * 100).toFixed(0)} cm ostane približno ${result.edgeMarginCm.toFixed(1).replace(".", ",")} cm do vsakega roba.`
+              : `Razpored je preširok: do vsakega roba mora ostati najmanj 8 cm. Zmanjšaj število vrst ali razmik med njimi.`}</small>
           </div>
           <div className="gredicnik-fields compact-fields">
             <label>Število vrst<input type="number" min="1" max="30" value={result.rows} disabled={form.mode !== "standard"} onChange={(e) => setForm({ ...form, rows: e.target.value })} /></label>
@@ -2258,9 +2305,9 @@ function GredicnikView({ crops, beds, savePlan }) {
             <article><span>Vrst</span><strong>{result.rows}</strong></article>
             {babyLeaf ? <><article><span>Semena</span><strong>{result.seedGrams.toFixed(1)} g</strong></article><article><span>Prvi rez</span><strong>~ {result.days} dni</strong></article><article><span>Možni rezi</span><strong>{result.cuts}</strong></article></> : <><article><span>Rastlin</span><strong>{result.plants}</strong></article><article><span>Semena + 15 %</span><strong>{result.seeds}</strong></article></>}
             <article className="yield-metric"><span>Pričakovani pridelek</span><strong>{result.expectedYield.toFixed(1)} kg</strong></article>
-            <article className="harvest-metric"><span>Okvirna prva žetev</span><strong>{result.expectedHarvestDate}</strong><small>{result.harvestDays} dni po setvi · podnebni popravek {result.climateAdjustment >= 0 ? "+" : ""}{result.climateAdjustment} dni</small></article>
+            <article className="harvest-metric"><span>Okvirna prva žetev</span><strong>{result.expectedHarvestDate}</strong><small>{result.harvestDays} dni po {timing.methodLabel === "presajanje" ? "presajanju" : "setvi"} · podnebni popravek {result.climateAdjustment >= 0 ? "+" : ""}{result.climateAdjustment} dni</small></article>
           </div>
-          {(form.mode === "baby12" || form.mode === "seeder12") && spacingRecommendation.equipment === "6 Row Seeder v2" && <p className="seeder-note">Dvanajst vrst se izvede z dvema vzporednima prehodoma 6-vrstne sejalnice.</p>}
+          {(form.mode === "baby10" || form.mode === "seeder10") && spacingRecommendation.equipment === "6 Row Seeder v2" && <p className="seeder-note">Deset vrst se izvede z dvema prilagojenima prehodoma po pet setvenih linij. Pri razmiku 6,4 cm na 80 cm gredici ostane približno 11,2 cm do vsakega roba.</p>}
           <button className="primary-button save-gredicnik" disabled={!ready || saving}>{saving ? "SHRANJUJEM …" : "DODAJ V GROWMASTERJEV PLAN"}</button>
           <p className="calculation-note">Ocene semena in pridelka so načrtovalske vrednosti. Po prvih žetvah jih primerjaj z dejanskim rezultatom sorte in lokacije.</p>
         </aside>
