@@ -154,7 +154,7 @@ from app.seed import DEMO_FARM_NAME, seed_database
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
-APP_VERSION = "1.20.1"
+APP_VERSION = "1.21.1"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { GREDICNIK_MODES, getGredicnikSpacing, getGredicnikSpacingOptions } from "./gredicnikSpacing";
 import { formatPlantingMonths, PLANTING_ENVIRONMENTS, plantingTiming, toleranceLabel } from "./plantingCalendar";
+import { APP_VERSION } from "./version";
 import {
   apiFetch,
   apiRequest,
@@ -1220,7 +1221,7 @@ function App() {
         </div>
         <div className="account-summary">
           <span className={`connection-pill ${online ? "online" : "offline"}`}>{online ? "● POVEZANO" : "● BREZ POVEZAVE"}</span>
-          <span className="status-pill">1.20.1</span>
+          <span className="status-pill">{APP_VERSION}</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
           {installPrompt && <button type="button" onClick={installWebApp}>NAMESTI APLIKACIJO</button>}
           {isNativeApp && <button type="button" onClick={changeServer}>STREŽNIK</button>}
