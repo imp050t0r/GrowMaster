@@ -144,6 +144,7 @@ from app.schemas import (
     SupplyUsageCreate,
     TaskComplete,
     TaskCreate,
+    TaskReviewApply,
     VarietyCreate,
     VarietyOut,
     WorkerCreate,
@@ -1374,6 +1375,307 @@ def add_automatic_tasks(db: Session, planting: Planting, bed: Bed) -> None:
                 priority=priority,
             )
         )
+
+
+def build_task_review(db: Session, review_date: date, horizon_days: int) -> dict:
+    """Build a deterministic, local review of work that may be missing."""
+    horizon_end = review_date + timedelta(days=horizon_days)
+    active_plantings = list(
+        db.scalars(
+            select(Planting)
+            .where(
+                Planting.farm_id == DEFAULT_FARM_ID,
+                Planting.status == "active",
+            )
+            .options(
+                selectinload(Planting.bed),
+                selectinload(Planting.crop),
+                selectinload(Planting.variety),
+            )
+            .order_by(Planting.expected_harvest_date, Planting.id)
+        ).all()
+    )
+    beds = list(
+        db.scalars(
+            select(Bed)
+            .where(Bed.farm_id == DEFAULT_FARM_ID)
+            .order_by(Bed.name)
+        ).all()
+    )
+    all_tasks = list(
+        db.scalars(
+            select(Task)
+            .where(Task.farm_id == DEFAULT_FARM_ID)
+            .options(*task_load_options())
+            .order_by(Task.due_date, Task.id)
+        ).all()
+    )
+    planned_bed_ids = set(
+        db.scalars(
+            select(CropPlan.bed_id).where(
+                CropPlan.farm_id == DEFAULT_FARM_ID,
+                CropPlan.status == "planned",
+            )
+        ).all()
+    )
+
+    task_signatures = {
+        (task.planting_id, task.task_type, task.due_date) for task in all_tasks
+    }
+    planting_task_types = {
+        (task.planting_id, task.task_type)
+        for task in all_tasks
+        if task.planting_id is not None
+    }
+    overdue_planting_types = {
+        (task.planting_id, task.task_type)
+        for task in all_tasks
+        if task.planting_id is not None
+        and task.status == "planned"
+        and task.due_date < review_date
+    }
+    open_bed_planning = {
+        task.bed_id
+        for task in all_tasks
+        if task.bed_id is not None
+        and task.task_type == "bed_planning"
+        and task.status == "planned"
+    }
+    recently_reviewed_empty_beds = {
+        task.bed_id
+        for task in all_tasks
+        if task.bed_id is not None
+        and task.task_type == "bed_planning"
+        and task.status == "completed"
+        and task.due_date >= review_date - timedelta(days=14)
+    }
+
+    suggestions: list[dict] = []
+
+    def add_suggestion(
+        *,
+        key: str,
+        bed: Bed,
+        title: str,
+        task_type: str,
+        due_date: date,
+        priority: str,
+        reason: str,
+        stage: str,
+        planting: Planting | None = None,
+    ) -> None:
+        suggestions.append(
+            {
+                "key": key,
+                "bed_id": bed.id,
+                "bed": bed.name,
+                "planting_id": planting.id if planting else None,
+                "crop": planting.crop.name if planting else None,
+                "variety": planting.variety.name if planting else None,
+                "title": title[:160],
+                "task_type": task_type,
+                "due_date": due_date,
+                "priority": priority,
+                "reason": reason,
+                "stage": stage,
+            }
+        )
+
+    for planting in active_plantings:
+        crop_label = f"{planting.crop.name} {planting.variety.name}"
+        emergence_date = planting.sowing_date + timedelta(days=7)
+        if (
+            (planting.id, "emergence_check") not in planting_task_types
+            and emergence_date <= horizon_end
+            and review_date <= planting.sowing_date + timedelta(days=21)
+        ):
+            due_date = max(review_date, emergence_date)
+            add_suggestion(
+                key=f"emergence:{planting.id}:{emergence_date.isoformat()}",
+                bed=planting.bed,
+                planting=planting,
+                title=f"Pregled vznika: {crop_label}",
+                task_type="emergence_check",
+                due_date=due_date,
+                priority="normal",
+                reason="Po setvi še ni zabeležen pregled vznika.",
+                stage="Vznik",
+            )
+
+        last_growth_date = planting.expected_harvest_date - timedelta(days=7)
+        growth_date = planting.sowing_date + timedelta(days=21)
+        if (planting.id, "growth_check") not in overdue_planting_types:
+            while growth_date <= last_growth_date:
+                if review_date <= growth_date <= horizon_end and (
+                    planting.id,
+                    "growth_check",
+                    growth_date,
+                ) not in task_signatures:
+                    add_suggestion(
+                        key=f"growth:{planting.id}:{growth_date.isoformat()}",
+                        bed=planting.bed,
+                        planting=planting,
+                        title=f"Redni pregled rasti: {crop_label}",
+                        task_type="growth_check",
+                        due_date=growth_date,
+                        priority="normal",
+                        reason="Naslednji 14-dnevni pregled rasti še ni načrtovan.",
+                        stage="Rast",
+                    )
+                growth_date += timedelta(days=14)
+
+        harvest_check_date = planting.expected_harvest_date - timedelta(days=1)
+        if (
+            (planting.id, "harvest_check") not in planting_task_types
+            and harvest_check_date <= horizon_end
+            and review_date <= planting.expected_harvest_date + timedelta(days=7)
+        ):
+            add_suggestion(
+                key=f"harvest:{planting.id}:{harvest_check_date.isoformat()}",
+                bed=planting.bed,
+                planting=planting,
+                title=f"Kontrola pred žetvijo: {crop_label}",
+                task_type="harvest_check",
+                due_date=max(review_date, harvest_check_date),
+                priority="high",
+                reason="Bliža se predvidena žetev, kontrola pa še ni načrtovana.",
+                stage="Pred žetvijo",
+            )
+
+        followup_start = planting.expected_harvest_date + timedelta(days=1)
+        if followup_start <= horizon_end:
+            bucket_start = followup_start
+            if bucket_start < review_date:
+                elapsed = (review_date - bucket_start).days
+                bucket_start += timedelta(days=(elapsed // 7) * 7)
+            bucket_end = bucket_start + timedelta(days=6)
+            has_bucket_review = any(
+                task.planting_id == planting.id
+                and task.task_type == "harvest_followup"
+                and bucket_start <= task.due_date <= bucket_end
+                for task in all_tasks
+            )
+            has_overdue_followup = (
+                planting.id,
+                "harvest_followup",
+            ) in overdue_planting_types
+            if not has_bucket_review and not has_overdue_followup:
+                due_date = max(review_date, bucket_start)
+                add_suggestion(
+                    key=f"harvest-followup:{planting.id}:{bucket_start.isoformat()}",
+                    bed=planting.bed,
+                    planting=planting,
+                    title=f"Preveri žetev in zaključi cikel: {crop_label}",
+                    task_type="harvest_followup",
+                    due_date=due_date,
+                    priority="high",
+                    reason=(
+                        "Predvideni datum žetve je že mimo, rastni cikel pa je še aktiven."
+                        if review_date > planting.expected_harvest_date
+                        else "V obdobju pregleda nastopi predvideni datum žetve."
+                    ),
+                    stage="Žetev",
+                )
+
+    active_bed_ids = {planting.bed_id for planting in active_plantings}
+    for bed in beds:
+        if bed.id in active_bed_ids or bed.status != "empty":
+            continue
+        if (
+            bed.id in planned_bed_ids
+            or bed.id in open_bed_planning
+            or bed.id in recently_reviewed_empty_beds
+        ):
+            continue
+        add_suggestion(
+            key=f"bed-planning:{bed.id}:{review_date.isoformat()}",
+            bed=bed,
+            title=f"Načrtuj zasaditev prazne gredice {bed.name}",
+            task_type="bed_planning",
+            due_date=review_date,
+            priority="low",
+            reason="Gredica je prazna in zanjo ni pripravljenega načrta setve.",
+            stage="Prazna gredica",
+        )
+
+    priority_order = {"high": 0, "normal": 1, "low": 2}
+    suggestions.sort(
+        key=lambda item: (
+            item["due_date"],
+            priority_order[item["priority"]],
+            item["bed"],
+            item["key"],
+        )
+    )
+    overdue_tasks = [
+        serialize_task(task)
+        for task in all_tasks
+        if task.status == "planned" and task.due_date < review_date
+    ]
+    return {
+        "review_date": review_date,
+        "horizon_days": horizon_days,
+        "horizon_end": horizon_end,
+        "reviewed_beds": len(beds),
+        "active_beds": len(active_plantings),
+        "empty_beds": sum(
+            bed.status == "empty" and bed.id not in active_bed_ids for bed in beds
+        ),
+        "overdue_count": len(overdue_tasks),
+        "suggestion_count": len(suggestions),
+        "overdue_tasks": overdue_tasks,
+        "suggestions": suggestions,
+        "note": (
+            "Pregled deluje lokalno iz rokov, stanja gredic in obstoječih opravil. "
+            "Vreme in tipala niso vključeni, zato zalivanja ne ugiba."
+        ),
+    }
+
+
+@app.get("/api/task-review")
+def task_review(
+    review_date: date | None = Query(default=None, alias="date"),
+    horizon_days: int = Query(default=7, ge=1, le=30),
+    db: Session = Depends(get_db),
+) -> dict:
+    return build_task_review(db, review_date or date.today(), horizon_days)
+
+
+@app.post("/api/task-review/apply", status_code=status.HTTP_201_CREATED)
+def apply_task_review(payload: TaskReviewApply, db: Session = Depends(get_db)) -> dict:
+    selected_keys = set(payload.selected_keys)
+    review = build_task_review(db, payload.review_date, payload.horizon_days)
+    available = {
+        suggestion["key"]: suggestion for suggestion in review["suggestions"]
+    }
+    created = []
+    for key in selected_keys:
+        suggestion = available.get(key)
+        if suggestion is None:
+            continue
+        task = Task(
+            farm_id=DEFAULT_FARM_ID,
+            bed_id=suggestion["bed_id"],
+            planting_id=suggestion["planting_id"],
+            title=suggestion["title"],
+            task_type=suggestion["task_type"],
+            due_date=suggestion["due_date"],
+            priority=suggestion["priority"],
+        )
+        db.add(task)
+        created.append(task)
+    db.commit()
+    created_count = len(created)
+    skipped_count = len(selected_keys) - created_count
+    return {
+        "message": (
+            f"Ustvarjenih je {created_count} opravil."
+            if created_count
+            else "Nova opravila niso bila potrebna."
+        ),
+        "created_count": created_count,
+        "skipped_count": skipped_count,
+    }
 
 
 @app.post("/api/plantings", status_code=status.HTTP_201_CREATED)

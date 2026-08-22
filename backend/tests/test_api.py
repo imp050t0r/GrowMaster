@@ -341,6 +341,50 @@ def test_bed_planting_and_task_workflow() -> None:
         ]
         assert len(planting_tasks) == 3
 
+        task_review = client.get(
+            "/api/task-review?date=2026-08-05&horizon_days=7"
+        )
+        assert task_review.status_code == 200
+        review_data = task_review.json()
+        assert review_data["reviewed_beds"] == 7
+        assert review_data["active_beds"] == 1
+        assert review_data["suggestion_count"] >= 1
+        assert {item["task_type"] for item in review_data["suggestions"]} == {
+            "bed_planning"
+        }
+        b1_planning = next(
+            item
+            for item in review_data["suggestions"]
+            if item["bed_id"] == new_bed.json()["id"]
+        )
+        applied_review = client.post(
+            "/api/task-review/apply",
+            json={
+                "review_date": "2026-08-05",
+                "horizon_days": 7,
+                "selected_keys": [b1_planning["key"]],
+            },
+        )
+        assert applied_review.status_code == 201
+        assert applied_review.json()["created_count"] == 1
+        repeated_review = client.get(
+            "/api/task-review?date=2026-08-05&horizon_days=7"
+        ).json()
+        assert b1_planning["key"] not in {
+            item["key"] for item in repeated_review["suggestions"]
+        }
+        stale_apply = client.post(
+            "/api/task-review/apply",
+            json={
+                "review_date": "2026-08-05",
+                "horizon_days": 7,
+                "selected_keys": [b1_planning["key"]],
+            },
+        )
+        assert stale_apply.status_code == 201
+        assert stale_apply.json()["created_count"] == 0
+        assert stale_apply.json()["skipped_count"] == 1
+
         worker = client.post(
             "/api/workers",
             json={
@@ -1678,6 +1722,32 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         )
         assert analytics_planting.status_code == 201
+        with SessionLocal() as db:
+            stored_analytics_planting = db.get(
+                Planting, analytics_planting.json()["id"]
+            )
+            stored_analytics_planting.expected_harvest_date = date(2027, 3, 20)
+            first_growth_check = db.scalar(
+                select(Task).where(
+                    Task.planting_id == stored_analytics_planting.id,
+                    Task.task_type == "growth_check",
+                )
+            )
+            first_growth_check.status = "completed"
+            first_growth_check.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        growth_review = client.get(
+            "/api/task-review?date=2027-02-04&horizon_days=2"
+        )
+        assert growth_review.status_code == 200
+        recurring_growth = next(
+            item
+            for item in growth_review.json()["suggestions"]
+            if item["planting_id"] == analytics_planting.json()["id"]
+            and item["task_type"] == "growth_check"
+        )
+        assert recurring_growth["due_date"] == "2027-02-05"
+        assert "14-dnevni" in recurring_growth["reason"]
         analytics_harvest = client.post(
             "/api/harvests",
             json={
