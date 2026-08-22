@@ -85,6 +85,12 @@ class TaskCreate(BaseModel):
     priority: Literal["low", "normal", "high"] = "normal"
 
 
+class TaskReviewApply(BaseModel):
+    review_date: date
+    horizon_days: int = Field(default=7, ge=1, le=30)
+    selected_keys: list[str] = Field(default_factory=list, max_length=500)
+
+
 class TaskComplete(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=0, le=1440)
     worker_id: int | None = None

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test:spacing": "node --test src/gredicnikSpacing.test.js",
     "build": "vite build",
     "preview": "vite preview",
     "mobile:generate": "npm run build && cap add android && cap add ios && cap sync",

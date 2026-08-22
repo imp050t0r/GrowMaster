@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import { GREDICNIK_MODES, getGredicnikSpacing, getGredicnikSpacingOptions } from "./gredicnikSpacing";
 import {
   apiFetch,
   apiRequest,
@@ -66,6 +67,8 @@ const taskTypeLabels = {
   emergence_check: "Pregled vznika",
   growth_check: "Pregled rasti",
   harvest_check: "Kontrola žetve",
+  harvest_followup: "Pregled žetve",
+  bed_planning: "Načrt zasaditve",
 };
 
 function App() {
@@ -81,6 +84,9 @@ function App() {
   const [plantings, setPlantings] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [dashboard, setDashboard] = useState(null);
+  const [taskReview, setTaskReview] = useState(null);
+  const [selectedReviewKeys, setSelectedReviewKeys] = useState([]);
+  const [reviewApplying, setReviewApplying] = useState(false);
   const [harvests, setHarvests] = useState([]);
   const [economics, setEconomics] = useState([]);
   const [inventory, setInventory] = useState([]);
@@ -194,12 +200,13 @@ function App() {
   );
 
   async function loadData() {
-    const [cropData, bedData, plantingData, taskData, dashboardData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, profitabilityData, farmExpenseData, invoiceData, invoiceProfileData, farmProfileData] = await Promise.all([
+    const [cropData, bedData, plantingData, taskData, dashboardData, taskReviewData, harvestData, economicsData, inventoryData, priceData, customerData, orderData, planData, calendarData, forecastData, retailSaleData, salesSettingsData, salesReportData, receivablesData, cashFlowData, dayCloseData, supplierData, supplyItemData, purchaseOrderData, supplyUsageData, workerData, laborData, profitabilityData, farmExpenseData, invoiceData, invoiceProfileData, farmProfileData] = await Promise.all([
       apiRequest("/api/crops"),
       apiRequest("/api/beds"),
       apiRequest("/api/plantings"),
       apiRequest(`/api/tasks?date=${taskDate}`),
       apiRequest(`/api/dashboard?date=${today}`),
+      apiRequest(`/api/task-review?date=${today}&horizon_days=7`),
       apiRequest("/api/harvests"),
       apiRequest("/api/economics/by-bed"),
       apiRequest("/api/inventory"),
@@ -232,6 +239,8 @@ function App() {
     setPlantings(plantingData);
     setTasks(taskData);
     setDashboard(dashboardData);
+    setTaskReview(taskReviewData);
+    setSelectedReviewKeys(taskReviewData.suggestions.map((suggestion) => suggestion.key));
     setHarvests(harvestData);
     setEconomics(economicsData);
     setInventory(inventoryData);
@@ -663,6 +672,42 @@ function App() {
       await loadData();
     } catch (requestError) {
       setError(requestError.message);
+    }
+  }
+
+  function toggleReviewSuggestion(key) {
+    setSelectedReviewKeys((current) => (
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key]
+    ));
+  }
+
+  function selectAllReviewSuggestions() {
+    const allKeys = taskReview?.suggestions.map((suggestion) => suggestion.key) || [];
+    setSelectedReviewKeys((current) => current.length === allKeys.length ? [] : allKeys);
+  }
+
+  async function applyTaskReview() {
+    if (!selectedReviewKeys.length) return;
+    clearMessages();
+    setReviewApplying(true);
+    try {
+      const data = await apiRequest("/api/task-review/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          review_date: taskReview.review_date,
+          horizon_days: taskReview.horizon_days,
+          selected_keys: selectedReviewKeys,
+        }),
+      });
+      setNotice(data.message);
+      await loadData();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setReviewApplying(false);
     }
   }
 
@@ -1215,7 +1260,10 @@ function App() {
       {error && <div className="message error">⚠ {error}</div>}
 
       {view === "dashboard" && (
-        <DashboardView dashboard={dashboard} beds={beds} setView={setView} />
+        <DashboardView dashboard={dashboard} beds={beds} setView={setView}
+          taskReview={taskReview} selectedReviewKeys={selectedReviewKeys}
+          toggleReviewSuggestion={toggleReviewSuggestion} selectAllReviewSuggestions={selectAllReviewSuggestions}
+          applyTaskReview={applyTaskReview} reviewApplying={reviewApplying} />
       )}
 
       {view === "beds" && (
@@ -1363,14 +1411,46 @@ function App() {
   );
 }
 
-function DashboardView({ dashboard, beds, setView }) {
+function DashboardView({ dashboard, beds, setView, taskReview, selectedReviewKeys, toggleReviewSuggestion, selectAllReviewSuggestions, applyTaskReview, reviewApplying }) {
   const emptyBeds = beds.filter((bed) => bed.status === "empty").length;
+  const allSuggestionsSelected = Boolean(taskReview?.suggestions.length) && selectedReviewKeys.length === taskReview.suggestions.length;
   return (
     <>
       <section className="metric-grid">
         <article className="metric-card"><span>Današnja opravila</span><strong>{dashboard?.tasks_total || 0}</strong><small>{dashboard?.tasks_completed || 0} opravljenih</small></article>
         <article className="metric-card"><span>Aktivne gredice</span><strong>{dashboard?.active_beds || 0}</strong><small>{emptyBeds} praznih</small></article>
         <article className="metric-card"><span>Naslednja žetev</span><strong>{dashboard?.next_harvest?.bed || "—"}</strong><small>{dashboard?.next_harvest ? `${dashboard.next_harvest.crop} · ${dashboard.next_harvest.expected_harvest_date}` : "Ni aktivnih setev"}</small></article>
+      </section>
+      <section className="panel smart-review-panel">
+        <div className="section-heading smart-review-heading">
+          <div><p className="eyebrow">Samodejno · lokalno</p><h2>Pametni dnevni pregled</h2><p className="muted">GrowMaster pregleda vse gredice in pripravi samo manjkajoča opravila za naslednjih 7 dni.</p></div>
+          <span>{taskReview?.reviewed_beds ?? beds.length} pregledanih gredic</span>
+        </div>
+        {!taskReview ? <p className="empty-state">Pregledujem gredice …</p> : <>
+          <div className="smart-review-metrics">
+            <article><span>Aktivnih</span><strong>{taskReview.active_beds}</strong></article>
+            <article className={taskReview.overdue_count ? "attention" : ""}><span>Zamujenih</span><strong>{taskReview.overdue_count}</strong></article>
+            <article><span>Predlogov</span><strong>{taskReview.suggestion_count}</strong></article>
+          </div>
+          {taskReview.overdue_count > 0 && <div className="review-overdue">
+            <div><strong>Najprej uredi zamujena opravila</strong><span>{taskReview.overdue_count} opravil že čaka na izvedbo.</span></div>
+            <div className="review-overdue-list">{taskReview.overdue_tasks.slice(0, 5).map((task) => <span key={task.id}><b>{task.bed || "Splošno"}</b>{task.title}<time>{task.due_date}</time></span>)}</div>
+            {taskReview.overdue_count > 5 && <small>in še {taskReview.overdue_count - 5} opravil</small>}
+            <button type="button" className="text-button" onClick={() => setView("tasks")}>ODPRI OPRAVILA →</button>
+          </div>}
+          {taskReview.suggestions.length > 0 ? <>
+            <div className="review-actions-top"><span>Izberi predloge, ki jih želiš dodati.</span><button type="button" className="text-button" onClick={selectAllReviewSuggestions}>{allSuggestionsSelected ? "ODZNAČI VSE" : "IZBERI VSE"}</button></div>
+            <div className="review-suggestion-list">
+              {taskReview.suggestions.map((suggestion) => <label className="review-suggestion" key={suggestion.key}>
+                <input type="checkbox" checked={selectedReviewKeys.includes(suggestion.key)} onChange={() => toggleReviewSuggestion(suggestion.key)} />
+                <span className={`priority-dot ${suggestion.priority}`} />
+                <span className="review-suggestion-main"><strong>{suggestion.title}</strong><small>Gredica {suggestion.bed} · {suggestion.stage} · rok {suggestion.due_date}</small><em>{suggestion.reason}</em></span>
+              </label>)}
+            </div>
+            <div className="review-create-row"><small>{selectedReviewKeys.length} izbranih · pred shranjevanjem se predlogi še enkrat preverijo</small><button type="button" className="primary-button" disabled={!selectedReviewKeys.length || reviewApplying} onClick={applyTaskReview}>{reviewApplying ? "USTVARJAM …" : `USTVARI IZBRANA OPRAVILA (${selectedReviewKeys.length})`}</button></div>
+          </> : <div className="review-all-clear"><strong>✓ Za zdaj je vse pokrito.</strong><span>Ni novih predlogov za naslednjih 7 dni.</span></div>}
+          <p className="smart-review-note">{taskReview.note}</p>
+        </>}
       </section>
       <section className="panel">
         <div className="section-heading"><div><p className="eyebrow">Danes</p><h2>Terensko delo</h2></div><button className="text-button" onClick={() => setView("tasks")}>Vsa opravila →</button></div>
@@ -2050,13 +2130,36 @@ function GredicnikView({ crops, beds, savePlan }) {
   const selectedCrop = crops.find((crop) => String(crop.id) === String(form.crop_id));
   const selectedVariety = selectedCrop?.varieties.find((variety) => String(variety.id) === String(form.variety_id));
   const babyLeaf = form.mode.startsWith("baby");
+  const spacingOptions = useMemo(
+    () => getGredicnikSpacingOptions(selectedCrop, selectedVariety),
+    [selectedCrop, selectedVariety],
+  );
+  const spacingRecommendation = spacingOptions[form.mode] || getGredicnikSpacing(selectedCrop, selectedVariety, form.mode);
+
+  function withSpacingRecommendation(current, crop, variety, mode) {
+    const recommendation = getGredicnikSpacing(crop, variety, mode);
+    return {
+      ...current,
+      mode,
+      rows: String(recommendation.rows),
+      row_spacing_cm: String(recommendation.rowSpacingCm),
+      plant_spacing_cm: String(recommendation.plantSpacingCm),
+    };
+  }
 
   useEffect(() => {
     if (!form.bed_id && beds[0]) setForm((current) => ({ ...current, bed_id: String(beds[0].id) }));
   }, [beds, form.bed_id]);
 
   useEffect(() => {
-    if (!form.crop_id && crops[0]) setForm((current) => ({ ...current, crop_id: String(crops[0].id), variety_id: String(crops[0].varieties[0]?.id || "") }));
+    if (!form.crop_id && crops[0]) {
+      setForm((current) => {
+        const crop = crops[0];
+        const variety = crop.varieties[0];
+        const mode = crop.category === "Baby leaf" ? "baby6" : "standard";
+        return withSpacingRecommendation({ ...current, crop_id: String(crop.id), variety_id: String(variety?.id || "") }, crop, variety, mode);
+      });
+    }
   }, [crops, form.crop_id]);
 
   const result = useMemo(() => {
@@ -2082,20 +2185,26 @@ function GredicnikView({ crops, beds, savePlan }) {
 
   function changeCrop(cropId) {
     const crop = crops.find((item) => String(item.id) === String(cropId));
-    setForm({ ...form, crop_id: cropId, variety_id: String(crop?.varieties[0]?.id || "") });
+    const variety = crop?.varieties[0];
+    const mode = crop?.category === "Baby leaf" ? "baby6" : form.mode.startsWith("baby") ? "standard" : form.mode;
+    setForm(withSpacingRecommendation({ ...form, crop_id: cropId, variety_id: String(variety?.id || "") }, crop, variety, mode));
+  }
+
+  function changeVariety(varietyId) {
+    const variety = selectedCrop?.varieties.find((item) => String(item.id) === String(varietyId));
+    setForm(withSpacingRecommendation({ ...form, variety_id: varietyId }, selectedCrop, variety, form.mode));
   }
 
   function changeMode(mode) {
-    const rows = mode.endsWith("12") ? "12" : mode.endsWith("6") ? "6" : form.rows;
-    setForm({ ...form, mode, rows, row_spacing_cm: mode.startsWith("baby") ? "7" : form.row_spacing_cm, plant_spacing_cm: mode.startsWith("baby") ? "2" : form.plant_spacing_cm });
+    setForm(withSpacingRecommendation(form, selectedCrop, selectedVariety, mode));
   }
 
   async function submit(event) {
     event.preventDefault();
     setSaving(true);
-    const modeLabel = babyLeaf ? `baby leaf · ${result.rows} vrst${result.rows === 12 ? " (dvojni prehod 6-vrstne sejalnice)" : ""}` : `standardno · ${result.rows} vrst`;
+    const modeLabel = GREDICNIK_MODES.find((item) => item.value === form.mode)?.label || form.mode;
     const regionLabels = { primorska: "Primorska", panonska: "Panonska Slovenija", centralna: "Osrednja Slovenija", alpska: "Alpski svet" };
-    const notes = `Gredičnik: ${modeLabel}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; razmik rastlin ${form.plant_spacing_cm} cm; ${babyLeaf ? `${result.seedGrams.toFixed(1)} g semena; do ${result.cuts} rezov` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
+    const notes = `Gredičnik: ${modeLabel}; oprema ${spacingRecommendation.equipment}; ${spacingRecommendation.setup}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; razmik v vrsti ${form.plant_spacing_cm} cm; ${babyLeaf ? `${result.seedGrams.toFixed(1)} g semena; do ${result.cuts} rezov` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
     await savePlan({ bed_id: Number(form.bed_id), crop_id: Number(form.crop_id), variety_id: Number(form.variety_id), sowing_date: form.sowing_date, transplant_date: null, expected_yield_kg: Number(result.expectedYield.toFixed(2)), succession_count: Number(form.succession_count), succession_interval_days: Number(form.succession_interval_days), notes });
     setSaving(false);
   }
@@ -2113,19 +2222,28 @@ function GredicnikView({ crops, beds, savePlan }) {
           <div className="gredicnik-fields">
             <label>Gredica<select value={form.bed_id} onChange={(e) => setForm({ ...form, bed_id: e.target.value })} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.width_m} × {bed.length_m} m</option>)}</select></label>
             <label>Kultura<select value={form.crop_id} onChange={(e) => changeCrop(e.target.value)} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
-            <label>Sorta<select value={form.variety_id} onChange={(e) => setForm({ ...form, variety_id: e.target.value })} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name}</option>)}</select></label>
+            <label>Sorta<select value={form.variety_id} onChange={(e) => changeVariety(e.target.value)} required>{(selectedCrop?.varieties || []).map((variety) => <option key={variety.id} value={variety.id}>{variety.name}</option>)}</select></label>
             <label>Datum setve<input type="date" value={form.sowing_date} onChange={(e) => setForm({ ...form, sowing_date: e.target.value })} required /></label>
             <label>Pridelovalna regija<select value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })}><option value="centralna">Osrednja Slovenija</option><option value="primorska">Primorska</option><option value="panonska">Panonska Slovenija</option><option value="alpska">Alpski svet</option></select></label>
             <label>Nadmorska višina (m)<input type="number" min="0" max="2000" step="10" value={form.altitude_m} onChange={(e) => setForm({ ...form, altitude_m: e.target.value })} required /></label>
           </div>
           <div className="section-heading gredicnik-step"><div><p className="eyebrow">2. Način</p><h2>Razpored setve</h2></div></div>
           <div className="mode-picker">
-            {[['standard', 'Standardno'], ['seeder6', '6 vrst'], ['seeder12', '12 vrst'], ['baby6', 'Baby leaf · 6 vrst'], ['baby12', 'Baby leaf · 12 vrst']].map(([value, label]) => <button type="button" key={value} className={form.mode === value ? "active" : ""} onClick={() => changeMode(value)}>{label}</button>)}
+            {GREDICNIK_MODES.map(({ value, label }) => {
+              const option = spacingOptions[value];
+              return <button type="button" key={value} className={`${form.mode === value ? "active" : ""}${option?.suitable === false ? " limited" : ""}`} onClick={() => changeMode(value)}><strong>{label}</strong><small>{option ? `${String(option.plantSpacingCm).replace(".", ",")} cm · ${option.equipmentShort}` : "—"}</small>{option?.recommended && <em>priporočeno</em>}</button>;
+            })}
+          </div>
+          <div className={`spacing-recommendation ${spacingRecommendation.suitable ? "" : "limited"}`}>
+            <div><span>Priporočilo za izbrano sorto</span><strong>{String(spacingRecommendation.plantSpacingCm).replace(".", ",")} cm v vrsti</strong></div>
+            <b>{spacingRecommendation.equipment}</b>
+            <p>{spacingRecommendation.setup}</p>
+            <small>{spacingRecommendation.note}</small>
           </div>
           <div className="gredicnik-fields compact-fields">
             <label>Število vrst<input type="number" min="1" max="30" value={result.rows} disabled={form.mode !== "standard"} onChange={(e) => setForm({ ...form, rows: e.target.value })} /></label>
-            <label>Razmik med vrstami (cm)<input type="number" min="1" step="0.5" value={form.row_spacing_cm} onChange={(e) => setForm({ ...form, row_spacing_cm: e.target.value })} required /></label>
-            <label>Razmik v vrsti (cm)<input type="number" min="0.5" step="0.5" value={form.plant_spacing_cm} onChange={(e) => setForm({ ...form, plant_spacing_cm: e.target.value })} required /></label>
+            <label>Razmik med vrstami (cm)<input type="number" min="1" step="0.1" value={form.row_spacing_cm} onChange={(e) => setForm({ ...form, row_spacing_cm: e.target.value })} required /></label>
+            <label>Razmik v vrsti (cm)<input type="number" min="0.5" step="0.1" value={form.plant_spacing_cm} onChange={(e) => setForm({ ...form, plant_spacing_cm: e.target.value })} required /></label>
           </div>
           <div className="section-heading gredicnik-step"><div><p className="eyebrow">3. Ponavljanje</p><h2>Succession planting</h2></div></div>
           <div className="gredicnik-fields compact-fields">
@@ -2142,7 +2260,7 @@ function GredicnikView({ crops, beds, savePlan }) {
             <article className="yield-metric"><span>Pričakovani pridelek</span><strong>{result.expectedYield.toFixed(1)} kg</strong></article>
             <article className="harvest-metric"><span>Okvirna prva žetev</span><strong>{result.expectedHarvestDate}</strong><small>{result.harvestDays} dni po setvi · podnebni popravek {result.climateAdjustment >= 0 ? "+" : ""}{result.climateAdjustment} dni</small></article>
           </div>
-          {form.mode === "baby12" && <p className="seeder-note">Dvanajst vrst se izvede z dvema zamaknjenima prehodoma 6-vrstne sejalnice.</p>}
+          {(form.mode === "baby12" || form.mode === "seeder12") && spacingRecommendation.equipment === "6 Row Seeder v2" && <p className="seeder-note">Dvanajst vrst se izvede z dvema vzporednima prehodoma 6-vrstne sejalnice.</p>}
           <button className="primary-button save-gredicnik" disabled={!ready || saving}>{saving ? "SHRANJUJEM …" : "DODAJ V GROWMASTERJEV PLAN"}</button>
           <p className="calculation-note">Ocene semena in pridelka so načrtovalske vrednosti. Po prvih žetvah jih primerjaj z dejanskim rezultatom sorte in lokacije.</p>
         </aside>

@@ -27,6 +27,8 @@ jobs:
       - working-directory: frontend
         run: npm install
       - working-directory: frontend
+        run: npm run test:spacing
+      - working-directory: frontend
         run: npm run build
 
   production-images:
