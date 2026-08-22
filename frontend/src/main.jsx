@@ -1219,7 +1219,7 @@ function App() {
         </div>
         <div className="account-summary">
           <span className={`connection-pill ${online ? "online" : "offline"}`}>{online ? "● POVEZANO" : "● BREZ POVEZAVE"}</span>
-          <span className="status-pill">1.19.0</span>
+          <span className="status-pill">1.20.0</span>
           <span>Prijavljen: <strong>{auth.display_name}</strong></span>
           {installPrompt && <button type="button" onClick={installWebApp}>NAMESTI APLIKACIJO</button>}
           {isNativeApp && <button type="button" onClick={changeServer}>STREŽNIK</button>}
