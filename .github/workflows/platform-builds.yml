@@ -137,6 +137,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             release/windows/GrowMaster-Setup-*.exe \
             release/GrowMaster-Android-*.apk \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "GrowMaster ${GITHUB_REF_NAME#v}" \
             --generate-notes
