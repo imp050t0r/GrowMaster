@@ -88,6 +88,14 @@ class Variety(Base):
     seed_rate_g_m2: Mapped[float | None] = mapped_column(Float, nullable=True)
     seed_spacing_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
     row_spacing_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    planting_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    outdoor_months: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    protected_months: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    heat_tolerance: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    cold_tolerance: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    planting_calendar_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    succession_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    calendar_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     crop: Mapped[Crop] = relationship(back_populates="varieties")
 

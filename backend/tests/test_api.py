@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0005_variety_catalog_metadata"
-        assert run_migrations() == "0005_variety_catalog_metadata"
+        assert run_migrations() == "0006_variety_planting_calendar"
+        assert run_migrations() == "0006_variety_planting_calendar"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 5
+            ) == 6
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -197,6 +197,21 @@ def test_bed_planting_and_task_workflow() -> None:
             if variety["source_name"] == "Johnny's Selected Seeds"
         ]
         assert len(supplier_varieties) == 37
+        assert all(
+            variety["planting_method"] in {"direct", "transplant"}
+            and variety["outdoor_months"]
+            and variety["protected_months"]
+            and variety["planting_calendar_note"]
+            and variety["calendar_source_url"]
+            for variety in supplier_varieties
+        )
+        assert all(
+            variety["planting_method"] in {"direct", "transplant"}
+            and variety["outdoor_months"]
+            and variety["protected_months"]
+            for crop in crops
+            for variety in crop["varieties"]
+        )
         astro = next(
             variety
             for variety in next(crop for crop in crops if crop["name"] == "Rukola")[
@@ -207,7 +222,29 @@ def test_bed_planting_and_task_workflow() -> None:
         assert astro["days_to_harvest"] == 35
         assert astro["days_baby"] == 21
         assert astro["seed_spacing_cm"] == 0.5
+        assert astro["heat_tolerance"] == "visoka"
+        assert astro["cold_tolerance"] == "visoka"
+        assert astro["outdoor_months"] == "3,4,5,6,7,8,9,10"
+        assert astro["succession_interval_days"] == 14
         assert "zaporedne setve" in astro["slovenia_note"]
+        methi = next(
+            variety
+            for variety in next(crop for crop in crops if crop["name"] == "Methi")[
+                "varieties"
+            ]
+            if variety["name"] == "Kasuri"
+        )
+        assert methi["planting_method"] == "direct"
+        assert methi["outdoor_months"] == "2,3,4,5,8,9,10"
+        malabar_spinach = next(
+            variety
+            for variety in next(
+                crop for crop in crops if crop["name"] == "Malabarska špinača"
+            )["varieties"]
+            if variety["name"] == "Green Stem"
+        )
+        assert malabar_spinach["planting_method"] == "direct"
+        assert malabar_spinach["heat_tolerance"] == "visoka"
         mountain_magic = next(
             variety
             for variety in next(
@@ -267,6 +304,11 @@ def test_bed_planting_and_task_workflow() -> None:
         assert new_variety.json()["composition"] == (
             "Testna solata, rukola in špinača."
         )
+        assert new_variety.json()["planting_method"] == "direct"
+        assert new_variety.json()["outdoor_months"] == "3,4,5,6,7,8,9"
+        assert "splošno priporočilo" in new_variety.json()[
+            "planting_calendar_note"
+        ]
         assert {
             key: new_variety.json()[key]
             for key in (
@@ -2071,7 +2113,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0005_variety_catalog_metadata"
+        assert data_safety_summary["schema_revision"] == "0006_variety_planting_calendar"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
@@ -2168,6 +2210,14 @@ def test_bed_planting_and_task_workflow() -> None:
             "seed_rate_g_m2",
             "seed_spacing_cm",
             "row_spacing_cm",
+            "planting_method",
+            "outdoor_months",
+            "protected_months",
+            "heat_tolerance",
+            "cold_tolerance",
+            "planting_calendar_note",
+            "succession_interval_days",
+            "calendar_source_url",
         }
         assert metadata_fields <= set(backup_variety)
 

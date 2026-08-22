@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.johnnys_catalog import JOHNNYS_SLOVENIA_VARIETIES
 from app.maturity import estimated_seasonal_days
 from app.models import Bed, Crop, Farm, Task, Variety
+from app.planting_calendar import CALENDAR_FIELDS, default_calendar_for_crop
 
 
 CROP_DATA = [
@@ -747,7 +748,7 @@ def seed_database(db: Session) -> None:
         "seed_rate_g_m2",
         "seed_spacing_cm",
         "row_spacing_cm",
-    )
+    ) + CALENDAR_FIELDS
     for item in JOHNNYS_SLOVENIA_VARIETIES:
         crop = existing_crops.get(item["crop"].casefold())
         if crop is None:
@@ -781,6 +782,18 @@ def seed_database(db: Session) -> None:
                 **{field: item[field] for field in metadata_fields},
             )
         )
+
+    # Every older or user-defined variety receives a conservative crop-level
+    # fallback, but only where the new optional fields are still empty.
+    for crop in existing_crops.values():
+        fallback = default_calendar_for_crop(crop.name, crop.category)
+        for existing_variety in crop.varieties:
+            for field in CALENDAR_FIELDS:
+                if (
+                    getattr(existing_variety, field) is None
+                    and fallback[field] is not None
+                ):
+                    setattr(existing_variety, field, fallback[field])
     db.flush()
 
     if db.scalar(select(Task).limit(1)) is None and farm.name == DEMO_FARM_NAME:

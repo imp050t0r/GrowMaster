@@ -42,6 +42,14 @@ VARIETY_OPTIONAL_COLUMNS = {
     "seed_rate_g_m2",
     "seed_spacing_cm",
     "row_spacing_cm",
+    "planting_method",
+    "outdoor_months",
+    "protected_months",
+    "heat_tolerance",
+    "cold_tolerance",
+    "planting_calendar_note",
+    "succession_interval_days",
+    "calendar_source_url",
 }
 
 

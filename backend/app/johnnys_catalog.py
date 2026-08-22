@@ -6,6 +6,9 @@ descriptions.  Source availability and shipping are separate from agronomic
 suitability.
 """
 
+from app.planting_calendar import JOHNNYS_VARIETY_CALENDARS
+
+
 JOHNNYS_SOURCE = "Johnny's Selected Seeds"
 
 
@@ -320,3 +323,9 @@ JOHNNYS_SLOVENIA_VARIETIES = [
         row_spacing_cm=25.0,
     ),
 ]
+
+for catalog_variety in JOHNNYS_SLOVENIA_VARIETIES:
+    calendar_key = (catalog_variety["crop"], catalog_variety["name"])
+    catalog_variety.update(JOHNNYS_VARIETY_CALENDARS[calendar_key])
+    if catalog_variety["calendar_source_url"] is None:
+        catalog_variety["calendar_source_url"] = catalog_variety["source_url"]
