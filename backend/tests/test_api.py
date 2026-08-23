@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0006_variety_planting_calendar"
-        assert run_migrations() == "0006_variety_planting_calendar"
+        assert run_migrations() == "0007_variety_harvest_profiles"
+        assert run_migrations() == "0007_variety_harvest_profiles"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 6
+            ) == 7
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -212,6 +212,28 @@ def test_bed_planting_and_task_workflow() -> None:
             for crop in crops
             for variety in crop["varieties"]
         )
+        assert all(
+            variety["cultivation_methods"] and variety["harvest_methods"]
+            for crop in crops
+            for variety in crop["varieties"]
+        )
+        endive = next(crop for crop in crops if crop["name"] == "Endivija")
+        assert {variety["name"] for variety in endive["varieties"]} >= {
+            "Dečja glava",
+            "Eskariol zelena",
+            "Dalmatinska kopica",
+        }
+        for endive_variety in endive["varieties"]:
+            assert endive_variety["cultivation_methods"] == "direct,transplant"
+            assert endive_variety["harvest_methods"] == (
+                "full_size,baby_leaf,outer_leaves,cut_and_regrow"
+            )
+            assert endive_variety["nursery_days"] == 25
+            assert endive_variety["direct_sow_extra_days"] == 18
+            assert endive_variety["regrowth_interval_min_days"] == 5
+            assert endive_variety["regrowth_interval_max_days"] == 14
+            assert endive_variety["max_regrowth_cuts"] == 3
+            assert endive_variety["harvest_source_url"]
         astro = next(
             variety
             for variety in next(crop for crop in crops if crop["name"] == "Rukola")[
@@ -305,6 +327,8 @@ def test_bed_planting_and_task_workflow() -> None:
             "Testna solata, rukola in špinača."
         )
         assert new_variety.json()["planting_method"] == "direct"
+        assert new_variety.json()["cultivation_methods"] == "direct"
+        assert new_variety.json()["harvest_methods"] == "full_size"
         assert new_variety.json()["outdoor_months"] == "3,4,5,6,7,8,9"
         assert "splošno priporočilo" in new_variety.json()[
             "planting_calendar_note"
@@ -886,6 +910,7 @@ def test_bed_planting_and_task_workflow() -> None:
                 "variety_id": variety["id"],
                 "sowing_date": "2026-09-20",
                 "transplant_date": "2026-09-27",
+                "expected_harvest_date": "2026-10-25",
                 "expected_yield_kg": 8,
                 "succession_count": 2,
                 "succession_interval_days": 14,
@@ -899,9 +924,22 @@ def test_bed_planting_and_task_workflow() -> None:
         assert plan_series.json()["plans"][0]["maturity_days"] == variety[
             "days_autumn"
         ]
-        assert plan_series.json()["plans"][0]["expected_harvest_date"] == (
-            "2026-10-30"
+        assert plan_series.json()["plans"][0]["expected_harvest_date"] == "2026-10-25"
+        assert plan_series.json()["plans"][1]["expected_harvest_date"] == "2026-11-08"
+
+        invalid_harvest_date = client.post(
+            "/api/plans",
+            json={
+                "bed_id": bed["id"],
+                "crop_id": crop["id"],
+                "variety_id": variety["id"],
+                "sowing_date": "2026-09-20",
+                "transplant_date": "2026-09-27",
+                "expected_harvest_date": "2026-09-26",
+                "expected_yield_kg": 8,
+            },
         )
+        assert invalid_harvest_date.status_code == 422
 
         calendar = client.get(
             "/api/planning/calendar?start=2026-09-20&end=2026-11-30"
@@ -2113,7 +2151,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0006_variety_planting_calendar"
+        assert data_safety_summary["schema_revision"] == "0007_variety_harvest_profiles"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
@@ -2218,6 +2256,16 @@ def test_bed_planting_and_task_workflow() -> None:
             "planting_calendar_note",
             "succession_interval_days",
             "calendar_source_url",
+            "cultivation_methods",
+            "harvest_methods",
+            "nursery_days",
+            "direct_sow_extra_days",
+            "days_outer_leaf",
+            "regrowth_interval_min_days",
+            "regrowth_interval_max_days",
+            "max_regrowth_cuts",
+            "harvest_profile_note",
+            "harvest_source_url",
         }
         assert metadata_fields <= set(backup_variety)
 

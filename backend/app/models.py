@@ -96,6 +96,16 @@ class Variety(Base):
     planting_calendar_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     succession_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     calendar_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cultivation_methods: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    harvest_methods: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    nursery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    direct_sow_extra_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    days_outer_leaf: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    regrowth_interval_min_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    regrowth_interval_max_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_regrowth_cuts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    harvest_profile_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    harvest_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     crop: Mapped[Crop] = relationship(back_populates="varieties")
 

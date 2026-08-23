@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.johnnys_catalog import JOHNNYS_SLOVENIA_VARIETIES
+from app.harvest_profiles import HARVEST_PROFILE_FIELDS, default_harvest_profile
 from app.maturity import estimated_seasonal_days
 from app.models import Bed, Crop, Farm, Task, Variety
 from app.planting_calendar import CALENDAR_FIELDS, default_calendar_for_crop
@@ -206,7 +207,11 @@ CROP_DATA = [
         "name": "Endivija",
         "family": "Asteraceae",
         "category": "Domača",
-        "varieties": [("Dečja glava", 85), ("Eskariol zelena", 80)],
+        "varieties": [
+            ("Dečja glava", 85),
+            ("Eskariol zelena", 80),
+            ("Dalmatinska kopica", 85),
+        ],
     },
     {
         "name": "Motovilec",
@@ -794,6 +799,39 @@ def seed_database(db: Session) -> None:
                     and fallback[field] is not None
                 ):
                     setattr(existing_variety, field, fallback[field])
+            harvest_profile = default_harvest_profile(
+                crop.name,
+                crop.category,
+                existing_variety.name,
+                existing_variety.planting_method,
+                existing_variety.days_to_harvest,
+                existing_variety.days_baby,
+            )
+            for field in HARVEST_PROFILE_FIELDS:
+                if (
+                    getattr(existing_variety, field) is None
+                    and harvest_profile[field] is not None
+                ):
+                    setattr(existing_variety, field, harvest_profile[field])
+
+            if crop.name == "Endivija" and existing_variety.name == "Dalmatinska kopica":
+                if existing_variety.source_name is None:
+                    existing_variety.source_name = "Uradni seznam sort RS"
+                if existing_variety.source_url is None:
+                    existing_variety.source_url = (
+                        "https://www.uradni-list.si/_pdf/1997/Ur/u1997031.pdf"
+                    )
+                if existing_variety.seed_forms is None:
+                    existing_variety.seed_forms = "navadno seme"
+                if existing_variety.traits is None:
+                    existing_variety.traits = (
+                        "Tradicionalna širokolistna endivija s čvrsto, kompaktno glavo."
+                    )
+                if existing_variety.slovenia_note is None:
+                    existing_variety.slovenia_note = (
+                        "Primerna predvsem za jesenski pridelek; prezimovanje je varnejše "
+                        "v milejših območjih ali pod zaščito."
+                    )
     db.flush()
 
     if db.scalar(select(Task).limit(1)) is None and farm.name == DEMO_FARM_NAME:

@@ -129,6 +129,33 @@ def add_variety_planting_calendar(connection: Connection) -> None:
             )
 
 
+def add_variety_harvest_profiles(connection: Connection) -> None:
+    """Add optional propagation and harvest guidance without changing user data."""
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("varieties")
+    }
+    columns = {
+        "cultivation_methods": "VARCHAR(60)",
+        "harvest_methods": "VARCHAR(160)",
+        "nursery_days": "INTEGER",
+        "direct_sow_extra_days": "INTEGER",
+        "days_outer_leaf": "INTEGER",
+        "regrowth_interval_min_days": "INTEGER",
+        "regrowth_interval_max_days": "INTEGER",
+        "max_regrowth_cuts": "INTEGER",
+        "harvest_profile_note": "TEXT",
+        "harvest_source_url": "TEXT",
+    }
+    for column_name, column_type in columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                text(
+                    f"ALTER TABLE varieties ADD COLUMN {column_name} "
+                    f"{column_type}"
+                )
+            )
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -136,6 +163,7 @@ MIGRATIONS = (
     Migration("0004_variety_composition", add_variety_composition),
     Migration("0005_variety_catalog_metadata", add_variety_catalog_metadata),
     Migration("0006_variety_planting_calendar", add_variety_planting_calendar),
+    Migration("0007_variety_harvest_profiles", add_variety_harvest_profiles),
 )
 
 
