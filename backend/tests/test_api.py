@@ -36,7 +36,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.21.1",
+            "version": "1.22.0",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -2219,7 +2219,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.21.1"
+        assert production_readiness.json()["version"] == "1.22.0"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(
