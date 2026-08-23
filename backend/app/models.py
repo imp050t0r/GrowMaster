@@ -104,6 +104,9 @@ class Variety(Base):
     regrowth_interval_min_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     regrowth_interval_max_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_regrowth_cuts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    days_green_harvest: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    harvest_interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    harvest_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     harvest_profile_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     harvest_source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 

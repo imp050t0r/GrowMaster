@@ -304,7 +304,7 @@ def default_calendar_for_crop(crop_name: str, category: str = "") -> dict:
 
     transplant_warm = {
         "paradižnik", "paprika", "feferon", "jajčevec", "indijski jajčevec",
-        "indijski čili", "bamija", "zelena",
+        "indijski čili", "nepalski zeleni čili", "bamija", "zelena",
     }
     direct_warm = {
         "kumara", "bučka", "buča", "fižol", "edamame", "lauki", "karela",

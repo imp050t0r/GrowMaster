@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0007_variety_harvest_profiles"
-        assert run_migrations() == "0007_variety_harvest_profiles"
+        assert run_migrations() == "0008_green_chilli_harvest"
+        assert run_migrations() == "0008_green_chilli_harvest"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 7
+            ) == 8
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -234,6 +234,52 @@ def test_bed_planting_and_task_workflow() -> None:
             assert endive_variety["regrowth_interval_max_days"] == 14
             assert endive_variety["max_regrowth_cuts"] == 3
             assert endive_variety["harvest_source_url"]
+        indian_chilli = next(
+            crop for crop in crops if crop["name"] == "Indijski čili"
+        )
+        pusa_jwala = next(
+            variety
+            for variety in indian_chilli["varieties"]
+            if variety["name"] == "Pusa Jwala"
+        )
+        pusa_sadabahar = next(
+            variety
+            for variety in indian_chilli["varieties"]
+            if variety["name"] == "Pusa Sadabahar"
+        )
+        assert pusa_jwala["harvest_methods"] == "green_fruit,full_size"
+        assert pusa_jwala["days_green_harvest"] == 80
+        assert "svetlo zeleni" in pusa_jwala["traits"]
+        assert pusa_sadabahar["days_green_harvest"] == 78
+        assert pusa_sadabahar["harvest_interval_days"] == 7
+        nepali_chilli = next(
+            crop for crop in crops if crop["name"] == "Nepalski zeleni čili"
+        )
+        assert nepali_chilli["category"] == "Azijska"
+        assert {variety["name"] for variety in nepali_chilli["varieties"]} == {
+            "Suryamukhi",
+            "Kantipure",
+            "Jire Khursani",
+            "Akabare Khursani",
+        }
+        suryamukhi = next(
+            variety
+            for variety in nepali_chilli["varieties"]
+            if variety["name"] == "Suryamukhi"
+        )
+        kantipure = next(
+            variety
+            for variety in nepali_chilli["varieties"]
+            if variety["name"] == "Kantipure"
+        )
+        assert suryamukhi["days_green_harvest"] == 83
+        assert kantipure["days_green_harvest"] == 72
+        assert all(
+            variety["planting_method"] == "transplant"
+            and variety["harvest_methods"] == "green_fruit,full_size"
+            and variety["harvest_source_url"]
+            for variety in nepali_chilli["varieties"]
+        )
         astro = next(
             variety
             for variety in next(crop for crop in crops if crop["name"] == "Rukola")[
@@ -2151,7 +2197,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0007_variety_harvest_profiles"
+        assert data_safety_summary["schema_revision"] == "0008_green_chilli_harvest"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
@@ -2264,6 +2310,9 @@ def test_bed_planting_and_task_workflow() -> None:
             "regrowth_interval_min_days",
             "regrowth_interval_max_days",
             "max_regrowth_cuts",
+            "days_green_harvest",
+            "harvest_interval_days",
+            "harvest_duration_days",
             "harvest_profile_note",
             "harvest_source_url",
         }

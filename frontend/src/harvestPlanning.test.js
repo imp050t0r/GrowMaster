@@ -48,6 +48,32 @@ test("warmer regional adjustment can shorten the estimate", () => {
   assert.equal(plan.firstHarvestDate, "2026-10-08");
 });
 
+test("green chillies receive a repeated picking window", () => {
+  const chilli = {
+    planting_method: "transplant",
+    cultivation_methods: "transplant",
+    harvest_methods: "green_fruit,full_size",
+    nursery_days: 56,
+    days_green_harvest: 78,
+    harvest_interval_days: 7,
+    harvest_duration_days: 49,
+  };
+  const plan = calculateHarvestPlan({
+    variety: chilli,
+    fieldDate: "2026-05-15",
+    propagationMethod: "transplant",
+    harvestType: "green_fruit",
+    seasonalDays: 140,
+  });
+  assert.equal(plan.sowingDate, "2026-03-20");
+  assert.equal(plan.firstHarvestDate, "2026-08-01");
+  assert.equal(plan.harvestEvents, 8);
+  assert.equal(plan.nextHarvestDateLabel, "8. 8. 2026");
+  assert.equal(plan.finalHarvestDateLabel, "19. 9. 2026");
+  assert.equal(plan.bedOccupancyDays, 127);
+  assert.deepEqual(harvestOptions(chilli).map((option) => option.value), ["green_fruit", "full_size"]);
+});
+
 test("catalog capabilities control the choices", () => {
   assert.deepEqual(harvestOptions(endive).map((option) => option.value), ["full_size", "baby_leaf", "outer_leaves", "cut_and_regrow"]);
   assert.deepEqual(propagationOptions(endive, "full_size").map((option) => option.value), ["direct", "transplant"]);

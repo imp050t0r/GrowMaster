@@ -40,6 +40,9 @@ class VarietyOut(BaseModel):
     regrowth_interval_min_days: int | None
     regrowth_interval_max_days: int | None
     max_regrowth_cuts: int | None
+    days_green_harvest: int | None
+    harvest_interval_days: int | None
+    harvest_duration_days: int | None
     harvest_profile_note: str | None
     harvest_source_url: str | None
 

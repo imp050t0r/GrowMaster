@@ -8,6 +8,7 @@ from app.harvest_profiles import HARVEST_PROFILE_FIELDS, default_harvest_profile
 from app.maturity import estimated_seasonal_days
 from app.models import Bed, Crop, Farm, Task, Variety
 from app.planting_calendar import CALENDAR_FIELDS, default_calendar_for_crop
+from app.south_asian_chilies import SOUTH_ASIAN_CHILIES
 
 
 CROP_DATA = [
@@ -785,6 +786,43 @@ def seed_database(db: Session) -> None:
                 days_winter=estimates["winter"],
                 composition=None,
                 **{field: item[field] for field in metadata_fields},
+            )
+        )
+
+    chili_metadata_fields = metadata_fields + tuple(
+        field for field in HARVEST_PROFILE_FIELDS if field not in metadata_fields
+    )
+    for item in SOUTH_ASIAN_CHILIES:
+        crop = existing_crops.get(item["crop"].casefold())
+        if crop is None:
+            crop = Crop(
+                name=item["crop"],
+                family=item["family"],
+                category=item["category"],
+            )
+            db.add(crop)
+            db.flush()
+            existing_crops[crop.name.casefold()] = crop
+        existing_varieties = {
+            variety.name.casefold(): variety for variety in crop.varieties
+        }
+        existing_variety = existing_varieties.get(item["name"].casefold())
+        if existing_variety is not None:
+            for field in chili_metadata_fields:
+                if getattr(existing_variety, field) is None and item[field] is not None:
+                    setattr(existing_variety, field, item[field])
+            continue
+        estimates = estimated_seasonal_days(item["days"])
+        crop.varieties.append(
+            Variety(
+                name=item["name"],
+                days_to_harvest=item["days"],
+                days_spring=estimates["spring"],
+                days_summer=estimates["summer"],
+                days_autumn=estimates["autumn"],
+                days_winter=estimates["winter"],
+                composition=None,
+                **{field: item[field] for field in chili_metadata_fields},
             )
         )
 

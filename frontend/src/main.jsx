@@ -2166,6 +2166,7 @@ function GredicnikView({ crops, beds, savePlan }) {
   const propagationChoices = propagationOptions(selectedVariety, form.harvest_type);
   const denseHarvest = ["baby_leaf", "cut_and_regrow"].includes(form.harvest_type);
   const cutAndRegrow = form.harvest_type === "cut_and_regrow";
+  const greenFruit = form.harvest_type === "green_fruit";
   const spacingOptions = useMemo(
     () => getGredicnikSpacingOptions(selectedCrop, selectedVariety),
     [selectedCrop, selectedVariety],
@@ -2280,7 +2281,8 @@ function GredicnikView({ crops, beds, savePlan }) {
     const environmentLabel = form.environment === "protected" ? "neogrevan tunel" : "na prostem";
     const nurseryNote = form.propagation_method === "transplant" ? `; setev za sadike ${result.sowingDate}; približno ${result.nurseryDays} dni v pladnju` : "";
     const regrowthNote = cutAndRegrow ? `; ${result.cuts} rezi v razmiku ${result.regrowthMin}–${result.regrowthMax} dni` : "";
-    const notes = `Gredičnik: ${modeLabel}; vzgoja ${propagationLabel(form.propagation_method)}${nurseryNote}; spravilo ${harvestTypeLabel(form.harvest_type)}${regrowthNote}; zasedenost gredice približno ${result.bedOccupancyDays} dni; oprema ${spacingRecommendation.equipment}; ${spacingRecommendation.setup}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; ${environmentLabel}; izbrani termin ${timing.recommended ? "je v priporočenem oknu" : "je zunaj priporočenega okna"} (${timing.monthsLabel}); podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; odmik od robov ${result.edgeMarginCm.toFixed(1)} cm; razmik v vrsti ${form.plant_spacing_cm} cm; ${denseHarvest ? `${result.seedGrams.toFixed(1)} g semena` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
+    const greenFruitNote = greenFruit ? `; približno ${result.harvestEvents} obiranj na ${result.harvestIntervalDays} dni` : "";
+    const notes = `Gredičnik: ${modeLabel}; vzgoja ${propagationLabel(form.propagation_method)}${nurseryNote}; spravilo ${harvestTypeLabel(form.harvest_type)}${regrowthNote}${greenFruitNote}; zasedenost gredice približno ${result.bedOccupancyDays} dni; oprema ${spacingRecommendation.equipment}; ${spacingRecommendation.setup}; gredica ${result.width.toFixed(2)} × ${result.length.toFixed(2)} m (${result.area.toFixed(2)} m²); ${regionLabels[form.region]}, ${form.altitude_m} m n. v.; ${environmentLabel}; izbrani termin ${timing.recommended ? "je v priporočenem oknu" : "je zunaj priporočenega okna"} (${timing.monthsLabel}); podnebni popravek ${result.climateAdjustment >= 0 ? "+" : ""}${result.climateAdjustment} dni; razmik vrst ${form.row_spacing_cm} cm; odmik od robov ${result.edgeMarginCm.toFixed(1)} cm; razmik v vrsti ${form.plant_spacing_cm} cm; ${denseHarvest ? `${result.seedGrams.toFixed(1)} g semena` : `${result.plants} rastlin; približno ${result.seeds} semen`}.`;
     await savePlan({ bed_id: Number(form.bed_id), crop_id: Number(form.crop_id), variety_id: Number(form.variety_id), sowing_date: result.sowingDate, transplant_date: result.transplantDate, expected_harvest_date: result.firstHarvestDate, expected_yield_kg: Number(result.expectedYield.toFixed(2)), succession_count: Number(form.succession_count), succession_interval_days: Number(form.succession_interval_days), notes });
     setSaving(false);
   }
@@ -2312,6 +2314,7 @@ function GredicnikView({ crops, beds, savePlan }) {
             {form.propagation_method === "transplant" && <p>Sadike posej približno <strong>{result.sowingDateLabel}</strong>, nato jih okoli {result.nurseryDays} dni vzgajaj v pladnju in presadi <strong>{result.transplantDateLabel}</strong>.</p>}
             {form.propagation_method === "direct" && <p>Setev neposredno na gredico: <strong>{result.sowingDateLabel}</strong>.</p>}
             {cutAndRegrow && <p>Načrtovani so največ {result.cuts} rezi. Ponovno obraščanje praviloma traja {result.regrowthMin}–{result.regrowthMax} dni.</p>}
+            {greenFruit && <p>Prvo zeleno obiranje je predvideno <strong>{result.firstHarvestDateLabel}</strong>, nato približno na {result.harvestIntervalDays} dni do <strong>{result.finalHarvestDateLabel}</strong>.</p>}
             {selectedVariety?.harvest_profile_note && <small>{selectedVariety.harvest_profile_note}</small>}
             {selectedVariety?.harvest_source_url && <a href={selectedVariety.harvest_source_url} target="_blank" rel="noreferrer">Odpri strokovni vir ↗</a>}
           </div>
@@ -2358,10 +2361,12 @@ function GredicnikView({ crops, beds, savePlan }) {
             <article><span>Vrst</span><strong>{result.rows}</strong></article>
             {denseHarvest ? <><article><span>Semena</span><strong>{result.seedGrams.toFixed(1)} g</strong></article><article><span>Prvi rez</span><strong>~ {result.firstHarvestDays} dni</strong></article><article><span>Načrtovani rezi</span><strong>{result.cuts}</strong></article></> : <><article><span>Rastlin</span><strong>{result.plants}</strong></article><article><span>Semena + 15 %</span><strong>{result.seeds}</strong></article></>}
             {form.propagation_method === "transplant" && <article><span>Vzgoja sadik</span><strong>~ {result.nurseryDays} dni</strong><small>setev {result.sowingDateLabel}</small></article>}
+            {greenFruit && <article><span>Načrtovana obiranja</span><strong>~ {result.harvestEvents}</strong><small>približno na {result.harvestIntervalDays} dni</small></article>}
             <article><span>Zasedenost gredice</span><strong>~ {result.bedOccupancyDays} dni</strong></article>
             <article className="yield-metric"><span>Pričakovani pridelek</span><strong>{result.expectedYield.toFixed(1)} kg</strong></article>
-            <article className="harvest-metric"><span>{form.harvest_type === "outer_leaves" ? "Prvo obiranje" : denseHarvest ? "Prvi rez" : "Okvirna žetev"}</span><strong>{result.firstHarvestDateLabel}</strong><small>{result.firstHarvestDays} dni po {form.propagation_method === "transplant" ? "presajanju" : "setvi"} · podnebni popravek {result.climateAdjustment >= 0 ? "+" : ""}{result.climateAdjustment} dni</small></article>
+            <article className="harvest-metric"><span>{form.harvest_type === "outer_leaves" || greenFruit ? "Prvo obiranje" : denseHarvest ? "Prvi rez" : "Okvirna žetev"}</span><strong>{result.firstHarvestDateLabel}</strong><small>{result.firstHarvestDays} dni po {form.propagation_method === "transplant" ? "presajanju" : "setvi"} · podnebni popravek {result.climateAdjustment >= 0 ? "+" : ""}{result.climateAdjustment} dni</small></article>
             {cutAndRegrow && <article className="harvest-metric"><span>Nadaljnji rezi</span><strong>naslednji {result.nextCutDateLabel}</strong><small>Zadnji načrtovani rez {result.finalHarvestDateLabel} · razmik približno {result.regrowthMin}–{result.regrowthMax} dni</small></article>}
+            {greenFruit && <article className="harvest-metric"><span>Obiralno obdobje</span><strong>do {result.finalHarvestDateLabel}</strong><small>Naslednje obiranje {result.nextHarvestDateLabel} · načrtovano obdobje {result.harvestDurationDays} dni</small></article>}
           </div>
           {(form.mode === "baby10" || form.mode === "seeder10") && spacingRecommendation.equipment === "6 Row Seeder v2" && <p className="seeder-note">Deset vrst se izvede z dvema prilagojenima prehodoma po pet setvenih linij. Pri razmiku 6,4 cm na 80 cm gredici ostane približno 11,2 cm do vsakega roba.</p>}
           <button className="primary-button save-gredicnik" disabled={!ready || saving}>{saving ? "SHRANJUJEM …" : "DODAJ V GROWMASTERJEV PLAN"}</button>

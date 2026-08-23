@@ -8,6 +8,7 @@ export const HARVEST_TYPES = [
   { value: "baby_leaf", label: "Baby leaf · en rez" },
   { value: "outer_leaves", label: "Obiranje zunanjih listov" },
   { value: "cut_and_regrow", label: "Močan rez in ponovno obraščanje" },
+  { value: "green_fruit", label: "Zeleni plodovi · več obiranj" },
 ];
 
 const parseOptions = (value = "") => [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
@@ -20,7 +21,7 @@ export function propagationOptions(variety = {}, harvestType = "full_size") {
 
 export function harvestOptions(variety = {}) {
   const values = parseOptions(variety.harvest_methods || "full_size");
-  return HARVEST_TYPES.filter((option) => values.includes(option.value));
+  return values.map((value) => HARVEST_TYPES.find((option) => option.value === value)).filter(Boolean);
 }
 
 export function propagationLabel(value) {
@@ -72,9 +73,11 @@ export function calculateHarvestPlan({
   const fullDays = Math.max(7, validNumber(seasonalDays, 60));
   const babyDays = Math.max(7, validNumber(variety.days_baby, fallbackBabyDays));
   const outerDays = Math.max(7, validNumber(variety.days_outer_leaf, Math.max(7, fullDays - 15)));
+  const greenFruitDays = Math.max(7, validNumber(variety.days_green_harvest, fullDays));
   let stageDays = harvestType === "baby_leaf" || harvestType === "cut_and_regrow"
     ? babyDays
-    : harvestType === "outer_leaves" ? outerDays : fullDays;
+    : harvestType === "outer_leaves" ? outerDays
+      : harvestType === "green_fruit" ? greenFruitDays : fullDays;
 
   if (propagationMethod === "direct" && baselineMethod === "transplant" && !["baby_leaf", "cut_and_regrow"].includes(harvestType)) {
     stageDays += directExtra;
@@ -90,10 +93,20 @@ export function calculateHarvestPlan({
   const cuts = harvestType === "cut_and_regrow"
     ? Math.max(1, Math.round(validNumber(variety.max_regrowth_cuts, 2)))
     : 1;
-  const finalHarvest = addDays(firstHarvest, regrowthDays * Math.max(0, cuts - 1));
+  const harvestIntervalDays = Math.max(1, Math.round(validNumber(variety.harvest_interval_days, 7)));
+  const harvestDurationDays = harvestType === "green_fruit"
+    ? Math.max(0, Math.round(validNumber(variety.harvest_duration_days, 42)))
+    : 0;
+  const harvestEvents = harvestType === "green_fruit"
+    ? Math.floor(harvestDurationDays / harvestIntervalDays) + 1
+    : cuts;
+  const repeatedHarvestDays = harvestType === "green_fruit"
+    ? harvestDurationDays
+    : regrowthDays * Math.max(0, cuts - 1);
+  const finalHarvest = addDays(firstHarvest, repeatedHarvestDays);
   const sowing = propagationMethod === "transplant" ? addDays(fieldStart, -nurseryDays) : fieldStart;
   const transplant = propagationMethod === "transplant" ? fieldStart : null;
-  const bedOccupancyDays = firstHarvestDays + regrowthDays * Math.max(0, cuts - 1);
+  const bedOccupancyDays = firstHarvestDays + repeatedHarvestDays;
 
   return {
     nurseryDays,
@@ -104,6 +117,9 @@ export function calculateHarvestPlan({
     regrowthMax,
     regrowthDays,
     cuts,
+    harvestEvents,
+    harvestIntervalDays,
+    harvestDurationDays,
     sowingDate: isoDate(sowing),
     sowingDateLabel: displayDate(sowing),
     transplantDate: isoDate(transplant),
@@ -111,6 +127,7 @@ export function calculateHarvestPlan({
     firstHarvestDate: isoDate(firstHarvest),
     firstHarvestDateLabel: displayDate(firstHarvest),
     nextCutDateLabel: cuts > 1 ? displayDate(addDays(firstHarvest, regrowthDays)) : null,
+    nextHarvestDateLabel: harvestType === "green_fruit" ? displayDate(addDays(firstHarvest, harvestIntervalDays)) : null,
     finalHarvestDateLabel: displayDate(finalHarvest),
   };
 }

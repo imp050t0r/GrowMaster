@@ -143,8 +143,31 @@ def add_variety_harvest_profiles(connection: Connection) -> None:
         "regrowth_interval_min_days": "INTEGER",
         "regrowth_interval_max_days": "INTEGER",
         "max_regrowth_cuts": "INTEGER",
+        "days_green_harvest": "INTEGER",
+        "harvest_interval_days": "INTEGER",
+        "harvest_duration_days": "INTEGER",
         "harvest_profile_note": "TEXT",
         "harvest_source_url": "TEXT",
+    }
+    for column_name, column_type in columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                text(
+                    f"ALTER TABLE varieties ADD COLUMN {column_name} "
+                    f"{column_type}"
+                )
+            )
+
+
+def add_green_chilli_harvest(connection: Connection) -> None:
+    """Complete harvest profiles for repeated green-fruit picking."""
+    existing_columns = {
+        column["name"] for column in inspect(connection).get_columns("varieties")
+    }
+    columns = {
+        "days_green_harvest": "INTEGER",
+        "harvest_interval_days": "INTEGER",
+        "harvest_duration_days": "INTEGER",
     }
     for column_name, column_type in columns.items():
         if column_name not in existing_columns:
@@ -164,6 +187,7 @@ MIGRATIONS = (
     Migration("0005_variety_catalog_metadata", add_variety_catalog_metadata),
     Migration("0006_variety_planting_calendar", add_variety_planting_calendar),
     Migration("0007_variety_harvest_profiles", add_variety_harvest_profiles),
+    Migration("0008_green_chilli_harvest", add_green_chilli_harvest),
 )
 
 

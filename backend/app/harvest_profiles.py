@@ -19,6 +19,9 @@ HARVEST_PROFILE_FIELDS = (
     "regrowth_interval_min_days",
     "regrowth_interval_max_days",
     "max_regrowth_cuts",
+    "days_green_harvest",
+    "harvest_interval_days",
+    "harvest_duration_days",
     "harvest_profile_note",
     "harvest_source_url",
     "days_baby",
@@ -36,6 +39,9 @@ def profile(
     regrowth_min: int | None = None,
     regrowth_max: int | None = None,
     max_cuts: int | None = None,
+    days_green_harvest: int | None = None,
+    harvest_interval_days: int | None = None,
+    harvest_duration_days: int | None = None,
     note: str | None = None,
     source: str | None = None,
 ) -> dict:
@@ -49,6 +55,9 @@ def profile(
         "regrowth_interval_min_days": regrowth_min,
         "regrowth_interval_max_days": regrowth_max,
         "max_regrowth_cuts": max_cuts,
+        "days_green_harvest": days_green_harvest,
+        "harvest_interval_days": harvest_interval_days,
+        "harvest_duration_days": harvest_duration_days,
         "harvest_profile_note": note,
         "harvest_source_url": source,
     }
@@ -153,6 +162,19 @@ def default_harvest_profile(
                 "Radič vodi ločeno od endivije; termin in obliko spravila prilagodi sorti."
             ),
             source=BABY_CHICORY_SOURCE,
+        )
+    if name in {"indijski čili", "nepalski zeleni čili"}:
+        return profile(
+            "transplant",
+            "green_fruit,full_size",
+            nursery_days=56,
+            days_green_harvest=max(60, days_to_harvest - 35),
+            harvest_interval_days=7,
+            harvest_duration_days=49,
+            note=(
+                "Zelene plodove obiraj sproti; za rdeče zorenje potrebuje sorta "
+                "daljšo toplo sezono. V hladnejših območjih uporabi tunel."
+            ),
         )
     if category_name == "baby leaf":
         return profile(
