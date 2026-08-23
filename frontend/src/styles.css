@@ -553,6 +553,7 @@ label.review-suggestion:has(input:checked) { border-color: #75ad8d; box-shadow: 
 .mode-picker button small { color: #71857b; font-size: 0.68rem; font-weight: 750; }
 .mode-picker button em { position: absolute; top: -7px; right: 5px; padding: 2px 5px; color: #17603f; background: #dff3e7; border-radius: 999px; font-size: 0.55rem; font-style: normal; text-transform: uppercase; }
 .mode-picker button.limited:not(.active) { border-style: dashed; opacity: 0.72; }
+.mode-picker button:disabled { cursor: not-allowed; }
 .mode-picker button.active { color: white; background: #24704f; border-color: #24704f; box-shadow: 0 6px 16px rgba(36, 112, 79, 0.2); }
 .mode-picker button.active small { color: #dff3e7; }
 .mode-picker button.active em { color: #195f3f; background: white; }
@@ -566,6 +567,15 @@ label.review-suggestion:has(input:checked) { border-color: #75ad8d; box-shadow: 
 .spacing-recommendation small { color: #5f746a; }
 .spacing-recommendation.limited { color: #6e3c00; background: #fff4df; border-color: #edcf92; }
 .spacing-recommendation.limited > b { color: #7c4d18; }
+.harvest-strategy-card { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; padding: 15px; color: #233f53; background: #edf6fb; border: 1px solid #c8dfea; border-radius: 12px; }
+.harvest-strategy-card > div { display: grid; gap: 2px; }
+.harvest-strategy-card > div span { color: #627887; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; }
+.harvest-strategy-card > div strong { font-size: 1.08rem; }
+.harvest-strategy-card > b { align-self: start; padding: 5px 8px; color: #245d78; background: white; border-radius: 999px; font-size: 0.7rem; }
+.harvest-strategy-card p, .harvest-strategy-card small, .harvest-strategy-card a { grid-column: 1 / -1; margin: 0; line-height: 1.45; }
+.harvest-strategy-card p { font-size: 0.82rem; }
+.harvest-strategy-card small { color: #5d7482; }
+.harvest-strategy-card a { width: fit-content; color: #245d78; font-size: 0.72rem; font-weight: 850; }
 .planting-calendar-recommendation { display: grid; grid-template-columns: 1fr auto; gap: 7px 14px; padding: 14px; border: 1px solid; border-radius: 12px; }
 .planting-calendar-recommendation.recommended { color: #274c3c; background: #edf7f1; border-color: #c8e2d2; }
 .planting-calendar-recommendation.outside { color: #6e3c00; background: #fff4df; border-color: #edcf92; }
@@ -731,6 +741,9 @@ label.review-suggestion:has(input:checked) { border-color: #75ad8d; box-shadow: 
   .spacing-recommendation { grid-template-columns: 1fr; }
   .spacing-recommendation > b { justify-self: start; }
   .spacing-recommendation p, .spacing-recommendation small { grid-column: 1; }
+  .harvest-strategy-card { grid-template-columns: 1fr; }
+  .harvest-strategy-card > b { justify-self: start; }
+  .harvest-strategy-card p, .harvest-strategy-card small, .harvest-strategy-card a { grid-column: 1; }
   .planting-calendar-recommendation { grid-template-columns: 1fr; }
   .planting-calendar-recommendation > b { justify-self: start; }
   .planting-calendar-recommendation p, .planting-calendar-recommendation > small, .planting-calendar-recommendation > a, .tolerance-badges { grid-column: 1; }

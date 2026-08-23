@@ -23,7 +23,7 @@ const DEFAULT_PROFILE = {
 
 const CROP_PROFILES = [
   { crops: ["paradiž"], plantCm: 45, rowCm: 40, rows: 2, system: "paperpot", large: true },
-  { crops: ["paprik", "feferon", "indijski čili"], plantCm: 35, rowCm: 35, rows: 2, system: "paperpot", large: true },
+  { crops: ["paprik", "feferon", "indijski čili", "nepalski zeleni čili"], plantCm: 35, rowCm: 35, rows: 2, system: "paperpot", large: true },
   { crops: ["jajčevec", "indijski jajčevec"], plantCm: 45, rowCm: 40, rows: 2, system: "paperpot", large: true },
   { crops: ["kumara"], plantCm: 35, rowCm: 40, rows: 2, system: "paperpot", large: true },
   { crops: ["bučka", "rebrasta bučka", "gobasta bučka"], plantCm: 60, rowCm: 70, rows: 1, system: "manual", large: true },

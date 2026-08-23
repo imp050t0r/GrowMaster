@@ -32,6 +32,19 @@ class VarietyOut(BaseModel):
     planting_calendar_note: str | None
     succession_interval_days: int | None
     calendar_source_url: str | None
+    cultivation_methods: str | None
+    harvest_methods: str | None
+    nursery_days: int | None
+    direct_sow_extra_days: int | None
+    days_outer_leaf: int | None
+    regrowth_interval_min_days: int | None
+    regrowth_interval_max_days: int | None
+    max_regrowth_cuts: int | None
+    days_green_harvest: int | None
+    harvest_interval_days: int | None
+    harvest_duration_days: int | None
+    harvest_profile_note: str | None
+    harvest_source_url: str | None
 
 
 class CropOut(BaseModel):
@@ -182,6 +195,7 @@ class CropPlanCreate(BaseModel):
     variety_id: int
     sowing_date: date
     transplant_date: date | None = None
+    expected_harvest_date: date | None = None
     expected_yield_kg: float = Field(gt=0, le=100000)
     succession_count: int = Field(default=1, ge=1, le=20)
     succession_interval_days: int = Field(default=14, ge=1, le=365)

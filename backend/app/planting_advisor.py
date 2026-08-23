@@ -30,6 +30,7 @@ WARM_SEASON_CROPS = {
     "Voščena buča",
     "Indijski jajčevec",
     "Indijski čili",
+    "Nepalski zeleni čili",
     "Malabarska špinača",
     "Listni amarant",
     "Guar",

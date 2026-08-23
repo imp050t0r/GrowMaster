@@ -50,6 +50,19 @@ VARIETY_OPTIONAL_COLUMNS = {
     "planting_calendar_note",
     "succession_interval_days",
     "calendar_source_url",
+    "cultivation_methods",
+    "harvest_methods",
+    "nursery_days",
+    "direct_sow_extra_days",
+    "days_outer_leaf",
+    "regrowth_interval_min_days",
+    "regrowth_interval_max_days",
+    "max_regrowth_cuts",
+    "days_green_harvest",
+    "harvest_interval_days",
+    "harvest_duration_days",
+    "harvest_profile_note",
+    "harvest_source_url",
 }
 
 

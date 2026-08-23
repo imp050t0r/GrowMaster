@@ -151,10 +151,11 @@ from app.schemas import (
     WorkerCreate,
 )
 from app.seed import DEMO_FARM_NAME, seed_database
+from app.harvest_profiles import default_harvest_profile
 from app.invoice_pdf import build_invoice_pdf
 
 DEFAULT_FARM_ID = 1
-APP_VERSION = "1.21.1"
+APP_VERSION = "1.22.0"
 DAILY_BACKUP_CHECK_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 DEMO_BED_NAMES = {f"A{index}" for index in range(1, 7)}
@@ -752,6 +753,13 @@ def create_variety(
     estimates = estimated_seasonal_days(payload.days_to_harvest)
     composition = payload.composition.strip() if payload.composition else None
     planting_calendar = default_calendar_for_crop(crop.name, crop.category)
+    harvest_profile = default_harvest_profile(
+        crop.name,
+        crop.category,
+        name,
+        planting_calendar["planting_method"],
+        payload.days_to_harvest,
+    )
     variety = Variety(
         crop_id=crop.id,
         name=name,
@@ -762,6 +770,7 @@ def create_variety(
         days_winter=payload.days_winter or estimates["winter"],
         composition=composition or None,
         **planting_calendar,
+        **harvest_profile,
     )
     db.add(variety)
     db.commit()
@@ -3228,7 +3237,7 @@ def serialize_crop_plan(plan: CropPlan) -> dict:
         "status": plan.status,
         "planting_id": plan.planting_id,
         "notes": plan.notes,
-        **maturity_details(plan.variety, plan.sowing_date),
+        **maturity_details(plan.variety, plan.transplant_date or plan.sowing_date),
     }
 
 
@@ -3269,6 +3278,12 @@ def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> 
         raise HTTPException(status_code=422, detail="Sorta ne pripada izbrani kulturi.")
     if payload.transplant_date and payload.transplant_date < payload.sowing_date:
         raise HTTPException(status_code=422, detail="Presajanje ne sme biti pred setvijo.")
+    field_start = payload.transplant_date or payload.sowing_date
+    if payload.expected_harvest_date and payload.expected_harvest_date < field_start:
+        raise HTTPException(
+            status_code=422,
+            detail="Predvidena žetev ne sme biti pred setvijo ali presajanjem.",
+        )
 
     existing = db.scalars(
         select(CropPlan)
@@ -3285,14 +3300,19 @@ def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> 
     for index in range(payload.succession_count):
         offset = timedelta(days=index * payload.succession_interval_days)
         sowing_date = payload.sowing_date + offset
-        harvest_date = sowing_date + timedelta(
-            days=maturity_days_for_date(variety, sowing_date)
-        )
         transplant_date = payload.transplant_date + offset if payload.transplant_date else None
+        bed_start_date = transplant_date or sowing_date
+        harvest_date = (
+            payload.expected_harvest_date + offset
+            if payload.expected_harvest_date
+            else bed_start_date
+            + timedelta(days=maturity_days_for_date(variety, bed_start_date))
+        )
         overlaps = [
             other
             for other in [*existing, *created]
-            if other.sowing_date <= harvest_date and other.expected_harvest_date >= sowing_date
+            if (other.transplant_date or other.sowing_date) <= harvest_date
+            and other.expected_harvest_date >= bed_start_date
         ]
         if overlaps:
             warnings.append(

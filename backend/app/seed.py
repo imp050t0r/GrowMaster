@@ -4,9 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.johnnys_catalog import JOHNNYS_SLOVENIA_VARIETIES
+from app.harvest_profiles import HARVEST_PROFILE_FIELDS, default_harvest_profile
 from app.maturity import estimated_seasonal_days
 from app.models import Bed, Crop, Farm, Task, Variety
 from app.planting_calendar import CALENDAR_FIELDS, default_calendar_for_crop
+from app.south_asian_chilies import SOUTH_ASIAN_CHILIES
 
 
 CROP_DATA = [
@@ -206,7 +208,11 @@ CROP_DATA = [
         "name": "Endivija",
         "family": "Asteraceae",
         "category": "Domača",
-        "varieties": [("Dečja glava", 85), ("Eskariol zelena", 80)],
+        "varieties": [
+            ("Dečja glava", 85),
+            ("Eskariol zelena", 80),
+            ("Dalmatinska kopica", 85),
+        ],
     },
     {
         "name": "Motovilec",
@@ -783,6 +789,43 @@ def seed_database(db: Session) -> None:
             )
         )
 
+    chili_metadata_fields = metadata_fields + tuple(
+        field for field in HARVEST_PROFILE_FIELDS if field not in metadata_fields
+    )
+    for item in SOUTH_ASIAN_CHILIES:
+        crop = existing_crops.get(item["crop"].casefold())
+        if crop is None:
+            crop = Crop(
+                name=item["crop"],
+                family=item["family"],
+                category=item["category"],
+            )
+            db.add(crop)
+            db.flush()
+            existing_crops[crop.name.casefold()] = crop
+        existing_varieties = {
+            variety.name.casefold(): variety for variety in crop.varieties
+        }
+        existing_variety = existing_varieties.get(item["name"].casefold())
+        if existing_variety is not None:
+            for field in chili_metadata_fields:
+                if getattr(existing_variety, field) is None and item[field] is not None:
+                    setattr(existing_variety, field, item[field])
+            continue
+        estimates = estimated_seasonal_days(item["days"])
+        crop.varieties.append(
+            Variety(
+                name=item["name"],
+                days_to_harvest=item["days"],
+                days_spring=estimates["spring"],
+                days_summer=estimates["summer"],
+                days_autumn=estimates["autumn"],
+                days_winter=estimates["winter"],
+                composition=None,
+                **{field: item[field] for field in chili_metadata_fields},
+            )
+        )
+
     # Every older or user-defined variety receives a conservative crop-level
     # fallback, but only where the new optional fields are still empty.
     for crop in existing_crops.values():
@@ -794,6 +837,39 @@ def seed_database(db: Session) -> None:
                     and fallback[field] is not None
                 ):
                     setattr(existing_variety, field, fallback[field])
+            harvest_profile = default_harvest_profile(
+                crop.name,
+                crop.category,
+                existing_variety.name,
+                existing_variety.planting_method,
+                existing_variety.days_to_harvest,
+                existing_variety.days_baby,
+            )
+            for field in HARVEST_PROFILE_FIELDS:
+                if (
+                    getattr(existing_variety, field) is None
+                    and harvest_profile[field] is not None
+                ):
+                    setattr(existing_variety, field, harvest_profile[field])
+
+            if crop.name == "Endivija" and existing_variety.name == "Dalmatinska kopica":
+                if existing_variety.source_name is None:
+                    existing_variety.source_name = "Uradni seznam sort RS"
+                if existing_variety.source_url is None:
+                    existing_variety.source_url = (
+                        "https://www.uradni-list.si/_pdf/1997/Ur/u1997031.pdf"
+                    )
+                if existing_variety.seed_forms is None:
+                    existing_variety.seed_forms = "navadno seme"
+                if existing_variety.traits is None:
+                    existing_variety.traits = (
+                        "Tradicionalna širokolistna endivija s čvrsto, kompaktno glavo."
+                    )
+                if existing_variety.slovenia_note is None:
+                    existing_variety.slovenia_note = (
+                        "Primerna predvsem za jesenski pridelek; prezimovanje je varnejše "
+                        "v milejših območjih ali pod zaščito."
+                    )
     db.flush()
 
     if db.scalar(select(Task).limit(1)) is None and farm.name == DEMO_FARM_NAME:

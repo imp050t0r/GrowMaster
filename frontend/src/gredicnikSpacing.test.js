@@ -114,7 +114,7 @@ test("every catalog crop receives values for all five layouts", () => {
     "Krompir", "Peteršilj", "Zelena", "Koromač", "Mizuna", "Pak Choi", "Tatsoi", "Komatsuna", "Choi Sum",
     "Kailan", "Daikon", "Pekinško zelje", "Mibuna", "Japonska repa", "Azijska gorčica", "Shiso", "Shungiku",
     "Edamame", "Methi", "Bamija", "Karela", "Lauki", "Rebrasta bučka", "Gobasta bučka", "Tinda",
-    "Voščena buča", "Indijski jajčevec", "Indijski čili", "Malabarska špinača", "Listni amarant", "Palak",
+    "Voščena buča", "Indijski jajčevec", "Indijski čili", "Nepalski zeleni čili", "Malabarska špinača", "Listni amarant", "Palak",
     "Guar", "Koriander", "Baby leaf mešanica", "Divja rukola", "Salatni trpotec", "Cikorija",
     "Mladi listi rdeče pese", "Baby leaf špinača", "Baby leaf ohrovt", "Baby leaf listna solata",
     "Baby leaf hrastov list", "Baby leaf rimska solata", "Baby leaf batavia", "Baby leaf endivija",
