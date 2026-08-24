@@ -28,7 +28,7 @@ const CROP_PROFILES = [
   { crops: ["kumara"], plantCm: 35, rowCm: 40, rows: 2, system: "paperpot", large: true },
   { crops: ["bučka", "rebrasta bučka", "gobasta bučka"], plantCm: 60, rowCm: 70, rows: 1, system: "manual", large: true },
   { crops: ["buča", "lauki", "karela", "tinda", "voščena buča"], plantCm: 90, rowCm: 90, rows: 1, system: "manual", large: true },
-  { crops: ["solata"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
+  { crops: ["solata", "hrastov list"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
   { crops: ["endivija", "cikorija"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
   { crops: ["radič"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
   { crops: ["zelje", "pekinško zelje"], plantCm: 40, rowCm: 40, rows: 2, system: "paperpot", large: true },
@@ -81,6 +81,9 @@ function cropProfile(crop = {}, variety = {}) {
   const profile = { ...DEFAULT_PROFILE, ...(matched || {}) };
 
   if (cropName === "solata" && varietyName.includes("lollo rosso")) profile.plantCm = 20;
+  if (cropName === "solata" && ["green saladbowl", "red saladbowl", "panisse", "oscarde"].some((name) => varietyName.includes(name))) {
+    Object.assign(profile, { plantCm: 20.3, rowCm: 25, rows: 3, system: "paperpot", babyCompatible: true });
+  }
   if (cropName === "koleraba" && varietyName.includes("superschmelz")) profile.plantCm = 30;
   if (cropName === "radič" && varietyName.includes("tržaški solatnik")) {
     Object.assign(profile, { plantCm: 5, rowCm: 15, rows: 5, system: "direct" });

@@ -9,6 +9,17 @@ BABY_CHICORY_SOURCE = (
     "https://www.johnnyseeds.com/growers-library/vegetables/baby-leaf/"
     "chicory-baby-leaf-key-growing-information.html"
 )
+LETTUCE_GROWING_SOURCE = (
+    "https://www.johnnyseeds.com/growers-library/vegetables/lettuce/"
+    "lettuce-key-growing-information.html"
+)
+
+OAKLEAF_VARIETIES = {
+    "green saladbowl",
+    "red saladbowl",
+    "panisse",
+    "oscarde",
+}
 
 HARVEST_PROFILE_FIELDS = (
     "cultivation_methods",
@@ -162,6 +173,24 @@ def default_harvest_profile(
                 "Radič vodi ločeno od endivije; termin in obliko spravila prilagodi sorti."
             ),
             source=BABY_CHICORY_SOURCE,
+        )
+    if name == "solata" and variety in OAKLEAF_VARIETIES:
+        return profile(
+            "direct,transplant",
+            "full_size,baby_leaf,outer_leaves,cut_and_regrow",
+            nursery_days=28,
+            direct_sow_extra_days=14,
+            days_baby=days_baby or 30,
+            days_outer_leaf=max(25, days_to_harvest - 12),
+            regrowth_min=7,
+            regrowth_max=14,
+            max_cuts=2,
+            note=(
+                "Hrastov list lahko spraviš kot celo rozeto, mlade liste ali zunanje "
+                "liste. Baby leaf sej neposredno; pri sorti brez navedenega roka je "
+                "30 dni začetna ocena, ki jo po prvi žetvi prilagodiš svojim razmeram."
+            ),
+            source=LETTUCE_GROWING_SOURCE,
         )
     if name in {"indijski čili", "nepalski zeleni čili"}:
         return profile(

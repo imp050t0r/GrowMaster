@@ -86,6 +86,30 @@ JOHNNYS_VARIETY_CALENDARS = {
         "Mini rimska solata za pomlad in jesen; toplotna toleranca omogoča tudi zmerne poletne termine.",
         14, LETTUCE_SOURCE,
     ),
+    ("Solata", "Green Saladbowl"): calendar(
+        "transplant", "3,4,5,8,9", "2,3,4,5,8,9,10",
+        "srednja", "srednja",
+        "Klasičen zelen hrastov list za hladnejšo pomlad in jesen; za baby leaf ga sej neposredno v kratkih turnusih.",
+        14, LETTUCE_SOURCE,
+    ),
+    ("Solata", "Red Saladbowl"): calendar(
+        "transplant", "3,4,5,8,9", "2,3,4,5,8,9,10",
+        "srednja", "srednja",
+        "Najlepšo rdečo barvo razvije v hladnejših terminih; za baby leaf ga sej neposredno.",
+        14, LETTUCE_SOURCE,
+    ),
+    ("Solata", "Panisse"): calendar(
+        "transplant", "3,4,5,6,7,8,9", "2,3,4,5,6,7,8,9,10",
+        "visoka", "srednja",
+        "Toplotno tolerantnejši hrastov list za podaljšano poletno pridelavo; setvene platoje v vročini hladi in senči.",
+        14, LETTUCE_SOURCE,
+    ),
+    ("Solata", "Oscarde"): calendar(
+        "transplant", "3,4,5,8,9", "1,2,3,4,5,8,9,10,11,12",
+        "srednja", "srednja",
+        "Hitra rdeča sorta za pomlad in jesen ter zimski rastlinjak; poleti jo sej v hladnem substratu in po potrebi senči.",
+        14, LETTUCE_SOURCE,
+    ),
     ("Špinača", "Tragopan"): calendar(
         "direct", "2,3,4,8,9,10", "1,2,3,4,9,10,11,12",
         "nizka", "visoka",

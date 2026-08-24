@@ -79,3 +79,37 @@ test("catalog capabilities control the choices", () => {
   assert.deepEqual(propagationOptions(endive, "full_size").map((option) => option.value), ["direct", "transplant"]);
   assert.deepEqual(propagationOptions(endive, "baby_leaf").map((option) => option.value), ["direct"]);
 });
+
+test("oakleaf lettuce supports heads, baby leaf, and repeated cuts", () => {
+  const oakleaf = {
+    planting_method: "transplant",
+    cultivation_methods: "direct,transplant",
+    harvest_methods: "full_size,baby_leaf,outer_leaves,cut_and_regrow",
+    nursery_days: 28,
+    direct_sow_extra_days: 14,
+    days_baby: 30,
+    days_outer_leaf: 37,
+    regrowth_interval_min_days: 7,
+    regrowth_interval_max_days: 14,
+    max_regrowth_cuts: 2,
+  };
+  const head = calculateHarvestPlan({
+    variety: oakleaf,
+    fieldDate: "2026-04-01",
+    propagationMethod: "transplant",
+    harvestType: "full_size",
+    seasonalDays: 49,
+  });
+  const baby = calculateHarvestPlan({
+    variety: oakleaf,
+    fieldDate: "2026-04-01",
+    propagationMethod: "direct",
+    harvestType: "baby_leaf",
+    seasonalDays: 49,
+  });
+  assert.equal(head.sowingDate, "2026-03-04");
+  assert.equal(head.firstHarvestDays, 49);
+  assert.equal(baby.firstHarvestDays, 30);
+  assert.deepEqual(harvestOptions(oakleaf).map((option) => option.value), ["full_size", "baby_leaf", "outer_leaves", "cut_and_regrow"]);
+  assert.deepEqual(propagationOptions(oakleaf, "baby_leaf").map((option) => option.value), ["direct"]);
+});
