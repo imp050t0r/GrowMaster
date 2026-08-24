@@ -34,6 +34,18 @@ test("Paperpot recommendation selects a real chain step", () => {
   assert.equal(lettuce.plantSpacingCm, 25.4);
   assert.match(lettuce.setup, /LP303-5/);
   assert.match(lettuce.setup, /vsak 5\. lonček/);
+
+  const oakleaf = getGredicnikSpacing(
+    { name: "Solata", category: "Domača" },
+    { name: "Panisse", seed_spacing_cm: 20.3, row_spacing_cm: 25 },
+    "standard",
+  );
+  assert.equal(oakleaf.equipment, "Paperpot");
+  assert.equal(oakleaf.plantSpacingCm, 20.3);
+  assert.equal(oakleaf.rowSpacingCm, 25);
+  assert.equal(oakleaf.rows, 3);
+  assert.equal(oakleaf.edgeMarginCm, 15);
+  assert.match(oakleaf.setup, /vsak 2\. lonček/);
 });
 
 test("variety overrides and baby leaf suitability are retained", () => {
@@ -66,6 +78,14 @@ test("variety overrides and baby leaf suitability are retained", () => {
     "baby6",
   );
   assert.equal(tomatoBaby.suitable, false);
+
+  const oakleafBaby = getGredicnikSpacing(
+    { name: "Solata", category: "Domača" },
+    { name: "Green Saladbowl" },
+    "baby10",
+  );
+  assert.equal(oakleafBaby.suitable, true);
+  assert.equal(oakleafBaby.rows, 10);
 });
 
 test("80 cm bed keeps a safe edge margin and rejects layouts that are too wide", () => {

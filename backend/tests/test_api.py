@@ -36,7 +36,7 @@ def test_bed_planting_and_task_workflow() -> None:
         assert health.json() == {
             "app": "GrowMaster",
             "status": "running",
-            "version": "1.22.0",
+            "version": "1.22.1",
         }
         with SessionLocal() as db:
             assert demo_data_available(db) is True
@@ -196,7 +196,7 @@ def test_bed_planting_and_task_workflow() -> None:
             for variety in crop["varieties"]
             if variety["source_name"] == "Johnny's Selected Seeds"
         ]
-        assert len(supplier_varieties) == 37
+        assert len(supplier_varieties) == 41
         assert all(
             variety["planting_method"] in {"direct", "transplant"}
             and variety["outdoor_months"]
@@ -217,6 +217,35 @@ def test_bed_planting_and_task_workflow() -> None:
             for crop in crops
             for variety in crop["varieties"]
         )
+        lettuce = next(crop for crop in crops if crop["name"] == "Solata")
+        oakleaf_varieties = {
+            variety["name"]: variety
+            for variety in lettuce["varieties"]
+            if variety["name"] in {
+                "Green Saladbowl",
+                "Red Saladbowl",
+                "Panisse",
+                "Oscarde",
+            }
+        }
+        assert set(oakleaf_varieties) == {
+            "Green Saladbowl",
+            "Red Saladbowl",
+            "Panisse",
+            "Oscarde",
+        }
+        assert oakleaf_varieties["Green Saladbowl"]["days_baby"] == 30
+        assert oakleaf_varieties["Red Saladbowl"]["days_to_harvest"] == 51
+        assert oakleaf_varieties["Panisse"]["heat_tolerance"] == "visoka"
+        assert "12" in oakleaf_varieties["Oscarde"]["protected_months"].split(",")
+        for oakleaf in oakleaf_varieties.values():
+            assert oakleaf["cultivation_methods"] == "direct,transplant"
+            assert oakleaf["harvest_methods"] == (
+                "full_size,baby_leaf,outer_leaves,cut_and_regrow"
+            )
+            assert oakleaf["nursery_days"] == 28
+            assert oakleaf["direct_sow_extra_days"] == 14
+            assert oakleaf["harvest_source_url"]
         endive = next(crop for crop in crops if crop["name"] == "Endivija")
         assert {variety["name"] for variety in endive["varieties"]} >= {
             "Dečja glava",
@@ -2219,7 +2248,7 @@ def test_bed_planting_and_task_workflow() -> None:
 
         production_readiness = client.get("/api/system/readiness")
         assert production_readiness.status_code == 200
-        assert production_readiness.json()["version"] == "1.22.0"
+        assert production_readiness.json()["version"] == "1.22.1"
         assert production_readiness.json()["operational_ready"] is True
         assert production_readiness.json()["business_documents_ready"] is True
         assert all(
