@@ -4,8 +4,12 @@
   "defaults": {
     "jang_jp1": {
       "roller": null,
+      "front_sprocket": null,
+      "rear_sprocket": null,
+      "brush": null,
       "row_count": null,
-      "note": "Roller potrdi glede na dejansko kalibracijo semena in serijo valjčka."
+      "calibration_required": true,
+      "note": "Roller in prenos potrdi s kalibracijskim preizkusom dejanske serije semena."
     },
     "six_row": {
       "passes": null,
@@ -18,79 +22,109 @@
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 3.5,
-      "jang_jp1": {"roller": "X24", "row_count": 12},
+      "jang_jp1": {
+        "roller": "X24",
+        "alternative_rollers": ["Y24"],
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "down/low",
+        "row_count": 12,
+        "source_note": "Paperpot in Bootstrap Farmer navajata X24; Johnny's baby-leaf komplet za rukolo navaja Y24."
+      },
       "six_row": {"passes": 2, "rows_per_bed": 12},
-      "note": "Za baby leaf začni z 12 vrstami in nato kalibriraj po vznikih in masi semena."
+      "note": "Za 80 cm baby-leaf gredo začni z 12 vrstami; gostoto nato potrdi po vznikih in dejanski masi semena."
     },
     "Divja rukola": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 3.0,
-      "jang_jp1": {"roller": "X24", "row_count": 12},
+      "jang_jp1": {
+        "roller": "X24",
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "down/low",
+        "row_count": 12
+      },
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf špinača": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 8.0,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {
+        "roller": "LJ24",
+        "alternative_rollers": ["F24"],
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "low",
+        "row_count": 12,
+        "source_note": "LJ24 je pogosta nastavitev za baby špinačo; Johnny's za drobnejše seme vključuje tudi F24."
+      },
       "six_row": {"passes": 2, "rows_per_bed": 12},
-      "note": "Velikost semena med sortami močno niha; JP-1 roller se določi s kalibracijo."
+      "note": "Velikost špinačnega semena med sortami močno niha, zato je kalibracija obvezna."
     },
     "Baby leaf listna solata": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 1.2,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {
+        "roller": "XY24",
+        "alternative_rollers": ["F24"],
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "low",
+        "row_count": 12,
+        "source_note": "Johnny's navaja XY24 za surovo seme solate; druge market-garden tabele uporabljajo tudi F24."
+      },
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf hrastov list": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 1.2,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {"roller": "XY24", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf rimska solata": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 1.2,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {"roller": "XY24", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf mizuna": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 2.5,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {"roller": "F24", "alternative_rollers": ["X24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf tatsoi": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 2.5,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {"roller": "F24", "alternative_rollers": ["X24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf gorčica": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 2.5,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {"roller": "F24", "alternative_rollers": ["X24", "Y24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf pak choi": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 2.5,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {"roller": "Y24", "alternative_rollers": ["F24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Baby leaf komatsuna": {
       "production_type": "baby_leaf",
       "target_rows_per_80cm_bed": 12,
       "seed_rate_g_m2": 2.5,
-      "jang_jp1": {"roller": null, "row_count": 12},
+      "jang_jp1": {"roller": "F24", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
       "six_row": {"passes": 2, "rows_per_bed": 12}
     },
     "Methi": {
@@ -104,14 +138,14 @@
       "production_type": "leaf",
       "target_rows_per_80cm_bed": 6,
       "seed_rate_g_m2": 6.0,
-      "jang_jp1": {"roller": null, "row_count": 6},
+      "jang_jp1": {"roller": "LJ12", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 6},
       "six_row": {"passes": 1, "rows_per_bed": 6}
     },
     "Redkvica": {
       "production_type": "root",
       "target_rows_per_80cm_bed": 6,
       "seed_rate_g_m2": null,
-      "jang_jp1": {"roller": null, "row_count": 6},
+      "jang_jp1": {"roller": "F24", "front_sprocket": 14, "rear_sprocket": 10, "brush": "down/low", "row_count": 6},
       "six_row": {"passes": 1, "rows_per_bed": 6}
     }
   }
