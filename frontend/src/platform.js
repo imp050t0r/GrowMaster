@@ -44,6 +44,9 @@ export function apiHref(path) {
 
 export async function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  if (typeof options.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   if (isNativeApp) {
     headers.set("X-GrowMaster-Client", "mobile");
     const token = localStorage.getItem(SESSION_TOKEN_KEY);
@@ -65,7 +68,14 @@ export async function apiRequest(path, options = {}) {
       window.dispatchEvent(new Event("growmaster:unauthorized"));
     }
     const detail = data.detail;
-    throw new Error(typeof detail === "string" ? detail : detail?.message || "Zahteva ni uspela.");
+    const validationMessage = Array.isArray(detail)
+      ? detail.map(item => item?.msg).filter(Boolean).join(" ")
+      : "";
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : detail?.message || validationMessage || "Zahteva ni uspela.",
+    );
   }
   return data;
 }
