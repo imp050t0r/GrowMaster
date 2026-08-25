@@ -7,7 +7,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_SOURCES = {
-    "backend": (ROOT / "backend/app/main.py", r'APP_VERSION\s*=\s*"([^"]+)"'),
+    "backend": (ROOT / "backend/app/server.py", r'APP_VERSION\s*=\s*"([^"]+)"'),
     "frontend": (ROOT / "frontend/src/version.js", r'APP_VERSION\s*=\s*"([^"]+)"'),
     "installer": (ROOT / "installer/GrowMaster.iss", r'MyAppVersion\s+"([^"]+)"'),
 }
