@@ -23,5 +23,6 @@
     "different_family_bonus": 25,
     "free_window_fit_bonus": 10,
     "free_window_overrun_penalty": -55
-  }
+  },
+  "note": "Kolobarska pravila so ločena od sejalniških profilov v growmaster-seeding.json."
 }
