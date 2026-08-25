@@ -9,6 +9,13 @@ async function refreshLabel(button, label) {
   try {
     const data = await apiRequest("/api/system/plant-db");
     label.textContent = `Plant DB ${data.plant_db_version || "ni inicializirana"}`;
+    try {
+      const remote = await apiRequest("/api/system/plant-db/update-status");
+      if (remote.update_available) {
+        label.textContent += ` · na voljo ${remote.available_version}`;
+        button.textContent = "PRENESI POSODOBITEV BAZE";
+      }
+    } catch { /* Lokalna baza ostane uporabna tudi brez interneta. */ }
   } catch {
     label.textContent = "Plant DB —";
   }
@@ -29,8 +36,7 @@ function install() {
     const old = button.textContent;
     button.textContent = "NALAGAM …";
     try {
-      await apiRequest("/api/system/plant-db/initialize", { method: "POST" });
-      const result = await apiRequest("/api/system/plant-db/reload", { method: "POST" });
+      const result = await apiRequest("/api/system/plant-db/update", { method: "POST" });
       button.textContent = "POSODOBLJENO ✓";
       label.textContent = `Plant DB ${result.plant_db_version || "aktivna"}`;
       window.dispatchEvent(new CustomEvent("growmaster:plant-db-updated", { detail: result }));

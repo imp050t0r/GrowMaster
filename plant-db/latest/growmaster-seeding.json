@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "bed_width_cm": 80,
+  "defaults": {
+    "jang_jp1": {
+      "roller": null,
+      "front_sprocket": null,
+      "rear_sprocket": null,
+      "brush": null,
+      "row_count": null,
+      "calibration_required": true,
+      "note": "Roller in prenos potrdi s kalibracijskim preizkusom dejanske serije semena."
+    },
+    "six_row": {
+      "passes": null,
+      "rows_per_bed": null,
+      "note": "Število prehodov prilagodi ciljni gostoti in dejanski širini sejalnice."
+    }
+  },
+  "profiles": {
+    "Rukola": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 3.5,
+      "jang_jp1": {
+        "roller": "X24",
+        "alternative_rollers": ["Y24"],
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "down/low",
+        "row_count": 12,
+        "source_note": "Paperpot in Bootstrap Farmer navajata X24; Johnny's baby-leaf komplet za rukolo navaja Y24."
+      },
+      "six_row": {"passes": 2, "rows_per_bed": 12},
+      "note": "Za 80 cm baby-leaf gredo začni z 12 vrstami; gostoto nato potrdi po vznikih in dejanski masi semena."
+    },
+    "Divja rukola": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 3.0,
+      "jang_jp1": {
+        "roller": "X24",
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "down/low",
+        "row_count": 12
+      },
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf špinača": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 8.0,
+      "jang_jp1": {
+        "roller": "LJ24",
+        "alternative_rollers": ["F24"],
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "low",
+        "row_count": 12,
+        "source_note": "LJ24 je pogosta nastavitev za baby špinačo; Johnny's za drobnejše seme vključuje tudi F24."
+      },
+      "six_row": {"passes": 2, "rows_per_bed": 12},
+      "note": "Velikost špinačnega semena med sortami močno niha, zato je kalibracija obvezna."
+    },
+    "Baby leaf listna solata": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 1.2,
+      "jang_jp1": {
+        "roller": "XY24",
+        "alternative_rollers": ["F24"],
+        "front_sprocket": 14,
+        "rear_sprocket": 9,
+        "brush": "low",
+        "row_count": 12,
+        "source_note": "Johnny's navaja XY24 za surovo seme solate; druge market-garden tabele uporabljajo tudi F24."
+      },
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf hrastov list": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 1.2,
+      "jang_jp1": {"roller": "XY24", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf rimska solata": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 1.2,
+      "jang_jp1": {"roller": "XY24", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf mizuna": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": "F24", "alternative_rollers": ["X24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf tatsoi": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": "F24", "alternative_rollers": ["X24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf gorčica": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": "F24", "alternative_rollers": ["X24", "Y24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf pak choi": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": "Y24", "alternative_rollers": ["F24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf komatsuna": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": "F24", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Methi": {
+      "production_type": "leaf",
+      "target_rows_per_80cm_bed": 6,
+      "seed_rate_g_m2": 8.0,
+      "jang_jp1": {"roller": null, "row_count": 6},
+      "six_row": {"passes": 1, "rows_per_bed": 6}
+    },
+    "Koriander": {
+      "production_type": "leaf",
+      "target_rows_per_80cm_bed": 6,
+      "seed_rate_g_m2": 6.0,
+      "jang_jp1": {"roller": "LJ12", "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 6},
+      "six_row": {"passes": 1, "rows_per_bed": 6}
+    },
+    "Redkvica": {
+      "production_type": "root",
+      "target_rows_per_80cm_bed": 6,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": "F24", "front_sprocket": 14, "rear_sprocket": 10, "brush": "down/low", "row_count": 6},
+      "six_row": {"passes": 1, "rows_per_bed": 6}
+    },
+    "Toria": {
+      "production_type": "oilseed",
+      "target_rows_per_80cm_bed": 3,
+      "seed_rate_g_m2": 0.35,
+      "jang_jp1": {"roller": "YYJ24", "alternative_rollers": ["Y24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 3, "calibration_required": true},
+      "six_row": {"passes": 1, "rows_per_bed": 3},
+      "note": "Toria zahteva približno 30 cm med vrstami; valjček vedno potrdi z dejansko serijo drobnega semena."
+    },
+    "Chichinda": {
+      "production_type": "transplant",
+      "target_rows_per_80cm_bed": 1,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": null, "row_count": 1, "calibration_required": true},
+      "six_row": {"passes": null, "rows_per_bed": 1},
+      "note": "Vzgoji sadike in jih ročno presadi ob visoko oporo; neposredna strojna setev ni priporočena."
+    },
+    "Taro": {
+      "production_type": "vegetative",
+      "target_rows_per_80cm_bed": 1,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": null, "row_count": 1, "calibration_required": false},
+      "six_row": {"passes": null, "rows_per_bed": 1},
+      "note": "Sadi stranske gomolje ročno; Jang in šestvrstna sejalnica nista primerni."
+    },
+    "Gobe": {
+      "production_type": "indoor_substrate",
+      "target_rows_per_80cm_bed": null,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": null, "row_count": null, "calibration_required": false},
+      "six_row": {"passes": null, "rows_per_bed": null},
+      "note": "Profil je namenjen notranji pridelavi na inokuliranem substratu, ne setvi na gredo."
+    }
+  }
+}
