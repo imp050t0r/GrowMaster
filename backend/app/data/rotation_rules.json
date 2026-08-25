@@ -8,10 +8,11 @@
     "Paradižnik", "Paprika", "Feferon", "Jajčevec", "Kumara", "Bučka", "Buča",
     "Fižol", "Edamame", "Bamija", "Karela", "Lauki", "Rebrasta bučka",
     "Gobasta bučka", "Tinda", "Voščena buča", "Indijski jajčevec", "Indijski čili",
-    "Nepalski zeleni čili", "Malabarska špinača", "Listni amarant", "Guar"
+    "Nepalski zeleni čili", "Malabarska špinača", "Listni amarant", "Guar",
+    "Taro", "Chichinda"
   ],
   "winter_friendly_crops": [
-    "Špinača", "Motovilec", "Por", "Česen", "Ohrovt", "Radič", "Endivija"
+    "Špinača", "Motovilec", "Por", "Česen", "Ohrovt", "Radič", "Endivija", "Toria"
   ],
   "rotation": {
     "history_cycles": 4,

@@ -135,7 +135,7 @@ test("every catalog crop receives values for all five layouts", () => {
     "Kailan", "Daikon", "Pekinško zelje", "Mibuna", "Japonska repa", "Azijska gorčica", "Shiso", "Shungiku",
     "Edamame", "Methi", "Bamija", "Karela", "Lauki", "Rebrasta bučka", "Gobasta bučka", "Tinda",
     "Voščena buča", "Indijski jajčevec", "Indijski čili", "Nepalski zeleni čili", "Malabarska špinača", "Listni amarant", "Palak",
-    "Guar", "Koriander", "Baby leaf mešanica", "Divja rukola", "Salatni trpotec", "Cikorija",
+    "Guar", "Koriander", "Toria", "Taro", "Chichinda", "Baby leaf mešanica", "Divja rukola", "Salatni trpotec", "Cikorija",
     "Mladi listi rdeče pese", "Baby leaf špinača", "Baby leaf ohrovt", "Baby leaf listna solata",
     "Baby leaf hrastov list", "Baby leaf rimska solata", "Baby leaf batavia", "Baby leaf endivija",
     "Baby leaf radič", "Baby leaf blitva", "Baby leaf gorčica", "Baby leaf mizuna", "Baby leaf tatsoi",
@@ -154,4 +154,10 @@ test("every catalog crop receives values for all five layouts", () => {
       assert.ok(option.setup, cropName);
     }
   }
+});
+
+test("oyster mushrooms use an indoor substrate profile instead of bed machinery", () => {
+  const recommendation = getGredicnikSpacing({ name: "Gobe" }, { name: "Ostrigar" }, "standard");
+  assert.equal(recommendation.equipment, "Ročno sajenje");
+  assert.equal(recommendation.suitable, false);
 });

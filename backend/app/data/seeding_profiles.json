@@ -147,6 +147,38 @@
       "seed_rate_g_m2": null,
       "jang_jp1": {"roller": "F24", "front_sprocket": 14, "rear_sprocket": 10, "brush": "down/low", "row_count": 6},
       "six_row": {"passes": 1, "rows_per_bed": 6}
+    },
+    "Toria": {
+      "production_type": "oilseed",
+      "target_rows_per_80cm_bed": 3,
+      "seed_rate_g_m2": 0.35,
+      "jang_jp1": {"roller": "YYJ24", "alternative_rollers": ["Y24"], "front_sprocket": 14, "rear_sprocket": 9, "brush": "low", "row_count": 3, "calibration_required": true},
+      "six_row": {"passes": 1, "rows_per_bed": 3},
+      "note": "Toria zahteva približno 30 cm med vrstami; valjček vedno potrdi z dejansko serijo drobnega semena."
+    },
+    "Chichinda": {
+      "production_type": "transplant",
+      "target_rows_per_80cm_bed": 1,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": null, "row_count": 1, "calibration_required": true},
+      "six_row": {"passes": null, "rows_per_bed": 1},
+      "note": "Vzgoji sadike in jih ročno presadi ob visoko oporo; neposredna strojna setev ni priporočena."
+    },
+    "Taro": {
+      "production_type": "vegetative",
+      "target_rows_per_80cm_bed": 1,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": null, "row_count": 1, "calibration_required": false},
+      "six_row": {"passes": null, "rows_per_bed": 1},
+      "note": "Sadi stranske gomolje ročno; Jang in šestvrstna sejalnica nista primerni."
+    },
+    "Gobe": {
+      "production_type": "indoor_substrate",
+      "target_rows_per_80cm_bed": null,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": null, "row_count": null, "calibration_required": false},
+      "six_row": {"passes": null, "rows_per_bed": null},
+      "note": "Profil je namenjen notranji pridelavi na inokuliranem substratu, ne setvi na gredo."
     }
   }
 }

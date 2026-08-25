@@ -309,6 +309,27 @@ def test_bed_planting_and_task_workflow() -> None:
             and variety["harvest_source_url"]
             for variety in nepali_chilli["varieties"]
         )
+        requested = {
+            crop["name"]: {variety["name"]: variety for variety in crop["varieties"]}
+            for crop in crops
+        }
+        assert {"Toria", "Taro", "Chichinda", "Gobe"} <= requested.keys()
+        assert {"Small Indian", "Large Indian"} <= requested["Karela"].keys()
+        assert requested["Toria"]["TS-38"]["row_spacing_cm"] == 30.0
+        assert requested["Taro"]["Sree Rashmi"]["planting_method"] == "vegetative"
+        assert requested["Chichinda"]["CO-2"]["harvest_methods"] == "green_fruit"
+        assert requested["Gobe"]["Ostrigar"]["cultivation_methods"] == "indoor_substrate"
+        for crop_name, variety_name in {
+            "Bamija": "Arka Anamika", "Azijska gorčica": "Pusa Sag-1",
+            "Palak": "Pusa All Green", "Methi": "Indian Fenugreek",
+            "Buča": "Arka Chandan", "Kumara": "Pusa Uday", "Grah": "Arkel",
+            "Redkvica": "Pusa Chetki", "Fižol": "Arka Komal",
+            "Lauki": "Pusa Naveen", "Koriander": "CO-4",
+        }.items():
+            variety = requested[crop_name][variety_name]
+            assert variety["source_url"]
+            assert variety["planting_calendar_note"]
+            assert variety["harvest_methods"]
         astro = next(
             variety
             for variety in next(crop for crop in crops if crop["name"] == "Rukola")[
