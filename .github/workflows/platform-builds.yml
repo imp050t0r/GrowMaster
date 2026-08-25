@@ -112,12 +112,13 @@ jobs:
         run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [windows-installer, android-app, ios-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: GrowMaster-Windows-Setup
@@ -127,18 +128,32 @@ jobs:
           name: GrowMaster-Android-APK
           path: release/android
       - name: Prepare release files
+        id: release
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="$(sed -n 's/export const APP_VERSION = "\([^"]*\)";/\1/p' frontend/src/version.js)"
+          if [ -z "$version" ]; then
+            echo "Could not read GrowMaster version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
           mv release/android/app-debug.apk "release/GrowMaster-Android-${version}.apk"
-      - name: Publish GitHub release
+      - name: Publish GitHub release when missing
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it unchanged."
+            exit 0
+          fi
+          gh release create "$TAG" \
             release/windows/GrowMaster-Setup-*.exe \
             release/GrowMaster-Android-*.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "GrowMaster ${GITHUB_REF_NAME#v}" \
+            --target "$GITHUB_SHA" \
+            --title "GrowMaster $VERSION" \
             --generate-notes
