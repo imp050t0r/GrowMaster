@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "source": "Johnny's Selected Seeds Jang JP roller selection/testing guides",
+  "calibration_required": true,
+  "roller_families": {
+    "A": {"hole_width_mm": 13.5, "hole_depth_mm": 6.0, "shape": "bowl"},
+    "AA": {"hole_width_mm": 12.0, "hole_depth_mm": 6.0, "shape": "bowl"},
+    "C": {"hole_width_mm": 11.0, "hole_depth_mm": 5.5, "shape": "bowl"},
+    "B": {"hole_width_mm": 10.0, "hole_depth_mm": 7.5, "shape": "bowl"},
+    "G": {"hole_width_mm": 9.0, "hole_depth_mm": 4.5, "shape": "bowl"},
+    "R": {"hole_width_mm": 9.0, "hole_depth_mm": 3.5, "shape": "bowl"},
+    "LV": {"hole_width_mm": 8.0, "hole_depth_mm": 5.0, "shape": "v-groove"},
+    "Q": {"hole_width_mm": 8.0, "hole_depth_mm": 3.0, "shape": "bowl"},
+    "LJ": {"hole_width_mm": 7.5, "hole_depth_mm": 3.7, "shape": "v-groove"},
+    "L": {"hole_width_mm": 7.0, "hole_depth_mm": 2.5, "shape": "bowl"},
+    "MJ": {"hole_width_mm": 6.0, "hole_depth_mm": 3.5, "shape": "v-groove"},
+    "MM": {"hole_width_mm": 6.0, "hole_depth_mm": 2.5, "shape": "bowl"},
+    "F": {"hole_width_mm": 5.0, "hole_depth_mm": 2.5, "shape": "bowl"},
+    "M": {"hole_width_mm": 5.0, "hole_depth_mm": 2.0, "shape": "bowl"},
+    "X": {"hole_width_mm": 4.0, "hole_depth_mm": 2.0, "shape": "bowl"},
+    "Y": {"hole_width_mm": 3.5, "hole_depth_mm": 1.5, "shape": "bowl"},
+    "YYJ": {"hole_width_mm": 3.0, "hole_depth_mm": 1.7, "shape": "v-groove"},
+    "YX": {"hole_width_mm": 2.5, "hole_depth_mm": 1.5, "shape": "bowl"},
+    "YYX": {"hole_width_mm": 2.0, "hole_depth_mm": 1.8, "shape": "bowl"},
+    "XY": {"shape": "cross", "note": "Special cross-shaped roller family; common for raw carrot and lettuce seed."},
+    "XYY": {"shape": "small-cross", "note": "Special cross-shaped roller family for small carrot/lettuce seed."},
+    "N": {"shape": "bowl", "note": "Commonly used for small beans and small corn."},
+    "J": {"shape": "bowl", "note": "Commonly used for beet, carrot, lettuce and onion depending on seed form."},
+    "Z": {"shape": "blank", "note": "Undrilled custom roller."}
+  },
+  "known_codes": [
+    "A-6", "AA-6", "C-6", "G-6", "N-6", "J-4", "LJ-12", "LJ-24",
+    "L-24", "MJ-24", "F-24", "X-12", "X-24", "Y-12", "Y-24",
+    "YYJ-12", "YYJ-24", "YX-4", "YX-6", "YX-12", "YX-24",
+    "YYX-12", "YYX-24", "XY-12", "XY-24", "XYY-12", "XYY-24", "XYY-36", "Z-Blank"
+  ],
+  "notes": [
+    "Jang offers more than 50 JP-series roller variants; availability varies by supplier.",
+    "A roller family describes hole geometry. The numeric suffix describes number of holes and therefore affects spacing.",
+    "Always verify singulation with the actual seed lot before field sowing."
+  ]
+}
