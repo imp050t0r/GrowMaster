@@ -15,6 +15,7 @@ from app.planting_advisor import (
     score_candidate,
     seasonal_assessment,
 )
+from app.seeding_profiles import seeding_profile
 
 
 router = APIRouter()
@@ -205,6 +206,7 @@ def next_crop_suggestions(
                 "has_plan_conflict": has_plan_conflict,
                 "previous_yield_kg_m2": previous_yield_per_m2,
                 "expected_yield_kg": expected_yield_kg,
+                "seeding": seeding_profile(crop.name, variety.name),
                 **result,
             }
         )
@@ -245,9 +247,10 @@ def next_crop_suggestions(
         "suggestions": candidates[:limit],
         "message": (
             "Naslednje kulture so razvrščene glede na kolobar, termin, DTM, "
-            "prosto časovno okno, obstoječe načrte in pridelek iz zgodovine gredice."
+            "prosto časovno okno, obstoječe načrte, pridelek in sejalniški profil."
         ),
         "note": (
-            "Predlog ne nadomešča presoje tal, bolezni, vremena in razpoložljive zaščite."
+            "Predlog ne nadomešča presoje tal, bolezni, vremena, kalibracije sejalnice "
+            "in razpoložljive zaščite."
         ),
     }
