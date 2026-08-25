@@ -198,18 +198,18 @@ def test_bed_planting_and_task_workflow() -> None:
         ]
         assert len(supplier_varieties) == 41
         assert all(
-            variety["planting_method"] in {
-                "direct", "transplant", "vegetative", "indoor_substrate"
-            }
-            and (variety["outdoor_months"] or variety["planting_method"] == "indoor_substrate")
+            variety["planting_method"] in {"direct", "transplant"}
+            and variety["outdoor_months"]
             and variety["protected_months"]
             and variety["planting_calendar_note"]
             and variety["calendar_source_url"]
             for variety in supplier_varieties
         )
         assert all(
-            variety["planting_method"] in {"direct", "transplant"}
-            and variety["outdoor_months"]
+            variety["planting_method"] in {
+                "direct", "transplant", "vegetative", "indoor_substrate"
+            }
+            and (variety["outdoor_months"] or variety["planting_method"] == "indoor_substrate")
             and variety["protected_months"]
             for crop in crops
             for variety in crop["varieties"]
