@@ -27,7 +27,7 @@ const CROP_PROFILES = [
   { crops: ["jajčevec", "indijski jajčevec"], plantCm: 45, rowCm: 40, rows: 2, system: "paperpot", large: true },
   { crops: ["kumara"], plantCm: 35, rowCm: 40, rows: 2, system: "paperpot", large: true },
   { crops: ["bučka", "rebrasta bučka", "gobasta bučka"], plantCm: 60, rowCm: 70, rows: 1, system: "manual", large: true },
-  { crops: ["buča", "lauki", "karela", "tinda", "voščena buča"], plantCm: 90, rowCm: 90, rows: 1, system: "manual", large: true },
+  { crops: ["buča", "lauki", "karela", "tinda", "voščena buča", "chichinda"], plantCm: 90, rowCm: 90, rows: 1, system: "manual", large: true },
   { crops: ["solata", "hrastov list"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
   { crops: ["endivija", "cikorija"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
   { crops: ["radič"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
@@ -52,6 +52,9 @@ const CROP_PROFILES = [
   { crops: ["grah"], plantCm: 5, rowCm: 20, rows: 4, system: "direct" },
   { crops: ["bob"], plantCm: 20, rowCm: 30, rows: 3, system: "direct" },
   { crops: ["krompir"], plantCm: 30, rowCm: 60, rows: 1, system: "manual" },
+  { crops: ["taro"], plantCm: 45, rowCm: 60, rows: 1, system: "manual", large: true },
+  { crops: ["gobe"], plantCm: 0, rowCm: 0, rows: 0, system: "manual", large: true, indoor: true },
+  { crops: ["toria"], plantCm: 10, rowCm: 30, rows: 3, system: "direct" },
   { crops: ["blitva"], plantCm: 25, rowCm: 30, rows: 3, system: "paperpot" },
   { crops: ["zelena"], plantCm: 25, rowCm: 25, rows: 3, system: "paperpot" },
   { crops: ["koromač"], plantCm: 20, rowCm: 25, rows: 3, system: "paperpot" },
@@ -195,11 +198,13 @@ export function getGredicnikSpacing(crop = {}, variety = {}, mode = "standard") 
       equipment: "Ročno sajenje",
       equipmentShort: "Ročno",
       setup: "Ta pridelek ni primeren za Jang JP-1, 6-vrstno sejalnico ali običajno Paperpot verigo.",
-      note: normalizedMode === "standard"
+      note: base.indoor
+        ? "Gobe goji v nadzorovanem prostoru na inokuliranem substratu; gredna mehanizacija ni primerna."
+        : normalizedMode === "standard"
         ? "Uporabi navedeni končni razmik in ga prilagodi bujnosti sorte."
         : "Razpored 6 ali 10 vrst za ta pridelek praviloma ni primeren.",
-      suitable: normalizedMode === "standard",
-      recommended: normalizedMode === "standard",
+      suitable: normalizedMode === "standard" && !base.indoor,
+      recommended: normalizedMode === "standard" && !base.indoor,
     });
   }
 
