@@ -1,6 +1,7 @@
 import app.main as main_module
 from app.agronomy_admin_routes import router as agronomy_admin_router
 from app.master_data_routes import router as master_data_router
+from app.plant_db_routes import router as plant_db_router
 from app.seed_actuals_routes import router as seed_actuals_router
 from app.seed_forecast_routes import router as seed_forecast_router
 from app.seed_inventory_link import register_seed_inventory_hooks
@@ -21,6 +22,7 @@ register_seed_inventory_hooks()
 
 app.include_router(successor_router)
 app.include_router(master_data_router)
+app.include_router(plant_db_router)
 app.include_router(seeding_data_router)
 app.include_router(seed_quantity_router)
 app.include_router(seed_inventory_router)
