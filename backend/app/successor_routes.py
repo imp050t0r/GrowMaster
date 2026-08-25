@@ -8,8 +8,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.maturity import maturity_days_for_date
-from app.models import Bed, Crop, CropPlan, Planting, Variety
-from app.planting_advisor import rotation_families, score_candidate, seasonal_assessment
+from app.models import Bed, Crop, CropPlan, Planting
+from app.planting_advisor import (
+    ROTATION_RULES,
+    rotation_families,
+    score_candidate,
+    seasonal_assessment,
+)
 
 
 router = APIRouter()
@@ -27,14 +32,14 @@ def next_crop_suggestions(
     limit: int = Query(default=5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Rank the best successor crops for one bed after harvest.
-
-    The ranking uses crop rotation history, season, maturity duration, planned
-    bed occupancy and observed yield history. It intentionally returns the
-    reasons and warnings used for each score so the recommendation remains
-    auditable by the grower.
-    """
+    """Rank the best successor crops for one bed after harvest."""
     target_date = start_date or date.today()
+    history_cycles = int(ROTATION_RULES.get("history_cycles", 4))
+    free_window_fit_bonus = int(ROTATION_RULES.get("free_window_fit_bonus", 10))
+    free_window_overrun_penalty = int(
+        ROTATION_RULES.get("free_window_overrun_penalty", -55)
+    )
+
     bed = db.scalar(
         select(Bed).where(Bed.id == bed_id, Bed.farm_id == DEFAULT_FARM_ID)
     )
@@ -76,7 +81,7 @@ def next_crop_suggestions(
             .order_by(Planting.sowing_date.desc(), Planting.id.desc())
         ).all()
     )
-    recent_history = history[:4]
+    recent_history = history[:history_cycles]
     recent_family_sets = [
         rotation_families(
             planting.crop.name,
@@ -169,19 +174,21 @@ def next_crop_suggestions(
         fits_free_window = available_days is None or maturity_days < available_days
         if available_days is not None:
             if fits_free_window:
-                result["score"] += 10
+                result["score"] += free_window_fit_bonus
                 result["reasons"].append(
                     f"Cikel se prilega v {available_days}-dnevno prosto okno gredice."
                 )
             else:
-                result["score"] = max(0, result["score"] - 55)
+                result["score"] = max(
+                    0, result["score"] + free_window_overrun_penalty
+                )
                 result["warnings"].append(
                     f"Cikel ({maturity_days} dni) je predolg za {available_days}-dnevno prosto okno."
                 )
 
         rotation_safe = not any(
             families & previous_families
-            for previous_families in recent_family_sets[:4]
+            for previous_families in recent_family_sets[:history_cycles]
         )
         candidates.append(
             {
