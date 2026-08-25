@@ -15,6 +15,7 @@ from app.planting_advisor import (
     score_candidate,
     seasonal_assessment,
 )
+from app.seed_quantity import calculate_seed_quantity
 from app.seeding_profiles import seeding_profile
 
 
@@ -31,6 +32,7 @@ def next_crop_suggestions(
     bed_id: int,
     start_date: date | None = Query(default=None),
     limit: int = Query(default=5, ge=1, le=20),
+    reserve_percent: float = Query(default=5.0, ge=0, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
     """Rank the best successor crops for one bed after harvest."""
@@ -191,6 +193,20 @@ def next_crop_suggestions(
             families & previous_families
             for previous_families in recent_family_sets[:history_cycles]
         )
+        seeding = seeding_profile(
+            crop.name,
+            variety.name,
+            crop.family,
+            crop.category,
+        )
+        seed_quantity = calculate_seed_quantity(
+            seeding.get("seed_rate_g_m2"),
+            bed.width_m,
+            bed.length_m,
+            1,
+            reserve_percent,
+        )
+
         candidates.append(
             {
                 "crop_id": crop.id,
@@ -206,7 +222,8 @@ def next_crop_suggestions(
                 "has_plan_conflict": has_plan_conflict,
                 "previous_yield_kg_m2": previous_yield_per_m2,
                 "expected_yield_kg": expected_yield_kg,
-                "seeding": seeding_profile(crop.name, variety.name),
+                "seeding": seeding,
+                "seed_quantity": seed_quantity,
                 **result,
             }
         )
@@ -225,9 +242,13 @@ def next_crop_suggestions(
     return {
         "bed_id": bed.id,
         "bed": bed.name,
+        "bed_width_m": bed.width_m,
+        "bed_length_m": bed.length_m,
+        "bed_area_m2": bed.area_m2,
         "start_date": target_date,
         "available_until": available_until,
         "available_days": available_days,
+        "seed_reserve_percent": reserve_percent,
         "last_crop_family": bed.last_crop_family,
         "history": [
             {
@@ -247,7 +268,8 @@ def next_crop_suggestions(
         "suggestions": candidates[:limit],
         "message": (
             "Naslednje kulture so razvrščene glede na kolobar, termin, DTM, "
-            "prosto časovno okno, obstoječe načrte, pridelek in sejalniški profil."
+            "prosto časovno okno, obstoječe načrte, pridelek, sejalniški profil "
+            "in izračun količine semena za dejansko gredico."
         ),
         "note": (
             "Predlog ne nadomešča presoje tal, bolezni, vremena, kalibracije sejalnice "
