@@ -1,8 +1,8 @@
 from fastapi import APIRouter
 
+from app.plant_db_service import load_roller_catalog, roller_data_path
 from app.seeding_profiles import (
     export_seeding_data,
-    load_roller_catalog,
     load_seeding_data,
     seeding_data_path,
 )
@@ -16,9 +16,12 @@ def seeding_data_status() -> dict:
     path = seeding_data_path()
     payload = load_seeding_data()
     rollers = load_roller_catalog()
+    roller_path = roller_data_path()
     return {
         "path": str(path),
         "external_file_exists": path.exists(),
+        "roller_path": str(roller_path),
+        "external_roller_file_exists": roller_path.exists(),
         "schema_version": payload.get("schema_version"),
         "bed_width_cm": payload.get("bed_width_cm", 80),
         "profile_count": len(payload.get("profiles", {})),
@@ -27,7 +30,7 @@ def seeding_data_status() -> dict:
         "message": (
             "GrowMaster uporablja zunanjo sejalniško podatkovno datoteko."
             if path.exists()
-            else "GrowMaster trenutno uporablja vgrajeno predlogo; izvozi jo za urejanje brez spremembe aplikacije."
+            else "GrowMaster trenutno uporablja vgrajeno predlogo; inicializiraj Plant DB za urejanje brez spremembe aplikacije."
         ),
     }
 
