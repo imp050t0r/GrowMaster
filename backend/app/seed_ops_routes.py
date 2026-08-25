@@ -129,11 +129,10 @@ def agronomy_learning(min_samples: int = Query(default=2, ge=1, le=20), db: Sess
         if not planting.harvests or not planting.bed.area_m2:
             continue
         first_harvest = min(h.harvest_date for h in planting.harvests)
-        consumption = consumptions.get(planting.id)
-        rate = None
-        if consumption and consumption.get("status") == "consumed" and consumption.get("required_unit") == "g":
-            rate = float(consumption.get("required_quantity", 0)) / 1.05 / planting.bed.area_m2
-        grouped[(planting.crop.name, planting.variety.name)].append({"planting_id": planting.id, "actual_dtm": (first_harvest - planting.sowing_date).days, "seed_rate_g_m2": rate, "yield_kg_m2": sum(h.quantity_kg for h in planting.harvests) / planting.bed.area_m2})
+        consumption = consumptions.get(planting.id, {})
+        actual = consumption.get("actual_seed_use") or {}
+        actual_rate = float(actual["quantity"]) / planting.bed.area_m2 if actual.get("unit") == "g" and actual.get("quantity") else None
+        grouped[(planting.crop.name, planting.variety.name)].append({"planting_id": planting.id, "actual_dtm": (first_harvest - planting.sowing_date).days, "seed_rate_g_m2": actual_rate, "yield_kg_m2": sum(h.quantity_kg for h in planting.harvests) / planting.bed.area_m2})
     suggestions = []
     for (crop_name, variety_name), samples in grouped.items():
         if len(samples) < min_samples:
@@ -147,6 +146,6 @@ def agronomy_learning(min_samples: int = Query(default=2, ge=1, le=20), db: Sess
         current_rate = seeding_profile(crop_name, variety_name, planting.crop.family, planting.crop.category).get("seed_rate_g_m2")
         dtm_delta = observed_dtm - planting.variety.days_to_harvest if observed_dtm is not None else None
         rate_delta = (observed_rate / current_rate - 1) * 100 if observed_rate is not None and current_rate else None
-        suggestions.append({"crop": crop_name, "variety": variety_name, "samples": len(samples), "confidence": "high" if len(samples) >= 5 else ("medium" if len(samples) >= 3 else "low"), "current_days_to_harvest": planting.variety.days_to_harvest, "observed_days_to_harvest": observed_dtm, "dtm_delta_days": dtm_delta, "current_seed_rate_g_m2": current_rate, "observed_seed_rate_g_m2": observed_rate, "seed_rate_delta_pct": round(rate_delta, 1) if rate_delta is not None else None, "observed_yield_kg_m2": round(sum(yields) / len(yields), 2), "recommend_seed_rate_update": bool(rate_delta is not None and abs(rate_delta) >= 10 and len(rates) >= min_samples), "recommend_dtm_review": bool(dtm_delta is not None and abs(dtm_delta) >= 5)})
+        suggestions.append({"crop": crop_name, "variety": variety_name, "samples": len(samples), "seed_use_samples": len(rates), "confidence": "high" if len(samples) >= 5 else ("medium" if len(samples) >= 3 else "low"), "current_days_to_harvest": planting.variety.days_to_harvest, "observed_days_to_harvest": observed_dtm, "dtm_delta_days": dtm_delta, "current_seed_rate_g_m2": current_rate, "observed_seed_rate_g_m2": observed_rate, "seed_rate_delta_pct": round(rate_delta, 1) if rate_delta is not None else None, "observed_yield_kg_m2": round(sum(yields) / len(yields), 2), "recommend_seed_rate_update": bool(rate_delta is not None and abs(rate_delta) >= 10 and len(rates) >= min_samples), "recommend_dtm_review": bool(dtm_delta is not None and abs(dtm_delta) >= 5)})
     suggestions.sort(key=lambda item: (-item["samples"], item["crop"], item["variety"]))
-    return {"min_samples": min_samples, "count": len(suggestions), "suggestions": suggestions, "principle": "Predlogi temeljijo na dejanskih rezultatih; master podatkov ne prepisujemo tiho."}
+    return {"min_samples": min_samples, "count": len(suggestions), "suggestions": suggestions, "principle": "DTM in pridelek uporabljata dejanske žetve; setvena norma se uči samo iz izrecno zapisane dejanske porabe semena."}
