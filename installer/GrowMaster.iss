@@ -37,7 +37,7 @@ Source: "assets\GrowMaster.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
-Name: "{group}\GrowMaster - prestavi podatke"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Move-GrowMasterData.ps1"" ""%1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
+Name: "{group}\GrowMaster - prestavi podatke"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Move-GrowMasterData.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
 Name: "{autodesktop}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"; Tasks: desktopicon
 
 [Registry]
