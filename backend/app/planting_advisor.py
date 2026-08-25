@@ -1,50 +1,24 @@
 from datetime import date
+import json
+from pathlib import Path
 
 
+_DATA_FILE = Path(__file__).with_name("data") / "rotation_rules.json"
+
+
+def _load_rules() -> dict:
+    with _DATA_FILE.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+_RULES = _load_rules()
 MIXTURE_ROTATION_FAMILIES = {
-    "Klasična solatna mešanica": {
-        "Asteraceae",
-        "Amaranthaceae",
-        "Brassicaceae",
-    },
-    "Azijska mešanica": {"Brassicaceae"},
-    "Pikantna mešanica": {"Brassicaceae"},
+    name: set(families)
+    for name, families in _RULES["mixture_rotation_families"].items()
 }
-
-WARM_SEASON_CROPS = {
-    "Paradižnik",
-    "Paprika",
-    "Feferon",
-    "Jajčevec",
-    "Kumara",
-    "Bučka",
-    "Buča",
-    "Fižol",
-    "Edamame",
-    "Bamija",
-    "Karela",
-    "Lauki",
-    "Rebrasta bučka",
-    "Gobasta bučka",
-    "Tinda",
-    "Voščena buča",
-    "Indijski jajčevec",
-    "Indijski čili",
-    "Nepalski zeleni čili",
-    "Malabarska špinača",
-    "Listni amarant",
-    "Guar",
-}
-
-WINTER_FRIENDLY_CROPS = {
-    "Špinača",
-    "Motovilec",
-    "Por",
-    "Česen",
-    "Ohrovt",
-    "Radič",
-    "Endivija",
-}
+WARM_SEASON_CROPS = set(_RULES["warm_season_crops"])
+WINTER_FRIENDLY_CROPS = set(_RULES["winter_friendly_crops"])
+ROTATION_RULES = _RULES["rotation"]
 
 
 def rotation_families(
@@ -98,26 +72,34 @@ def score_candidate(
     reasons: list[str] = []
     warnings: list[str] = []
 
+    history_cycles = int(ROTATION_RULES.get("history_cycles", 4))
+    penalties = ROTATION_RULES.get("same_family_penalties", {})
+    different_family_bonus = int(ROTATION_RULES.get("different_family_bonus", 25))
+
     repeated_at: int | None = None
-    for index, previous_families in enumerate(recent_family_sets[:4]):
+    for index, previous_families in enumerate(recent_family_sets[:history_cycles]):
         if candidate_families & previous_families:
             repeated_at = index
             break
     if repeated_at is None:
-        score += 25
+        score += different_family_bonus
         if recent_family_sets:
-            reasons.append("Rastlinske družine ni v zadnjih štirih ciklih gredice.")
+            reasons.append(
+                f"Rastlinske družine ni v zadnjih {history_cycles} ciklih gredice."
+            )
         else:
             reasons.append("Za gredico še ni zabeležene kolobarske omejitve.")
     elif repeated_at == 0:
-        score -= 65
+        score += int(penalties.get("previous_cycle", -65))
         warnings.append("Ista rastlinska družina je bila na gredici v zadnjem ciklu.")
     elif repeated_at == 1:
-        score -= 35
+        score += int(penalties.get("two_cycles_ago", -35))
         warnings.append("Rastlinska družina se je pojavila pred dvema cikloma.")
     else:
-        score -= 15
-        warnings.append("Rastlinska družina se je pojavila v zadnjih štirih ciklih.")
+        score += int(penalties.get("within_history", -15))
+        warnings.append(
+            f"Rastlinska družina se je pojavila v zadnjih {history_cycles} ciklih."
+        )
 
     if has_plan_conflict:
         score -= 70
