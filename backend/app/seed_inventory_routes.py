@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.seed_inventory_link import planting_consumption_status
 from app.seed_inventory_service import (
     adjust_lot,
     create_lot,
@@ -113,3 +114,28 @@ def seed_order_recommendation(
         return purchase_recommendation(required_quantity, required_unit, available_quantity, package_size)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/seed-inventory/plantings/{planting_id}/consumption")
+def planting_seed_consumption(planting_id: int) -> dict:
+    record = planting_consumption_status(planting_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Za to setev še ni inventarnega obračuna.",
+        )
+    return record
+
+
+@router.get("/api/seed-inventory/planting-consumptions")
+def planting_seed_consumptions(
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict:
+    records = list(reversed(load_inventory().get("planting_consumptions", [])))
+    if status:
+        records = [item for item in records if item.get("status") == status]
+    return {
+        "count": min(len(records), limit),
+        "records": records[:limit],
+    }
