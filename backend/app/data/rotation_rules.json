@@ -20,6 +20,8 @@
       "two_cycles_ago": -35,
       "within_history": -15
     },
-    "different_family_bonus": 25
+    "different_family_bonus": 25,
+    "free_window_fit_bonus": 10,
+    "free_window_overrun_penalty": -55
   }
 }
