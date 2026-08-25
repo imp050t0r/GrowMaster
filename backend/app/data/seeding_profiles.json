@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "bed_width_cm": 80,
+  "defaults": {
+    "jang_jp1": {
+      "roller": null,
+      "row_count": null,
+      "note": "Roller potrdi glede na dejansko kalibracijo semena in serijo valjčka."
+    },
+    "six_row": {
+      "passes": null,
+      "rows_per_bed": null,
+      "note": "Število prehodov prilagodi ciljni gostoti in dejanski širini sejalnice."
+    }
+  },
+  "profiles": {
+    "Rukola": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 3.5,
+      "jang_jp1": {"roller": "X24", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12},
+      "note": "Za baby leaf začni z 12 vrstami in nato kalibriraj po vznikih in masi semena."
+    },
+    "Divja rukola": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 3.0,
+      "jang_jp1": {"roller": "X24", "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf špinača": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 8.0,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12},
+      "note": "Velikost semena med sortami močno niha; JP-1 roller se določi s kalibracijo."
+    },
+    "Baby leaf listna solata": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 1.2,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf hrastov list": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 1.2,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf rimska solata": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 1.2,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf mizuna": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf tatsoi": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf gorčica": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf pak choi": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Baby leaf komatsuna": {
+      "production_type": "baby_leaf",
+      "target_rows_per_80cm_bed": 12,
+      "seed_rate_g_m2": 2.5,
+      "jang_jp1": {"roller": null, "row_count": 12},
+      "six_row": {"passes": 2, "rows_per_bed": 12}
+    },
+    "Methi": {
+      "production_type": "leaf",
+      "target_rows_per_80cm_bed": 6,
+      "seed_rate_g_m2": 8.0,
+      "jang_jp1": {"roller": null, "row_count": 6},
+      "six_row": {"passes": 1, "rows_per_bed": 6}
+    },
+    "Koriander": {
+      "production_type": "leaf",
+      "target_rows_per_80cm_bed": 6,
+      "seed_rate_g_m2": 6.0,
+      "jang_jp1": {"roller": null, "row_count": 6},
+      "six_row": {"passes": 1, "rows_per_bed": 6}
+    },
+    "Redkvica": {
+      "production_type": "root",
+      "target_rows_per_80cm_bed": 6,
+      "seed_rate_g_m2": null,
+      "jang_jp1": {"roller": null, "row_count": 6},
+      "six_row": {"passes": 1, "rows_per_bed": 6}
+    }
+  }
+}
