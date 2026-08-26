@@ -38,7 +38,6 @@ ADMIN_WRITE_PATHS = {
     "/api/system/seeding-data/export",
     "/api/system/plant-db/initialize",
     "/api/system/plant-db/reload",
-    "/api/system/plant-db/update",
     "/api/master-data/backfill-seeding",
     "/api/agronomy/learning/apply",
 }
