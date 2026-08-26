@@ -35,13 +35,46 @@ function Get-EnvironmentValue([string]$Path, [string]$Name) {
     return $null
 }
 
+function Set-EnvironmentValue([string]$Path, [string]$Name, [string]$Value) {
+    $lines = [Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $Path) {
+        foreach ($line in [IO.File]::ReadAllLines($Path)) { $lines.Add($line) }
+    }
+    $pattern = '^\s*' + [Regex]::Escape($Name) + '\s*='
+    $replacement = "$Name=$Value"
+    $found = $false
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -match $pattern) {
+            $lines[$index] = $replacement
+            $found = $true
+            break
+        }
+    }
+    if (-not $found) { $lines.Add($replacement) }
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllLines($Path, $lines, $utf8)
+}
+
 function Ensure-StorageMetadata {
     if (-not (Test-Path -LiteralPath $envFile)) { return }
     $linesToAdd = @()
     if ($null -eq (Get-EnvironmentValue $envFile "GROWMASTER_WINDOWS_INSTALL")) {
         $linesToAdd += "GROWMASTER_WINDOWS_INSTALL=true"
     }
-    if ($null -eq (Get-EnvironmentValue $envFile "GROWMASTER_DATA_ROOT")) {
+    $containerRoot = Get-EnvironmentValue $envFile "GROWMASTER_DATA_ROOT"
+    $dataSource = Get-EnvironmentValue $envFile "GROWMASTER_DATA_SOURCE"
+    if (
+        [string]::IsNullOrWhiteSpace($dataSource) -and
+        -not [string]::IsNullOrWhiteSpace($containerRoot) -and
+        [IO.Path]::IsPathRooted($containerRoot)
+    ) {
+        $source = [IO.Path]::GetFullPath($containerRoot).TrimEnd('\', '/')
+        $escapedSource = $source.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
+        Set-EnvironmentValue $envFile "GROWMASTER_DATA_SOURCE" "`"$escapedSource`""
+        Set-EnvironmentValue $envFile "GROWMASTER_DATA_ROOT" "/data"
+        Write-LauncherLog "Migrated the legacy application-data path to a persistent /data mount."
+    }
+    if ($null -eq (Get-EnvironmentValue $envFile "GROWMASTER_DATA_SOURCE")) {
         $databaseSource = Get-EnvironmentValue $envFile "POSTGRES_DATA_SOURCE"
         $backupSource = Get-EnvironmentValue $envFile "BACKUP_DATA_SOURCE"
         if (
@@ -54,7 +87,8 @@ function Ensure-StorageMetadata {
             $backupParent = [IO.Path]::GetFullPath((Split-Path -Parent $backupSource)).TrimEnd('\', '/')
             if ([string]::Equals($databaseParent, $backupParent, [StringComparison]::OrdinalIgnoreCase)) {
                 $rootSource = $databaseParent.Replace('\', '/').Replace('$', '$$').Replace('"', '\"')
-                $linesToAdd += "GROWMASTER_DATA_ROOT=`"$rootSource`""
+                $linesToAdd += "GROWMASTER_DATA_SOURCE=`"$rootSource`""
+                $linesToAdd += "GROWMASTER_DATA_ROOT=/data"
             }
         }
     }
@@ -105,7 +139,8 @@ function Ensure-PrivateEnvironment {
         "DATABASE_URL=postgresql+psycopg://growmaster:$password@database:5432/growmaster",
         "POSTGRES_DATA_SOURCE=`"$databaseSource`"",
         "BACKUP_DATA_SOURCE=`"$backupSource`"",
-        "GROWMASTER_DATA_ROOT=`"$rootSource`"",
+        "GROWMASTER_DATA_SOURCE=`"$rootSource`"",
+        "GROWMASTER_DATA_ROOT=/data",
         "GROWMASTER_WINDOWS_INSTALL=true",
         "BACKUP_DIR=/data/backups",
         "COOKIE_SECURE=false",
