@@ -1,3 +1,3 @@
 import "./backupCenter";
 
-export const APP_VERSION = "1.24.7";
+export const APP_VERSION = "1.24.8";
