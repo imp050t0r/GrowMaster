@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -17,11 +16,19 @@ from app.south_asian_requested_crops import SOUTH_ASIAN_REQUESTED_CROPS  # noqa:
 
 
 OUTPUT = ROOT / "plant-db" / "latest"
-VERSION = "2026.08.25.2"
+VERSION = "2026.08.26.1"
 
 
 def write_json(path: Path, payload: dict) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # Keep release bytes identical on Windows, macOS, Linux, and GitHub raw.
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def copy_json(source: Path, target: Path) -> None:
+    data = source.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    json.loads(data.decode("utf-8"))
+    target.write_bytes(data)
 
 
 def build_crops() -> dict:
@@ -62,9 +69,9 @@ def main() -> None:
         "rotation": "growmaster-rotation.json",
     }
     write_json(OUTPUT / files["crops"], build_crops())
-    shutil.copyfile(ROOT / "backend/app/data/seeding_profiles.json", OUTPUT / files["seeding"])
-    shutil.copyfile(ROOT / "backend/app/data/roller_catalog.json", OUTPUT / files["rollers"])
-    shutil.copyfile(ROOT / "backend/app/data/rotation_rules.json", OUTPUT / files["rotation"])
+    copy_json(ROOT / "backend/app/data/seeding_profiles.json", OUTPUT / files["seeding"])
+    copy_json(ROOT / "backend/app/data/roller_catalog.json", OUTPUT / files["rollers"])
+    copy_json(ROOT / "backend/app/data/rotation_rules.json", OUTPUT / files["rotation"])
     manifest = {
         "schema_version": 1,
         "plant_db_version": VERSION,
