@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 
 import app.main as main_module
 from app.agronomy_admin_routes import router as agronomy_admin_router
+from app.backup_routes import router as backup_router
 from app.license_routes import router as license_router
 from app.license_service import status as license_status
 from app.master_data_routes import router as master_data_router
@@ -38,6 +39,7 @@ ADMIN_WRITE_PATHS = {
     "/api/system/seeding-data/export",
     "/api/system/plant-db/initialize",
     "/api/system/plant-db/reload",
+    "/api/system/backups/restore",
     "/api/master-data/backfill-seeding",
     "/api/agronomy/learning/apply",
 }
@@ -80,6 +82,7 @@ app.include_router(license_router)
 app.include_router(successor_router)
 app.include_router(master_data_router)
 app.include_router(plant_db_router)
+app.include_router(backup_router)
 app.include_router(seeding_data_router)
 app.include_router(seed_quantity_router)
 app.include_router(seed_inventory_router)
