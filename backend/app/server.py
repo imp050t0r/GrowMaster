@@ -28,48 +28,66 @@ app.version = APP_VERSION
 main_module.PUBLIC_API_PATHS.update({"/api/license/status", "/api/license/activate"})
 
 LICENSE_WRITE_EXEMPT = {
+    "/api/auth/setup",
     "/api/auth/login",
     "/api/auth/logout",
-    "/api/auth/setup",
-    "/api/auth/mobile-session",
     "/api/license/activate",
+}
+ADMIN_WRITE_PATHS = {
+    "/api/system/master-data/export",
+    "/api/system/master-data/reload",
+    "/api/system/seeding-data/export",
+    "/api/system/plant-db/initialize",
+    "/api/system/plant-db/reload",
+    "/api/system/backups/restore",
+    "/api/master-data/backfill-seeding",
+    "/api/agronomy/learning/apply",
 }
 
 
 @app.middleware("http")
-async def license_access_middleware(request: Request, call_next):
+async def enforce_growmaster_license(request: Request, call_next):
     path = request.url.path
-    if (
-        path.startswith("/api/")
-        and request.method not in {"GET", "HEAD", "OPTIONS"}
-        and path not in LICENSE_WRITE_EXEMPT
-    ):
-        license_info = license_status()
-        if not license_info["write_access"]:
-            return JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={
-                    "detail": {
-                        "code": "license_required",
-                        "message": "Preizkusna licenca je potekla. Za spremembe aktiviraj GrowMaster Pro.",
-                        "license": license_info,
-                    }
-                },
-            )
+    if request.method == "OPTIONS" or not path.startswith("/api/"):
+        return await call_next(request)
+
+    current = license_status()
+    is_write = request.method not in {"GET", "HEAD", "OPTIONS"}
+
+    if is_write and path in ADMIN_WRITE_PATHS and not current["admin_access"]:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "detail": "Ta funkcija je na voljo samo z GrowMaster Admin licenco.",
+                "license": current,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    if is_write and path not in LICENSE_WRITE_EXEMPT and not current["full_access"]:
+        return JSONResponse(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            content={
+                "detail": "30-dnevno testno obdobje je poteklo. Aktiviraj GrowMaster Pro za nadaljnje spremembe podatkov.",
+                "license": current,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
     return await call_next(request)
 
 
-register_seed_inventory_hooks(app)
-app.include_router(seed_inventory_router)
-app.include_router(seed_forecast_router)
-app.include_router(seed_purchase_router)
-app.include_router(seed_ops_router)
-app.include_router(seed_actuals_router)
-app.include_router(seed_quantity_router)
-app.include_router(seeding_data_router)
-app.include_router(master_data_router)
-app.include_router(agronomy_admin_router)
-app.include_router(plant_db_router)
+register_seed_inventory_hooks()
+
 app.include_router(license_router)
 app.include_router(successor_router)
+app.include_router(master_data_router)
+app.include_router(plant_db_router)
 app.include_router(backup_router)
+app.include_router(seeding_data_router)
+app.include_router(seed_quantity_router)
+app.include_router(seed_inventory_router)
+app.include_router(seed_forecast_router)
+app.include_router(seed_ops_router)
+app.include_router(seed_purchase_router)
+app.include_router(seed_actuals_router)
+app.include_router(agronomy_admin_router)
