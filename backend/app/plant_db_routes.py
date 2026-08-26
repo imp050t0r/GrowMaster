@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.database import get_db
 from app.master_data_service import read_master_data, synchronize_master_data, write_master_data
 from app.models import Crop
+from app.plant_db_review import classify_entries, mark_review, review_summary
 from app.plant_db_service import (
     ensure_external_files,
     fetch_remote_files,
@@ -25,6 +26,7 @@ router = APIRouter()
 
 class PlantDbSelection(BaseModel):
     entries: list[str] = Field(default_factory=list, max_length=5000)
+    shown_entries: list[str] = Field(default_factory=list, max_length=5000)
 
 
 def _reload_rotation_globals() -> dict:
@@ -119,7 +121,7 @@ def _selected_payload(remote_payload: dict, keys: set[str]) -> dict:
 
 @router.get("/api/system/plant-db")
 def plant_db_status() -> dict:
-    return status()
+    return {**status(), "review": review_summary()}
 
 
 @router.post("/api/system/plant-db/initialize")
@@ -155,22 +157,31 @@ def reload_plant_db(db: Session = Depends(get_db)) -> dict:
 @router.get("/api/system/plant-db/update-status")
 def plant_db_update_status() -> dict:
     try:
-        return remote_update_status()
+        return {**remote_update_status(), "review": review_summary()}
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise HTTPException(status_code=502, detail=f"Preverjanje Plant DB ni uspelo: {error}") from error
 
 
 @router.get("/api/system/plant-db/update-preview")
-def preview_plant_db_update(db: Session = Depends(get_db)) -> dict:
+def preview_plant_db_update(
+    include_skipped: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> dict:
     try:
         manifest, staged = fetch_remote_files()
         remote_payload = _remote_crop_payload(staged)
-        entries = _preview_new_entries(db, remote_payload)
+        all_missing = _preview_new_entries(db, remote_payload)
+        fresh, skipped = classify_entries(all_missing, include_skipped=include_skipped)
+        entries = fresh + skipped
         return {
             "available_version": manifest["plant_db_version"],
-            "new_entry_count": len(entries),
+            "new_entry_count": len(fresh),
+            "skipped_entry_count": len(skipped),
             "entries": entries,
-            "message": "Nove kulture in sorte niso dodane, dokler uporabnik ne potrdi izbire.",
+            "fresh_entries": fresh,
+            "skipped_entries": skipped,
+            "review": review_summary(),
+            "message": "Prikazane so samo res nove postavke od zadnjega pregleda. Prej preskočene so skrite, razen če jih uporabnik posebej odpre.",
             "existing_values_preserved": True,
         }
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -182,36 +193,41 @@ def update_plant_db(body: PlantDbSelection, db: Session = Depends(get_db)) -> di
     try:
         manifest, staged = fetch_remote_files()
         remote_payload = _remote_crop_payload(staged)
-        available = {item["key"] for item in _preview_new_entries(db, remote_payload)}
+        all_missing = _preview_new_entries(db, remote_payload)
+        available = {item["key"] for item in all_missing}
         requested = set(body.entries)
-        unknown = requested - available
+        shown = set(body.shown_entries) if body.shown_entries else requested
+        unknown = (requested | shown) - available
         if unknown:
             raise ValueError("Izbira vsebuje postavke, ki niso več na voljo v predogledu.")
+
+        mark_review(manifest["plant_db_version"], shown, requested)
+
         if not requested:
             return {
-                "message": "Posodobitev je preskočena. Nobena nova postavka ni bila dodana.",
+                "message": "Prikazane novosti so označene kot pregledane. Nobena postavka ni bila dodana.",
                 "skipped": True,
                 "available_version": manifest["plant_db_version"],
-                "remaining_entry_count": len(available),
+                "review": review_summary(),
                 **status(),
             }
 
         payload = _selected_payload(remote_payload, requested)
         result = synchronize_master_data(db, payload)
-        # Persist the merged local state, not the remote file. This preserves every
-        # existing user value while adding only explicitly approved new entries.
         write_master_data(db)
         record_partial_update_version(manifest["plant_db_version"], {
-            "mode": "selected",
+            "mode": "delta-selected",
             "approved_entries": sorted(requested),
+            "reviewed_entries": sorted(shown),
         })
-        remaining = _preview_new_entries(db, remote_payload)
+        remaining_all = _preview_new_entries(db, remote_payload)
+        remaining_fresh, _ = classify_entries(remaining_all, include_skipped=False)
         return {
-            "message": "Izbrane nove postavke so dodane. Obstoječe uporabniške nastavitve niso bile prepisane.",
+            "message": "Izbrane nove postavke so dodane. Ostale prikazane novosti so shranjene kot pregledane/preskočene.",
             "added": result,
             "approved_entry_count": len(requested),
-            "remaining_entry_count": len(remaining),
-            "remaining_entries": remaining,
+            "remaining_new_entry_count": len(remaining_fresh),
+            "review": review_summary(),
             "existing_values_preserved": True,
             **status(),
         }
