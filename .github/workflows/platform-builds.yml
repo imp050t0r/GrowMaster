@@ -17,6 +17,29 @@ permissions:
   contents: read
 
 jobs:
+  cleanup-releases:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove all releases and tags except current version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(sed -n 's/export const APP_VERSION = "\([^"]*\)";/\1/p' frontend/src/version.js)"
+          keep_tag="v${version}"
+          echo "Keeping ${keep_tag}"
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | while read -r tag; do
+            [ -z "$tag" ] && continue
+            if [ "$tag" != "$keep_tag" ]; then
+              echo "Deleting old release and tag: $tag"
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            fi
+          done
+
   windows-installer:
     runs-on: windows-latest
     steps:
