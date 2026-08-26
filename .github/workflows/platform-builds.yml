@@ -148,12 +148,25 @@ jobs:
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists; leaving it unchanged."
-            exit 0
+          else
+            gh release create "$TAG" \
+              release/windows/GrowMaster-Setup-*.exe \
+              release/GrowMaster-Android-*.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "GrowMaster $VERSION" \
+              --generate-notes
           fi
-          gh release create "$TAG" \
-            release/windows/GrowMaster-Setup-*.exe \
-            release/GrowMaster-Android-*.apk \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "GrowMaster $VERSION" \
-            --generate-notes
+      - name: Remove older releases and tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | while read -r tag; do
+            [ -z "$tag" ] && continue
+            if [ "$tag" != "$KEEP_TAG" ]; then
+              echo "Deleting old release and tag: $tag"
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            fi
+          done
