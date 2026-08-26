@@ -1,4 +1,4 @@
-const CACHE_NAME = "growmaster-shell-v1";
+const CACHE_NAME = "growmaster-shell-v1.24.12";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -23,26 +23,20 @@ self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
   if (event.request.method !== "GET" || requestUrl.pathname.startsWith("/api/")) return;
 
-  if (event.request.mode === "navigate") {
+  // GrowMaster is a local application. Always prefer the freshly installed
+  // frontend and use the cache only as an offline fallback. This prevents an
+  // old JS bundle from surviving an application upgrade.
+  if (requestUrl.origin === self.location.origin) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("/", copy));
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
           return response;
         })
-        .catch(() => caches.match("/")),
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/"))),
     );
-    return;
   }
-
-  event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
-      if (response.ok && requestUrl.origin === self.location.origin) {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-      }
-      return response;
-    })),
-  );
 });
