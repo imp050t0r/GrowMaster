@@ -22,24 +22,23 @@ async function refreshLabel(button, label) {
   }
 }
 
-function closeDialog(dialog) {
-  dialog?.remove();
-}
+function closeDialog(dialog) { dialog?.remove(); }
 
-function createDialog(preview, onApplied) {
+function createDialog(preview, onApplied, reopenWithSkipped) {
   const backdrop = document.createElement("div");
   backdrop.className = "gm-pdb-backdrop";
   const modal = document.createElement("div");
   modal.className = "gm-pdb-modal";
   modal.innerHTML = `
     <div class="gm-pdb-head">
-      <h3>Nova Plant DB ${preview.available_version || ""}</h3>
-      <p>GrowMaster je našel ${preview.new_entry_count || 0} novih kultur/sort. Nič ne bo dodano brez tvoje potrditve.</p>
+      <h3>Plant DB ${preview.available_version || ""}</h3>
+      <p>Res novih postavk: ${preview.new_entry_count || 0}. Prej preskočene se ne prikazujejo samodejno.</p>
     </div>
-    <div class="gm-pdb-note">Tvoje obstoječe nastavitve ostanejo nespremenjene. Dodajo se samo označene nove postavke.</div>
+    <div class="gm-pdb-note">Tvoje obstoječe nastavitve ostanejo nespremenjene. GrowMaster si zapomni, kaj si že pregledal.</div>
     <div class="gm-pdb-list"></div>
     <div class="gm-pdb-actions">
-      <button class="gm-pdb-secondary" data-action="skip">PRESKOČI ZA ZDAJ</button>
+      ${preview.review?.skipped_count ? '<button class="gm-pdb-secondary" data-action="old">POKAŽI PREJ PRESKOČENE</button>' : ''}
+      <button class="gm-pdb-secondary" data-action="skip">PRESKOČI PRIKAZANO</button>
       <button class="gm-pdb-secondary" data-action="all">OZNAČI VSE</button>
       <button class="gm-plantdb-btn" data-action="apply">DODAJ IZBRANE</button>
     </div>`;
@@ -47,10 +46,11 @@ function createDialog(preview, onApplied) {
   document.body.appendChild(backdrop);
 
   const list = modal.querySelector(".gm-pdb-list");
-  if (!preview.entries?.length) {
-    list.innerHTML = `<p style="color:#666">Ni novih kultur ali sort za dodajanje.</p>`;
+  const entries = preview.entries || [];
+  if (!entries.length) {
+    list.innerHTML = `<p style="color:#666">Ni novih postavk za pregled.</p>`;
   } else {
-    preview.entries.forEach((entry) => {
+    entries.forEach((entry) => {
       const row = document.createElement("label");
       row.className = "gm-pdb-item";
       row.innerHTML = `<input type="checkbox" value=""><span><strong></strong><small></small></span>`;
@@ -62,29 +62,50 @@ function createDialog(preview, onApplied) {
     });
   }
 
-  modal.querySelector('[data-action="skip"]').addEventListener("click", () => closeDialog(backdrop));
+  modal.querySelector('[data-action="old"]')?.addEventListener("click", () => {
+    closeDialog(backdrop);
+    reopenWithSkipped?.();
+  });
   modal.querySelector('[data-action="all"]').addEventListener("click", () => {
     list.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = true; });
   });
+
+  async function submit(selected) {
+    const shown = entries.map((entry) => entry.key);
+    const result = await apiRequest("/api/system/plant-db/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: selected, shown_entries: shown }),
+    });
+    closeDialog(backdrop);
+    window.dispatchEvent(new CustomEvent("growmaster:plant-db-updated", { detail: result }));
+    onApplied?.(result);
+    return result;
+  }
+
+  modal.querySelector('[data-action="skip"]').addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try {
+      await submit([]);
+      alert("Prikazane postavke so označene kot pregledane in se naslednjič ne bodo prikazale kot nove.");
+    } catch (error) {
+      alert(error?.message || "Pregleda ni bilo mogoče shraniti.");
+      event.currentTarget.disabled = false;
+    }
+  });
+
   modal.querySelector('[data-action="apply"]').addEventListener("click", async (event) => {
     const selected = [...list.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
     if (!selected.length) {
-      alert("Izberi vsaj eno novo postavko ali uporabi »Preskoči za zdaj«.");
+      alert("Izberi vsaj eno postavko ali uporabi »Preskoči prikazano«.");
       return;
     }
     const apply = event.currentTarget;
     apply.disabled = true;
     apply.textContent = "DODAJAM …";
     try {
-      const result = await apiRequest("/api/system/plant-db/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entries: selected }),
-      });
-      closeDialog(backdrop);
-      alert(`Dodano: ${result.approved_entry_count || selected.length}. Preostalih neprevzetih: ${result.remaining_entry_count || 0}.`);
-      window.dispatchEvent(new CustomEvent("growmaster:plant-db-updated", { detail: result }));
-      onApplied?.(result);
+      const result = await submit(selected);
+      alert(`Dodano: ${result.approved_entry_count || selected.length}.`);
     } catch (error) {
       alert(error?.message || "Izbranih postavk ni bilo mogoče dodati.");
       apply.disabled = false;
@@ -104,13 +125,18 @@ function install() {
   button.className = "gm-plantdb-btn";
   button.type = "button";
   button.textContent = "PREVERI BAZO PODATKOV";
+
+  const openPreview = async (includeSkipped = false) => {
+    const preview = await apiRequest(`/api/system/plant-db/update-preview?include_skipped=${includeSkipped ? "true" : "false"}`);
+    createDialog(preview, () => refreshLabel(button, label), () => openPreview(true));
+  };
+
   button.addEventListener("click", async () => {
     button.disabled = true;
     const old = button.textContent;
     button.textContent = "PREVERJAM …";
     try {
-      const preview = await apiRequest("/api/system/plant-db/update-preview");
-      createDialog(preview, () => refreshLabel(button, label));
+      await openPreview(false);
       button.textContent = old;
     } catch (error) {
       button.textContent = "NAPAKA";
