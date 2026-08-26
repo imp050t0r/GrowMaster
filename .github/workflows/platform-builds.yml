@@ -48,7 +48,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: python scripts/check_release_version.py
+      - name: Build and verify desktop frontend
+        shell: pwsh
+        run: |
+          Push-Location frontend
+          npm install
+          npm run build
+          Pop-Location
+          $version = (Select-String -Path "frontend/src/version.js" -Pattern 'APP_VERSION = "([^"]+)"').Matches[0].Groups[1].Value
+          $bundle = (Get-ChildItem "frontend/dist/assets" -Filter "*.js" | Get-Content -Raw) -join "`n"
+          if ($bundle -notmatch [Regex]::Escape($version)) { throw "Built frontend does not contain version $version." }
+          if ($bundle -notmatch "OBNOVI IZ BACKUPA") { throw "Built frontend does not contain the Restore button." }
       - run: python -m pip install pillow
       - run: python scripts/build_brand_assets.py
       - name: Validate launcher scripts
