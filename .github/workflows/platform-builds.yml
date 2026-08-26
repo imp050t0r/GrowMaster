@@ -8,6 +8,7 @@ on:
       - "installer/**"
       - "branding/**"
       - "scripts/build_*icons.py"
+      - "scripts/sync_native_version.py"
       - ".github/workflows/platform-builds.yml"
   push:
     branches: [main]
@@ -100,12 +101,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: python scripts/check_release_version.py
       - run: python -m pip install pillow
       - working-directory: frontend
         run: npm install
       - working-directory: frontend
         run: npm run build && npx cap add android && npx cap sync android
+      - run: python scripts/sync_native_version.py
       - run: python scripts/build_native_icons.py
+      - name: Verify Android package version
+        shell: bash
+        run: |
+          version="$(sed -n 's/export const APP_VERSION = "\([^"]*\)";/\1/p' frontend/src/version.js)"
+          grep -F "versionName \"${version}\"" frontend/android/app/build.gradle
       - working-directory: frontend/android
         run: chmod +x gradlew && ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
@@ -124,11 +132,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - run: python scripts/check_release_version.py
       - run: python -m pip install pillow
       - working-directory: frontend
         run: npm install
       - working-directory: frontend
         run: npm run build && npx cap add ios && npx cap sync ios
+      - run: python scripts/sync_native_version.py
       - run: python scripts/build_native_icons.py
       - name: Build unsigned iPhone simulator app
         working-directory: frontend
