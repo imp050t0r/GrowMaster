@@ -1,6 +1,6 @@
 import "./backupCenter";
 
-export const APP_VERSION = "1.24.9";
+export const APP_VERSION = "1.24.10";
 
 // The production-readiness endpoint reports the server version. In the native
 // app the user-visible "Različica" label must report the installed app/APK
