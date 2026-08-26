@@ -1,5 +1,5 @@
 #define MyAppName "GrowMaster"
-#define MyAppVersion "1.24.11"
+#define MyAppVersion "1.24.12"
 #define MyAppPublisher "GrowMaster"
 #define MyAppURL "https://github.com/imp050t0r/GrowMaster"
 
@@ -37,7 +37,7 @@ Source: "assets\GrowMaster.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
-Name: "{group}\GrowMaster - prestavi podatke"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Move-GrowMasterData.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
+Name: "{group}\GrowMaster - prestavi podatke"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Move-GrowMasterData.ps1"" ""%1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"
 Name: "{autodesktop}\GrowMaster"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\GrowMaster.ico"; Tasks: desktopicon
 
 [Registry]
@@ -47,7 +47,10 @@ Root: HKA; Subkey: "Software\Classes\growmaster-storage\DefaultIcon"; ValueType:
 Root: HKA; Subkey: "Software\Classes\growmaster-storage\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """powershell.exe"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Move-GrowMasterData.ps1"" ""%1"""
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Start-GrowMaster.ps1"" -Build -DataDirectory ""{code:GetDataDirectory}"""; Description: "Zaženi GrowMaster"; Flags: postinstall skipifsilent nowait
+; Every upgrade must rebuild the Docker images from the newly installed source,
+; even when the user does not tick the optional "Zaženi GrowMaster" checkbox.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Start-GrowMaster.ps1"" -Build -NoBrowser -DataDirectory ""{code:GetDataDirectory}"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Start-GrowMaster.ps1"""; Description: "Zaženi GrowMaster"; Flags: postinstall skipifsilent nowait
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Stop-GrowMaster.ps1"""; Flags: runhidden; RunOnceId: "StopGrowMaster"
