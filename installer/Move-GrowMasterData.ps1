@@ -187,7 +187,8 @@ function Invoke-SelfTest {
         Set-GrowMasterEnvironmentValues $testEnvironment @{
             POSTGRES_DATA_SOURCE = (Format-EnvironmentPath $copiedDatabase)
             BACKUP_DATA_SOURCE = (Format-EnvironmentPath $sourceBackups)
-            GROWMASTER_DATA_ROOT = (Format-EnvironmentPath (Join-Path $testRoot "copied"))
+            GROWMASTER_DATA_SOURCE = (Format-EnvironmentPath (Join-Path $testRoot "copied"))
+            GROWMASTER_DATA_ROOT = "/data"
             GROWMASTER_WINDOWS_INSTALL = "true"
         } $testEnvironmentBackup
         $values = Read-GrowMasterEnvironment $testEnvironment
@@ -196,6 +197,9 @@ function Invoke-SelfTest {
         }
         if ($values["GROWMASTER_WINDOWS_INSTALL"] -ne "true" -or -not (Test-Path -LiteralPath $testEnvironmentBackup)) {
             throw "Self-test did not update and back up the environment file."
+        }
+        if ($values["GROWMASTER_DATA_ROOT"] -ne "/data" -or [string]::IsNullOrWhiteSpace($values["GROWMASTER_DATA_SOURCE"])) {
+            throw "Self-test did not configure the persistent application-data mount."
         }
         Write-Output "GrowMaster storage migration self-test passed."
     } finally {
@@ -236,7 +240,13 @@ function Invoke-DataMigration {
         $backupSource = $environment["BACKUP_DATA_SOURCE"]
         $databaseIsDirectory = -not [string]::IsNullOrWhiteSpace($databaseSource) -and [IO.Path]::IsPathRooted($databaseSource)
         $backupIsDirectory = -not [string]::IsNullOrWhiteSpace($backupSource) -and [IO.Path]::IsPathRooted($backupSource)
-        $currentRoot = $environment["GROWMASTER_DATA_ROOT"]
+        $currentRoot = $environment["GROWMASTER_DATA_SOURCE"]
+        if ([string]::IsNullOrWhiteSpace($currentRoot)) {
+            $legacyRoot = $environment["GROWMASTER_DATA_ROOT"]
+            if (-not [string]::IsNullOrWhiteSpace($legacyRoot) -and [IO.Path]::IsPathRooted($legacyRoot)) {
+                $currentRoot = $legacyRoot
+            }
+        }
         if (
             [string]::IsNullOrWhiteSpace($currentRoot) -and
             $databaseIsDirectory -and
@@ -293,8 +303,10 @@ function Invoke-DataMigration {
         $stagingRoot = Join-Path $targetRoot ".growmaster-migration-$([Guid]::NewGuid().ToString('N'))"
         $stagingDatabase = Join-Path $stagingRoot "database"
         $stagingBackups = Join-Path $stagingRoot "backups"
+        $stagingAppData = Join-Path $stagingRoot "app-data"
         New-Item -ItemType Directory -Path $stagingDatabase -Force | Out-Null
         New-Item -ItemType Directory -Path $stagingBackups -Force | Out-Null
+        New-Item -ItemType Directory -Path $stagingAppData -Force | Out-Null
 
         $composeBase = @("compose", "--env-file", $envFile, "-f", $composeFile, "-p", "growmaster")
         $databaseContainer = [string](& $script:DockerExecutable @composeBase ps -aq database 2>$null | Select-Object -First 1)
@@ -315,12 +327,24 @@ function Invoke-DataMigration {
         } elseif (-not [string]::IsNullOrWhiteSpace($backendContainer)) {
             Invoke-Docker @("cp", "${backendContainer}:/data/backups/.", $stagingBackups) "Varnostnih kopij ni bilo mogoče kopirati iz Dockerja."
         }
+        if (-not [string]::IsNullOrWhiteSpace($currentRoot) -and (Test-Path -LiteralPath $currentRoot)) {
+            Get-ChildItem -LiteralPath $currentRoot -Filter "growmaster-*.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination $stagingAppData
+            }
+            $plantDbBackups = Join-Path $currentRoot "plant-db-backups"
+            if (Test-Path -LiteralPath $plantDbBackups) {
+                Copy-DirectoryVerified $plantDbBackups (Join-Path $stagingAppData "plant-db-backups")
+            }
+        }
         if (-not (Test-Path -LiteralPath (Join-Path $stagingDatabase "PG_VERSION"))) {
             throw "Kopirana mapa ne vsebuje veljavne PostgreSQL baze. Stara baza je ostala nespremenjena."
         }
 
         Move-Item -LiteralPath $stagingDatabase -Destination $databaseDestination
         Move-Item -LiteralPath $stagingBackups -Destination $backupDestination
+        Get-ChildItem -LiteralPath $stagingAppData -Force | ForEach-Object {
+            Move-Item -LiteralPath $_.FullName -Destination $targetRoot
+        }
         Remove-Item -LiteralPath $stagingRoot -Force
 
         $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
@@ -328,7 +352,8 @@ function Invoke-DataMigration {
         Set-GrowMasterEnvironmentValues $envFile @{
             POSTGRES_DATA_SOURCE = (Format-EnvironmentPath $databaseDestination)
             BACKUP_DATA_SOURCE = (Format-EnvironmentPath $backupDestination)
-            GROWMASTER_DATA_ROOT = (Format-EnvironmentPath $targetRoot)
+            GROWMASTER_DATA_SOURCE = (Format-EnvironmentPath $targetRoot)
+            GROWMASTER_DATA_ROOT = "/data"
             GROWMASTER_WINDOWS_INSTALL = "true"
         } $environmentBackup
         $environmentUpdated = $true
