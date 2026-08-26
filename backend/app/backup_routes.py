@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from app.backup_service import create_backup, list_backups, restore_backup
+from app.backup_service import backup_file, backup_owner_id, create_backup, list_backups, restore_backup
 
 router = APIRouter()
 
@@ -19,15 +20,33 @@ class RestoreRequest(BaseModel):
 
 @router.get("/api/system/backups")
 def backups() -> dict:
-    return {"backups": list_backups()}
+    return {"owner_id": backup_owner_id(), "backups": list_backups()}
 
 
 @router.post("/api/system/backups")
 def create(body: BackupRequest) -> dict:
     try:
-        return {"backup": create_backup(body.label), "message": "Varnostna kopija je ustvarjena."}
+        return {
+            "backup": create_backup(body.label),
+            "owner_id": backup_owner_id(),
+            "message": "Varnostna kopija je ustvarjena v tvoji ločeni GrowMaster backup mapi.",
+        }
     except Exception as error:
         raise HTTPException(status_code=500, detail=f"Backup ni uspel: {error}") from error
+
+
+@router.get("/api/system/backups/{name}/download")
+def download(name: str):
+    try:
+        source = backup_file(name)
+        return FileResponse(
+            source,
+            media_type="application/octet-stream",
+            filename=source.name,
+            headers={"Cache-Control": "no-store"},
+        )
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/api/system/backups/restore")
