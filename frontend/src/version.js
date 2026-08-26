@@ -1,9 +1,9 @@
 import "./backupCenter";
 
-export const APP_VERSION = "1.24.11";
+export const APP_VERSION = "1.24.12";
 
-// Release 1.24.11 completes the Windows Backup Center with file-based restore.
-// Backup and restore are now shipped together as one tested desktop workflow.
+// Release 1.24.12 forces Windows upgrades to rebuild the installed Docker images
+// so the installed UI cannot remain on an older GrowMaster frontend.
 // The production-readiness endpoint reports the server version. In the native
 // app the user-visible "Različica" label must report the installed app/APK
 // version instead, otherwise a phone on a new APK can appear to be outdated.
