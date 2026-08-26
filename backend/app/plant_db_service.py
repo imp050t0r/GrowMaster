@@ -18,7 +18,7 @@ PLANT_DB_MANIFEST = "growmaster-plant-db.json"
 ROLLER_FILENAME = "growmaster-rollers.json"
 ROTATION_FILENAME = "growmaster-rotation.json"
 PLANT_DB_SCHEMA_VERSION = 1
-PLANT_DB_APP_VERSION = "1.24.4"
+PLANT_DB_APP_VERSION = "1.24.5"
 DEFAULT_REMOTE_MANIFEST_URL = (
     "https://raw.githubusercontent.com/imp050t0r/GrowMaster/main/"
     "plant-db/latest/manifest.json"

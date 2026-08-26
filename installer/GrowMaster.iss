@@ -1,5 +1,5 @@
 #define MyAppName "GrowMaster"
-#define MyAppVersion "1.24.4"
+#define MyAppVersion "1.24.5"
 #define MyAppPublisher "GrowMaster"
 #define MyAppURL "https://github.com/imp050t0r/GrowMaster"
 

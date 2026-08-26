@@ -1,1 +1,3 @@
-export const APP_VERSION = "1.24.4";
+import "./backupCenter";
+
+export const APP_VERSION = "1.24.5";
