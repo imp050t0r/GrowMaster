@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.master_data_service import read_master_data, synchronize_master_data
+from app.master_data_service import read_master_data, synchronize_master_data, write_master_data
+from app.models import Crop
 from app.plant_db_service import (
-    ensure_external_files, install_remote_update, load_rotation_rules,
-    remote_update_status, status,
+    ensure_external_files,
+    fetch_remote_files,
+    load_rotation_rules,
+    record_partial_update_version,
+    remote_update_status,
+    status,
 )
 
 
 router = APIRouter()
+
+
+class PlantDbSelection(BaseModel):
+    entries: list[str] = Field(default_factory=list, max_length=5000)
 
 
 def _reload_rotation_globals() -> dict:
@@ -32,6 +45,76 @@ def _reload_rotation_globals() -> dict:
         "warm_season_count": len(planting_advisor.WARM_SEASON_CROPS),
         "winter_friendly_count": len(planting_advisor.WINTER_FRIENDLY_CROPS),
     }
+
+
+def _remote_crop_payload(staged: dict[str, bytes]) -> dict:
+    payload = json.loads(staged["crops"].decode("utf-8"))
+    if not isinstance(payload.get("crops"), list):
+        raise ValueError("Oddaljena Plant DB nima veljavnega seznama kultur.")
+    return payload
+
+
+def _preview_new_entries(db: Session, remote_payload: dict) -> list[dict]:
+    existing_crops = {
+        crop.name.casefold(): crop
+        for crop in db.scalars(select(Crop).options(selectinload(Crop.varieties))).all()
+    }
+    result: list[dict] = []
+    for crop_data in remote_payload["crops"]:
+        crop_name = str(crop_data.get("name") or "").strip()
+        if not crop_name:
+            continue
+        crop = existing_crops.get(crop_name.casefold())
+        if crop is None:
+            varieties = [str(item.get("name") or "").strip() for item in crop_data.get("varieties", [])]
+            varieties = [item for item in varieties if item]
+            result.append({
+                "key": f"crop::{crop_name}",
+                "type": "crop",
+                "crop": crop_name,
+                "variety": None,
+                "label": crop_name,
+                "detail": f"Nova kultura · {len(varieties)} sort",
+                "variety_count": len(varieties),
+            })
+            continue
+        existing_varieties = {item.name.casefold() for item in crop.varieties}
+        for variety_data in crop_data.get("varieties", []):
+            variety_name = str(variety_data.get("name") or "").strip()
+            if variety_name and variety_name.casefold() not in existing_varieties:
+                result.append({
+                    "key": f"variety::{crop_name}::{variety_name}",
+                    "type": "variety",
+                    "crop": crop_name,
+                    "variety": variety_name,
+                    "label": f"{crop_name} · {variety_name}",
+                    "detail": "Nova sorta",
+                    "variety_count": 1,
+                })
+    return result
+
+
+def _selected_payload(remote_payload: dict, keys: set[str]) -> dict:
+    selected = {"schema_version": remote_payload.get("schema_version", 1), "crops": []}
+    for crop_data in remote_payload["crops"]:
+        crop_name = str(crop_data.get("name") or "").strip()
+        crop_key = f"crop::{crop_name}"
+        if crop_key in keys:
+            selected["crops"].append(crop_data)
+            continue
+        varieties = [
+            variety
+            for variety in crop_data.get("varieties", [])
+            if f"variety::{crop_name}::{str(variety.get('name') or '').strip()}" in keys
+        ]
+        if varieties:
+            selected["crops"].append({
+                "name": crop_data["name"],
+                "family": crop_data["family"],
+                "category": crop_data["category"],
+                "varieties": varieties,
+            })
+    return selected
 
 
 @router.get("/api/system/plant-db")
@@ -77,17 +160,61 @@ def plant_db_update_status() -> dict:
         raise HTTPException(status_code=502, detail=f"Preverjanje Plant DB ni uspelo: {error}") from error
 
 
-@router.post("/api/system/plant-db/update")
-def update_plant_db(db: Session = Depends(get_db)) -> dict:
+@router.get("/api/system/plant-db/update-preview")
+def preview_plant_db_update(db: Session = Depends(get_db)) -> dict:
     try:
-        download = install_remote_update()
-        crops = synchronize_master_data(db, read_master_data())
-        rotation = _reload_rotation_globals()
-        current = status()
+        manifest, staged = fetch_remote_files()
+        remote_payload = _remote_crop_payload(staged)
+        entries = _preview_new_entries(db, remote_payload)
+        return {
+            "available_version": manifest["plant_db_version"],
+            "new_entry_count": len(entries),
+            "entries": entries,
+            "message": "Nove kulture in sorte niso dodane, dokler uporabnik ne potrdi izbire.",
+            "existing_values_preserved": True,
+        }
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise HTTPException(status_code=502, detail=f"Predogled Plant DB ni uspel: {error}") from error
+
+
+@router.post("/api/system/plant-db/update")
+def update_plant_db(body: PlantDbSelection, db: Session = Depends(get_db)) -> dict:
+    try:
+        manifest, staged = fetch_remote_files()
+        remote_payload = _remote_crop_payload(staged)
+        available = {item["key"] for item in _preview_new_entries(db, remote_payload)}
+        requested = set(body.entries)
+        unknown = requested - available
+        if unknown:
+            raise ValueError("Izbira vsebuje postavke, ki niso več na voljo v predogledu.")
+        if not requested:
+            return {
+                "message": "Posodobitev je preskočena. Nobena nova postavka ni bila dodana.",
+                "skipped": True,
+                "available_version": manifest["plant_db_version"],
+                "remaining_entry_count": len(available),
+                **status(),
+            }
+
+        payload = _selected_payload(remote_payload, requested)
+        result = synchronize_master_data(db, payload)
+        # Persist the merged local state, not the remote file. This preserves every
+        # existing user value while adding only explicitly approved new entries.
+        write_master_data(db)
+        record_partial_update_version(manifest["plant_db_version"], {
+            "mode": "selected",
+            "approved_entries": sorted(requested),
+        })
+        remaining = _preview_new_entries(db, remote_payload)
+        return {
+            "message": "Izbrane nove postavke so dodane. Obstoječe uporabniške nastavitve niso bile prepisane.",
+            "added": result,
+            "approved_entry_count": len(requested),
+            "remaining_entry_count": len(remaining),
+            "remaining_entries": remaining,
+            "existing_values_preserved": True,
+            **status(),
+        }
     except (OSError, ValueError, KeyError, TypeError) as error:
         db.rollback()
         raise HTTPException(status_code=422, detail=f"Posodobitev Plant DB ni uspela: {error}") from error
-    return {
-        "message": "Najnovejša Plant DB je varno prenesena, preverjena in nameščena.",
-        "download": download, "crops": crops, "rotation": rotation, **current,
-    }

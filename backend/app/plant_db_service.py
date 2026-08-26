@@ -18,7 +18,7 @@ PLANT_DB_MANIFEST = "growmaster-plant-db.json"
 ROLLER_FILENAME = "growmaster-rollers.json"
 ROTATION_FILENAME = "growmaster-rotation.json"
 PLANT_DB_SCHEMA_VERSION = 1
-PLANT_DB_APP_VERSION = "1.24.3"
+PLANT_DB_APP_VERSION = "1.24.4"
 DEFAULT_REMOTE_MANIFEST_URL = (
     "https://raw.githubusercontent.com/imp050t0r/GrowMaster/main/"
     "plant-db/latest/manifest.json"
@@ -161,22 +161,15 @@ def remote_update_status() -> dict:
     }
 
 
-def install_remote_update() -> dict:
+def fetch_remote_files() -> tuple[dict, dict[str, bytes]]:
+    """Download and verify a Plant DB update without installing it."""
     manifest_url = remote_manifest_url()
     manifest = fetch_remote_manifest()
     minimum_app_version = manifest.get("minimum_app_version")
     if minimum_app_version and _version_key(minimum_app_version) > _version_key(PLANT_DB_APP_VERSION):
-        raise ValueError(
-            f"Plant DB zahteva GrowMaster {minimum_app_version} ali novejši."
-        )
-    targets = {
-        "crops": master_data_path(),
-        "seeding": seeding_data_path(),
-        "rollers": roller_data_path(),
-        "rotation": rotation_data_path(),
-    }
+        raise ValueError(f"Plant DB zahteva GrowMaster {minimum_app_version} ali novejši.")
     staged: dict[str, bytes] = {}
-    for name, target in targets.items():
+    for name in ("crops", "seeding", "rollers", "rotation"):
         descriptor = manifest["files"].get(name)
         if not isinstance(descriptor, dict) or not descriptor.get("path") or not descriptor.get("sha256"):
             raise ValueError(f"Manifest nima veljavnega zapisa za {name}.")
@@ -185,7 +178,60 @@ def install_remote_update() -> dict:
             raise ValueError(f"Kontrolna vsota Plant DB datoteke {name} se ne ujema.")
         json.loads(data.decode("utf-8"))
         staged[name] = data
+    return manifest, staged
 
+
+def write_selected_support_files(staged: dict[str, bytes], selected: set[str]) -> dict:
+    targets = {
+        "seeding": seeding_data_path(),
+        "rollers": roller_data_path(),
+        "rotation": rotation_data_path(),
+    }
+    backup_root = data_root() / "plant-db-backups" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    installed = []
+    for name, target in targets.items():
+        if name not in selected:
+            continue
+        backup_root.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.copy2(target, backup_root / target.name)
+        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as handle:
+            handle.write(staged[name])
+            temporary = Path(handle.name)
+        temporary.replace(target)
+        installed.append(str(target))
+    return {"installed": installed, "backup": str(backup_root) if installed else None}
+
+
+def record_partial_update_version(version: str, details: dict) -> None:
+    current = read_manifest() if manifest_path().exists() else {"schema_version": PLANT_DB_SCHEMA_VERSION}
+    current.update({
+        "schema_version": PLANT_DB_SCHEMA_VERSION,
+        "plant_db_version": version,
+        "installed_at": datetime.now(timezone.utc).isoformat(),
+        "source": remote_manifest_url(),
+        "selection": details,
+        "files": {
+            "crops": str(master_data_path()),
+            "seeding": str(seeding_data_path()),
+            "rollers": str(roller_data_path()),
+            "rotation": str(rotation_data_path()),
+        },
+    })
+    tmp = manifest_path().with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(manifest_path())
+
+
+def install_remote_update() -> dict:
+    manifest, staged = fetch_remote_files()
+    targets = {
+        "crops": master_data_path(),
+        "seeding": seeding_data_path(),
+        "rollers": roller_data_path(),
+        "rotation": rotation_data_path(),
+    }
     backup_root = data_root() / "plant-db-backups" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_root.mkdir(parents=True, exist_ok=True)
     installed = []
@@ -198,17 +244,7 @@ def install_remote_update() -> dict:
             temporary = Path(handle.name)
         temporary.replace(target)
         installed.append(str(target))
-
-    manifest_payload = {
-        "schema_version": PLANT_DB_SCHEMA_VERSION,
-        "plant_db_version": manifest["plant_db_version"],
-        "installed_at": datetime.now(timezone.utc).isoformat(),
-        "source": manifest_url,
-        "files": {name: str(path) for name, path in targets.items()},
-    }
-    _manifest_tmp = manifest_path().with_suffix(".json.tmp")
-    _manifest_tmp.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    _manifest_tmp.replace(manifest_path())
+    record_partial_update_version(manifest["plant_db_version"], {"mode": "all"})
     return {"installed": installed, "backup": str(backup_root), **remote_update_status()}
 
 
