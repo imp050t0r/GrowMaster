@@ -3,6 +3,7 @@ import "./backupCenter";
 export const APP_VERSION = "1.24.11";
 
 // Release 1.24.11 completes the Windows Backup Center with file-based restore.
+// Backup and restore are now shipped together as one tested desktop workflow.
 // The production-readiness endpoint reports the server version. In the native
 // app the user-visible "Različica" label must report the installed app/APK
 // version instead, otherwise a phone on a new APK can appear to be outdated.
