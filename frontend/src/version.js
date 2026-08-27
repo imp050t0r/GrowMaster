@@ -1,12 +1,11 @@
 import "./backupCenter";
 
-export const APP_VERSION = "1.24.12";
+export const APP_VERSION = "1.24.13";
 
-// Release 1.24.12 forces Windows upgrades to rebuild the installed Docker images
-// so the installed UI cannot remain on an older GrowMaster frontend.
-// The production-readiness endpoint reports the server version. In the native
-// app the user-visible "Različica" label must report the installed app/APK
-// version instead, otherwise a phone on a new APK can appear to be outdated.
+// Release 1.24.13 packages the latest GrowMaster application changes, including
+// structured baby-leaf recipes and their Seed Inventory workflow, into the
+// Windows and Android builds. The production-readiness endpoint reports the
+// server version; native UI must show the installed app/APK version.
 function syncReadinessAppVersion() {
   const expected = `Različica ${APP_VERSION}`;
   document.querySelectorAll(".readiness-panel .section-heading > span").forEach((node) => {
