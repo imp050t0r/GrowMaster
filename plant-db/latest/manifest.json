@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "plant_db_version": "2026.08.27.1",
+  "plant_db_version": "2026.08.27.3",
   "minimum_app_version": "1.24.2",
   "files": {
     "crops": {
       "path": "growmaster-crops.json",
-      "sha256": "48d1b284f8f8007f8561871c837592c06e8601273581ebef657059c7690cc41b"
+      "sha256": "b918d2903be675e5a0a97f4bc02c930c43d9f4d0935fd80404e304eadc9c4571"
     },
     "seeding": {
       "path": "growmaster-seeding.json",
