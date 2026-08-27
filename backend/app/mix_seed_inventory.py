@@ -1,35 +1,68 @@
-"""Bridge structured baby-leaf recipes with GrowMaster supply/seed inventory."""
+"""Bridge structured baby-leaf recipes with GrowMaster Seed Inventory lots."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import datetime
 
 from app.mix_recipes import calculate_mix_seed_requirements
+from app.seed_inventory_service import convert_quantity, load_inventory, save_inventory
 
 
-@dataclass(frozen=True)
-class SeedStock:
-    id: int
-    name: str
-    stock_g: float
-
-
-def normalize_seed_name(value: str) -> str:
-    return " ".join(value.casefold().replace("-", " ").split())
-
-
-def match_seed_stock(crop: str, inventory: list[SeedStock]) -> SeedStock | None:
-    """Match a recipe crop to a seed stock item without silently using another crop."""
-    target = normalize_seed_name(crop)
-    exact = [item for item in inventory if normalize_seed_name(item.name) == target]
-    if len(exact) == 1:
-        return exact[0]
-    prefixed = [
-        item for item in inventory
-        if normalize_seed_name(item.name).startswith(target + " ")
-        or normalize_seed_name(item.name).startswith("seme " + target)
+def _matching_lots(payload: dict, crop: str) -> list[dict]:
+    return [
+        lot for lot in payload.get("lots", [])
+        if str(lot.get("crop") or "").casefold() == crop.casefold()
+        and float(lot.get("quantity") or 0) > 0
     ]
-    return prefixed[0] if len(prefixed) == 1 else None
+
+
+def _available_grams(lot: dict) -> float | None:
+    try:
+        return float(convert_quantity(
+            float(lot.get("quantity") or 0),
+            str(lot.get("unit") or "g"),
+            "g",
+            lot.get("thousand_seed_weight_g"),
+        ))
+    except ValueError:
+        return None
+
+
+def _allocation_for_crop(payload: dict, crop: str, required_g: float) -> tuple[list[dict], float, list[int]]:
+    """Allocate grams across matching lots without mutating inventory.
+
+    Oldest/earliest-expiring lots are consumed first. Lots that cannot be
+    converted to grams are reported and skipped rather than guessed.
+    """
+    lots = _matching_lots(payload, crop)
+    lots.sort(key=lambda lot: (
+        lot.get("expiry_date") or "9999-12-31",
+        lot.get("purchase_date") or "9999-12-31",
+        int(lot.get("id") or 0),
+    ))
+    remaining = float(required_g)
+    allocation: list[dict] = []
+    unconvertible: list[int] = []
+    available_total = 0.0
+    for lot in lots:
+        available_g = _available_grams(lot)
+        if available_g is None:
+            unconvertible.append(int(lot["id"]))
+            continue
+        available_total += available_g
+        if remaining <= 1e-9:
+            continue
+        take_g = min(remaining, available_g)
+        if take_g > 0:
+            allocation.append({
+                "lot_id": int(lot["id"]),
+                "crop": crop,
+                "variety": lot.get("variety"),
+                "lot_unit": lot["unit"],
+                "take_g": round(take_g, 4),
+            })
+            remaining -= take_g
+    return allocation, round(available_total, 4), unconvertible
 
 
 def plan_mix_against_inventory(
@@ -37,67 +70,110 @@ def plan_mix_against_inventory(
     width_m: float,
     length_m: float,
     seed_rates_g_m2: dict[str, float],
-    inventory: list[SeedStock],
     reserve_pct: float = 5.0,
-):
-    """Calculate a recipe and show stock availability for every component.
-
-    Nothing is deducted here. This is the safe preview/reservation check shown
-    before the user confirms sowing.
-    """
+    payload: dict | None = None,
+) -> dict:
+    """Preview a mix against the user's real Seed Inventory lots."""
+    payload = payload if payload is not None else load_inventory()
     plan = calculate_mix_seed_requirements(
         recipe_id, width_m, length_m, seed_rates_g_m2, reserve_pct
     )
     shortages = []
-    unmatched = []
     components = []
     for component in plan["components"]:
-        required = component["required_seed_g"]
-        stock = match_seed_stock(component["crop"], inventory)
-        available = stock.stock_g if stock else None
-        enough = bool(stock and required is not None and available >= required)
-        shortage = None
-        if stock is None:
-            unmatched.append(component["crop"])
-        elif required is not None and available < required:
-            shortage = round(required - available, 2)
+        required = component.get("required_seed_g")
+        if required is None:
+            components.append({
+                **component,
+                "available_seed_g": None,
+                "shortage_g": None,
+                "allocation": [],
+                "unconvertible_lot_ids": [],
+                "enough_stock": False,
+            })
+            continue
+        allocation, available_g, unconvertible = _allocation_for_crop(
+            payload, component["crop"], float(required)
+        )
+        shortage = round(max(0.0, float(required) - available_g), 4)
+        enough = shortage <= 1e-9
+        if not enough:
             shortages.append({"crop": component["crop"], "shortage_g": shortage})
         components.append({
             **component,
-            "supply_item_id": stock.id if stock else None,
-            "inventory_name": stock.name if stock else None,
-            "available_seed_g": round(available, 2) if available is not None else None,
-            "enough_stock": enough,
+            "available_seed_g": round(available_g, 4),
             "shortage_g": shortage,
+            "allocation": allocation,
+            "unconvertible_lot_ids": unconvertible,
+            "enough_stock": enough,
         })
     return {
         **plan,
         "components": components,
-        "unmatched_inventory_components": unmatched,
         "shortages": shortages,
-        "inventory_ready": plan["ready"] and not unmatched and not shortages,
+        "inventory_ready": plan["ready"] and not shortages,
     }
 
 
-def consume_mix_seed(plan: dict, stock_by_id: dict[int, float]) -> dict[int, float]:
-    """Atomically validate then return new gram balances for a confirmed sowing.
+def consume_mix_from_inventory(
+    recipe_id: str,
+    width_m: float,
+    length_m: float,
+    seed_rates_g_m2: dict[str, float],
+    reserve_pct: float = 5.0,
+    reference: str | None = None,
+) -> dict:
+    """Validate and atomically deduct all mix components from Seed Inventory.
 
-    Caller persists the returned balances and creates SupplyUsage rows in the
-    same database transaction. Validation happens before any balance changes.
+    Inventory is loaded once, all lots are validated first, all deductions are
+    applied in memory, then one save replaces the inventory file. A transaction
+    row is added for every consumed lot so history remains auditable.
     """
-    if not plan.get("inventory_ready"):
-        raise ValueError("Mešanice ni mogoče knjižiti: zaloga semen ni pripravljena.")
-    deductions: dict[int, float] = {}
+    payload = load_inventory()
+    plan = plan_mix_against_inventory(
+        recipe_id, width_m, length_m, seed_rates_g_m2, reserve_pct, payload
+    )
+    if not plan["inventory_ready"]:
+        raise ValueError("Mešanice ni mogoče knjižiti: manjka setvena norma ali zadostna zaloga semena.")
+
+    lots_by_id = {int(lot["id"]): lot for lot in payload.get("lots", [])}
+    # Validate conversions and balances again before mutating anything.
+    deductions: list[tuple[dict, float, float]] = []
     for component in plan["components"]:
-        item_id = component.get("supply_item_id")
-        required = component.get("required_seed_g")
-        if item_id is None or required is None:
-            raise ValueError("Komponenta nima povezane zaloge ali količine semena.")
-        deductions[item_id] = deductions.get(item_id, 0.0) + float(required)
-    new_balances = dict(stock_by_id)
-    for item_id, required in deductions.items():
-        available = float(new_balances.get(item_id, 0.0))
-        if available + 1e-9 < required:
-            raise ValueError(f"Premalo semena v zalogi za supply_item_id={item_id}.")
-        new_balances[item_id] = round(available - required, 3)
-    return new_balances
+        for row in component["allocation"]:
+            lot = lots_by_id.get(int(row["lot_id"]))
+            if lot is None:
+                raise ValueError("Semenska serija se je med potrditvijo spremenila. Ponovi pregled zaloge.")
+            take_g = float(row["take_g"])
+            take_lot_unit = convert_quantity(
+                take_g, "g", lot["unit"], lot.get("thousand_seed_weight_g")
+            )
+            if float(lot["quantity"]) + 1e-9 < take_lot_unit:
+                raise ValueError("Zaloga semena se je med potrditvijo zmanjšala. Ponovi pregled zaloge.")
+            deductions.append((lot, take_g, take_lot_unit))
+
+    now = datetime.utcnow().isoformat() + "Z"
+    txs = payload.setdefault("transactions", [])
+    next_tx = max([int(tx.get("id") or 0) for tx in txs] or [0]) + 1
+    for lot, take_g, take_lot_unit in deductions:
+        lot["quantity"] = round(max(0.0, float(lot["quantity"]) - take_lot_unit), 4)
+        lot["updated_at"] = now
+        txs.append({
+            "id": next_tx,
+            "lot_id": int(lot["id"]),
+            "quantity": round(-take_g, 4),
+            "unit": "g",
+            "quantity_in_lot_unit": round(-take_lot_unit, 4),
+            "reason": "baby_leaf_mix_sowing",
+            "reference": reference or recipe_id,
+            "created_at": now,
+        })
+        next_tx += 1
+
+    save_inventory(payload)
+    return {
+        **plan,
+        "committed": True,
+        "reference": reference or recipe_id,
+        "transactions_created": len(deductions),
+    }
