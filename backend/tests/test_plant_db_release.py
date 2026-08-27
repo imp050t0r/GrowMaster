@@ -8,19 +8,22 @@ from app.eu_leafy_crops import EU_LEAFY_CROPS
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_dandelion_is_a_standalone_eu_first_leafy_crop():
+def test_dandelion_has_separate_standard_and_baby_leaf_profiles():
     dandelion = next(item for item in EU_LEAFY_CROPS if item["crop"] == "Regrat")
+    baby = next(item for item in EU_LEAFY_CROPS if item["crop"] == "Baby leaf regrat")
 
     assert dandelion["english_name"] == "Dandelion"
     assert dandelion["botanical_name"] == "Taraxacum officinale"
     assert dandelion["family"] == "Asteraceae"
     assert dandelion["category"] == "Listnata"
     assert dandelion["source_name"].endswith("EU")
-    assert dandelion["days_baby"] < dandelion["days_outer_leaf"]
-    assert set(dandelion["harvest_methods"].split(",")) >= {
-        "baby_leaf",
-        "outer_leaves",
-    }
+    assert "outer_leaves" in dandelion["harvest_methods"].split(",")
+    assert "baby_leaf" not in dandelion["harvest_methods"].split(",")
+
+    assert baby["source_name"].endswith("EU")
+    assert baby["days"] == 30
+    assert baby["days_baby"] == 30
+    assert "baby_leaf" in baby["harvest_methods"].split(",")
 
 
 def test_public_plant_db_release_contains_dandelion_and_matches_manifest():
