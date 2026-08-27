@@ -10,38 +10,33 @@ EU_LEAFY_CROPS = [
         "category": "Listnata",
         "name": "Dandelion",
         "days": 55,
-        "source_name": "Promesse de Fleurs EU",
-        "source_url": (
-            "https://www.promessedefleurs.ie/vegetable-gardens/vegetables-by-variety/"
-            "dandelion/dandelion-seeds-taraxacum-officinale.html"
-        ),
-        "seed_forms": "navadno seme",
+        "source_name": "Intersemillas EU",
+        "source_url": "https://www.intersemillas.es/catalogo/cultivos-horticolas/baby-leaf/diente-de-leon/",
+        "seed_forms": "navadno seme; približno 1500 semen/g",
         "traits": (
             "Taraxacum officinale; trpežna večletna listnata kultura za mlade "
-            "liste (baby leaf) in sprotno obiranje odraslih zunanjih listov."
+            "liste (baby leaf), solate in sprotno obiranje odraslih zunanjih listov."
         ),
         "slovenia_note": (
-            "EU-first vir; sej neposredno. Za nežnejše liste vzdržuj enakomerno "
-            "vlago in odstranjuj cvetna stebla pred semenitvijo."
+            "Profesionalni EU baby-leaf vir Intersemillas. Orientacijska setvena norma "
+            "5–8 kg/ha (0,5–0,8 g/m²); kalitev 15–20 °C v 7–15 dneh; globina setve "
+            "0,5 cm. Priporočena setev jeseni in zgodaj spomladi."
         ),
         "days_baby": 30,
-        "seed_rate_g_m2": None,
+        "seed_rate_g_m2": 0.65,
         "seed_spacing_cm": 17.5,
         "row_spacing_cm": 30.0,
         "planting_method": "direct",
-        "outdoor_months": "3,4,5,6,8,9",
-        "protected_months": "2,3,4,5,6,8,9,10",
+        "outdoor_months": "3,4,9,10",
+        "protected_months": "2,3,4,9,10,11",
         "heat_tolerance": "srednja",
         "cold_tolerance": "visoka",
         "planting_calendar_note": (
-            "Sej neposredno spomladi ali ob koncu poletja; za stalno kakovost "
-            "listov poskrbi za vlago in cvetna stebla sproti odstranjuj."
+            "Intersemillas priporoča jesen in zgodnjo pomlad. Sej približno 0,5 cm globoko; "
+            "za kalitev vzdržuj 15–20 °C in enakomerno vlago. Pričakovana kalitev 7–15 dni."
         ),
         "succession_interval_days": 21,
-        "calendar_source_url": (
-            "https://www.promessedefleurs.ie/vegetable-gardens/vegetables-by-variety/"
-            "dandelion/dandelion-seeds-taraxacum-officinale.html"
-        ),
+        "calendar_source_url": "https://www.intersemillas.es/catalogo/cultivos-horticolas/baby-leaf/diente-de-leon/",
         "cultivation_methods": "direct",
         "harvest_methods": "baby_leaf,outer_leaves,cut_and_regrow",
         "nursery_days": None,
@@ -54,12 +49,9 @@ EU_LEAFY_CROPS = [
         "harvest_interval_days": None,
         "harvest_duration_days": None,
         "harvest_profile_note": (
-            "Mlade liste reži približno po 30 dneh, odrasle zunanje liste pa "
-            "obiraj sproti; ne poškoduj rastnega središča."
+            "Intersemillas ga uvršča med baby leaf in navaja uporabo nežnih temno zelenih "
+            "listov za solate. Mlade liste reži brez poškodbe rastnega središča."
         ),
-        "harvest_source_url": (
-            "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:254151-1/"
-            "general-information"
-        ),
+        "harvest_source_url": "https://www.intersemillas.es/catalogo/cultivos-horticolas/baby-leaf/diente-de-leon/",
     },
 ]
