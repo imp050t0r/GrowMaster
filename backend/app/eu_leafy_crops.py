@@ -10,7 +10,7 @@ _DANDELION_COMMON = {
     "heat_tolerance": "srednja",
     "cold_tolerance": "visoka",
     "cultivation_methods": "direct",
-    "source_name": "Intersemillas EU / Voltz Maraîchage / Prosem",
+    "source_name": "Intersemillas EU",
 }
 
 EU_LEAFY_CROPS = [
