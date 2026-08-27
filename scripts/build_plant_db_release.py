@@ -13,11 +13,12 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.maturity import estimated_seasonal_days  # noqa: E402
 from app.eu_leafy_crops import EU_LEAFY_CROPS  # noqa: E402
+from app.eu_chard_crops import EU_CHARD_CROPS  # noqa: E402
 from app.south_asian_requested_crops import SOUTH_ASIAN_REQUESTED_CROPS  # noqa: E402
 
 
 OUTPUT = ROOT / "plant-db" / "latest"
-VERSION = "2026.08.27.2"
+VERSION = "2026.08.27.3"
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -45,7 +46,7 @@ def build_crops() -> dict:
         "harvest_interval_days", "harvest_duration_days", "harvest_profile_note",
         "harvest_source_url",
     )
-    for item in [*EU_LEAFY_CROPS, *SOUTH_ASIAN_REQUESTED_CROPS]:
+    for item in [*EU_LEAFY_CROPS, *EU_CHARD_CROPS, *SOUTH_ASIAN_REQUESTED_CROPS]:
         group = groups.setdefault(item["crop"], {
             "name": item["crop"], "family": item["family"],
             "category": item["category"], "varieties": [],
