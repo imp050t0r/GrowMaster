@@ -17,7 +17,7 @@ from app.south_asian_requested_crops import SOUTH_ASIAN_REQUESTED_CROPS  # noqa:
 
 
 OUTPUT = ROOT / "plant-db" / "latest"
-VERSION = "2026.08.27.1"
+VERSION = "2026.08.27.2"
 
 
 def write_json(path: Path, payload: dict) -> None:
