@@ -63,7 +63,6 @@ def test_public_plant_db_release_contains_dandelion_chard_and_matches_manifest()
     assert baby_dandelion["varieties"]
     assert len(chard["varieties"]) >= 6
     assert len(baby_chard["varieties"]) >= 3
-    assert manifest["plant_db_version"] == "2026.08.27.3"
-    assert manifest["files"]["crops"]["sha256"] == hashlib.sha256(
-        crops_path.read_bytes()
-    ).hexdigest()
+    actual_sha = hashlib.sha256(crops_path.read_bytes()).hexdigest()
+    assert manifest["plant_db_version"] == "2026.08.27.3", f"CROPS_SHA256={actual_sha}"
+    assert manifest["files"]["crops"]["sha256"] == actual_sha
