@@ -59,20 +59,23 @@
 
   function renderProducts() {
     const term = els.search.value.trim().toLowerCase();
-    const items = state.inventory.filter(item => `${item.crop} ${item.variety || ""} ${item.quality || ""}`.toLowerCase().includes(term));
+    const items = state.inventory.filter(item => {
+      const available = availableFor(item);
+      const price = Number(item.suggested_price_per_kg_eur || 0);
+      const matches = `${item.crop} ${item.variety || ""}`.toLowerCase().includes(term);
+      return available > 0 && price > 0 && matches;
+    });
     els.products.innerHTML = "";
     for (const item of items) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = `product-button${state.selectedHarvestId === item.harvest_id ? " selected" : ""}`;
-      const price = Number(item.suggested_price_per_kg_eur || 0);
-      button.innerHTML = `<strong>${escapeHtml(item.crop)}${item.variety ? ` · ${escapeHtml(item.variety)}` : ""}</strong><span>${escapeHtml(item.quality || "A")} · na voljo ${qty(availableFor(item))}</span><b>${price > 0 ? `${money(price)}/kg` : "Cena ni nastavljena"}</b>`;
-      button.disabled = availableFor(item) <= 0 || price <= 0;
+      button.innerHTML = `<strong>${escapeHtml(item.crop)}${item.variety ? ` · ${escapeHtml(item.variety)}` : ""}</strong><span>${qty(availableFor(item))}</span>`;
       button.addEventListener("click", () => { state.selectedHarvestId = item.harvest_id; renderProducts(); });
       els.products.appendChild(button);
     }
-    if (!items.length) els.products.innerHTML = '<p class="empty">Ni artiklov za prikaz.</p>';
-    els.inventoryMeta.textContent = `${state.inventory.length} zalog · ${state.queue.length} nesinhroniziranih prodaj`;
+    if (!items.length) els.products.innerHTML = '<p class="empty">Ni artiklov na zalogi.</p>';
+    els.inventoryMeta.textContent = `${items.length} artiklov na zalogi · ${state.queue.length} nesinhroniziranih prodaj`;
   }
 
   function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
