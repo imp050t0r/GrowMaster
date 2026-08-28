@@ -13,9 +13,14 @@
     <link rel="icon" href="/icons/growmaster-192.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <title>GrowMaster</title>
+    <style>
+      .growmaster-pos-launcher{position:fixed;right:16px;bottom:16px;z-index:9999;min-width:68px;min-height:52px;display:flex;align-items:center;justify-content:center;border-radius:16px;background:#143c2f;color:#fff;text-decoration:none;font:800 15px/1 system-ui,-apple-system,"Segoe UI",sans-serif;box-shadow:0 6px 22px rgba(20,60,47,.25)}
+      @media print{.growmaster-pos-launcher{display:none}}
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <a class="growmaster-pos-launcher" href="/pos.html" aria-label="Odpri GrowMaster prodajo">POS</a>
     <script type="module" src="/src/main.jsx"></script>
     <script type="module" src="/src/seedCenter.js"></script>
     <script type="module" src="/src/seedMixPanel.js"></script>
