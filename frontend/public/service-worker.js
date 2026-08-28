@@ -1,6 +1,9 @@
-const CACHE_NAME = "growmaster-shell-v1.24.12";
+const CACHE_NAME = "growmaster-shell-v1.24.14-pos";
 const APP_SHELL = [
   "/",
+  "/pos.html",
+  "/pos.css",
+  "/pos.js",
   "/manifest.webmanifest",
   "/icons/growmaster-192.png",
   "/icons/growmaster-512.png",
@@ -25,7 +28,8 @@ self.addEventListener("fetch", (event) => {
 
   // GrowMaster is a local application. Always prefer the freshly installed
   // frontend and use the cache only as an offline fallback. This prevents an
-  // old JS bundle from surviving an application upgrade.
+  // old JS bundle from surviving an application upgrade while keeping POS
+  // available when the tablet is away from the farm network.
   if (requestUrl.origin === self.location.origin) {
     event.respondWith(
       fetch(event.request)
