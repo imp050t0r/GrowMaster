@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="sl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#143c2f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icons/growmaster-192.png" />
+  <link rel="stylesheet" href="/pos.css" />
+  <title>GrowMaster POS</title>
+</head>
+<body>
+  <main class="pos-shell">
+    <header class="pos-header">
+      <div><span class="eyebrow">GrowMaster</span><h1>Prodaja</h1></div>
+      <div class="sync-box">
+        <span id="connection" class="pill offline">● BREZ POVEZAVE</span>
+        <span id="syncState">0 čaka</span>
+      </div>
+    </header>
+
+    <section id="message" class="message" hidden></section>
+
+    <section class="toolbar">
+      <input id="search" type="search" placeholder="Poišči artikel…" autocomplete="off" />
+      <button id="refresh" type="button" class="secondary">OSVEŽI</button>
+      <a class="secondary link-button" href="/">GROWMASTER</a>
+    </section>
+
+    <div class="layout">
+      <section>
+        <div id="inventoryMeta" class="meta">Nalagam zalogo…</div>
+        <div id="products" class="product-grid" aria-live="polite"></div>
+      </section>
+
+      <aside class="cart-panel">
+        <div class="cart-heading"><h2>Račun</h2><button id="clearCart" type="button" class="text-button">POČISTI</button></div>
+        <div id="cart" class="cart-list"><p class="empty">Izberi artikel.</p></div>
+        <div class="quick-qty" aria-label="Hitra količina">
+          <button type="button" data-qty="0.1">+ 0,10 kg</button>
+          <button type="button" data-qty="0.25">+ 0,25 kg</button>
+          <button type="button" data-qty="0.5">+ 0,50 kg</button>
+          <button type="button" data-qty="1">+ 1,00 kg</button>
+        </div>
+        <label class="custom-qty">Količina izbranega artikla (kg)
+          <div><input id="quantity" inputmode="decimal" type="number" min="0.01" step="0.01" placeholder="0,00" /><button id="addQuantity" type="button">DODAJ</button></div>
+        </label>
+        <div class="total"><span>Skupaj</span><strong id="total">0,00 €</strong></div>
+        <div class="payment-buttons">
+          <button id="payCash" type="button" class="pay primary">GOTOVINA</button>
+          <button id="payCard" type="button" class="pay secondary">KARTICA</button>
+        </div>
+        <p class="hint">Če povezave ni, se prodaja varno shrani na tej napravi in prenese v GrowMaster ob naslednji povezavi.</p>
+      </aside>
+    </div>
+  </main>
+  <script src="/pos.js" defer></script>
+</body>
+</html>
