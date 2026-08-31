@@ -1,4 +1,6 @@
-from app.seed_supplier_search_routes import _price, _real_url, _score
+from types import SimpleNamespace
+
+from app.seed_supplier_search_routes import _catalog_payload, _price, _real_url, _score
 
 
 def test_price_parses_euro_formats():
@@ -16,3 +18,23 @@ def test_exact_variety_and_eu_rank_higher():
     exact = _score("Calypso coriander seed", "organic seed", "coriander", "Calypso", True, 4.5)
     loose = _score("Coriander seed", "standard seed", "coriander", "Calypso", False, None)
     assert exact > loose
+
+
+def test_catalog_payload_keeps_crop_variety_dependency_and_sorts_varieties():
+    crops = [
+        SimpleNamespace(
+            name="Koriander",
+            varieties=[SimpleNamespace(name="Leisure"), SimpleNamespace(name="Calypso")],
+        ),
+        SimpleNamespace(
+            name="Solata",
+            varieties=[SimpleNamespace(name="Tourbillon")],
+        ),
+    ]
+
+    assert _catalog_payload(crops) == {
+        "crops": [
+            {"name": "Koriander", "varieties": ["Calypso", "Leisure"]},
+            {"name": "Solata", "varieties": ["Tourbillon"]},
+        ]
+    }
