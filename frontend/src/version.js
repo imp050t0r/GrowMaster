@@ -1,12 +1,11 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.14";
+export const APP_VERSION = "1.24.15";
 
-// Release 1.24.14 packages the GrowMaster offline-first POS for tablet/mobile
-// together with the current Windows and Android application builds. The POS
-// uses the same GrowMaster inventory and retail-sales data so stock, cash flow
-// and analyses stay in one system after synchronization.
+// Release 1.24.15 adds the internet-connected Seed Supplier Search workflow:
+// Plant DB -> live supplier offers -> Nabava -> PREVZEM SEMENA -> Seed Inventory.
+// Physical seed stock is increased only after a confirmed receipt.
 function syncReadinessAppVersion() {
   const expected = `Različica ${APP_VERSION}`;
   document.querySelectorAll(".readiness-panel .section-heading > span").forEach((node) => {
