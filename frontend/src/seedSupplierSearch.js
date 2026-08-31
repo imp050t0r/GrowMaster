@@ -5,7 +5,7 @@ const css = `
 #gm-seed-web{position:fixed;inset:0;z-index:1310;background:#07110dcc;display:none;justify-content:flex-end;backdrop-filter:blur(3px)}
 #gm-seed-web.open{display:flex}.gm-ss-shell{width:min(980px,100%);height:100%;overflow:auto;background:#f7f4ec;padding:20px;box-shadow:-12px 0 42px #0005}
 .gm-ss-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.gm-ss-head h2{margin:0;color:#143c2f}.gm-ss-head p{margin:4px 0 0;color:#68645d}.gm-ss-close{border:0;background:transparent;font-size:28px;cursor:pointer}.gm-ss-top-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.gm-ss-form,.gm-ss-order-form,.gm-ss-receive-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:16px 0;padding:14px;background:#fff;border:1px solid #ded9cd;border-radius:14px}.gm-ss-form{grid-template-columns:1fr 1fr auto auto auto;align-items:end}.gm-ss-form label,.gm-ss-order-form label,.gm-ss-receive-form label{display:grid;gap:4px;font-size:12px;font-weight:800}.gm-ss-form input,.gm-ss-order-form input,.gm-ss-order-form select,.gm-ss-receive-form input{padding:10px;border:1px solid #c8c3b7;border-radius:9px;background:white;min-width:0}.gm-ss-check{display:flex!important;align-items:center;gap:6px;padding-bottom:10px}.gm-ss-search,.gm-ss-action{padding:10px 13px;border:0;border-radius:9px;background:#143c2f;color:white;font-weight:900;cursor:pointer}.gm-ss-action.secondary{background:#e7e2d6;color:#143c2f}.gm-ss-form button,.gm-ss-order-form button,.gm-ss-receive-form button{align-self:end}.gm-ss-order-form h3,.gm-ss-receive-form h3,.gm-ss-order-form p,.gm-ss-receive-form p{grid-column:1/-1;margin:0}.gm-ss-status{margin:8px 0 12px;color:#68645d}.gm-ss-error{background:#ffe1dc;color:#8c2b20;padding:10px;border-radius:10px}.gm-ss-notice{background:#dff3e6;color:#195d38;padding:10px;border-radius:10px;margin:8px 0}.gm-ss-warning{background:#fff0ce;color:#705000;padding:10px;border-radius:10px;margin:8px 0}.gm-ss-list{display:grid;gap:9px}.gm-ss-card{background:white;border:1px solid #ded9cd;border-radius:14px;padding:13px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px}.gm-ss-card h3{margin:0 0 4px;color:#143c2f;font-size:17px}.gm-ss-meta,.gm-ss-snippet{font-size:12px;color:#68645d;line-height:1.4}.gm-ss-price{font-size:20px;font-weight:900;color:#143c2f;text-align:right}.gm-ss-actions{display:flex;gap:7px;justify-content:flex-end;align-items:center;margin-top:8px;flex-wrap:wrap}.gm-ss-actions a,.gm-ss-actions button{border:0;border-radius:8px;padding:8px 10px;font-weight:800;text-decoration:none;cursor:pointer}.gm-ss-actions a{background:#143c2f;color:white}.gm-ss-actions button{background:#e7e2d6;color:#143c2f}.gm-ss-badge{display:inline-block;padding:2px 7px;border-radius:999px;background:#e7e2d6;margin-right:5px;font-size:11px;font-weight:800}.gm-ss-empty{padding:26px;text-align:center;background:white;border:1px dashed #cfc9bd;border-radius:14px;color:#68645d}
+.gm-ss-form,.gm-ss-order-form,.gm-ss-receive-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:16px 0;padding:14px;background:#fff;border:1px solid #ded9cd;border-radius:14px}.gm-ss-form{grid-template-columns:1fr 1fr auto auto auto;align-items:end}.gm-ss-form label,.gm-ss-order-form label,.gm-ss-receive-form label{display:grid;gap:4px;font-size:12px;font-weight:800}.gm-ss-form input,.gm-ss-form select,.gm-ss-order-form input,.gm-ss-order-form select,.gm-ss-receive-form input{padding:10px;border:1px solid #c8c3b7;border-radius:9px;background:white;min-width:0}.gm-ss-check{display:flex!important;align-items:center;gap:6px;padding-bottom:10px}.gm-ss-search,.gm-ss-action{padding:10px 13px;border:0;border-radius:9px;background:#143c2f;color:white;font-weight:900;cursor:pointer}.gm-ss-action.secondary{background:#e7e2d6;color:#143c2f}.gm-ss-form button,.gm-ss-order-form button,.gm-ss-receive-form button{align-self:end}.gm-ss-order-form h3,.gm-ss-receive-form h3,.gm-ss-order-form p,.gm-ss-receive-form p{grid-column:1/-1;margin:0}.gm-ss-status{margin:8px 0 12px;color:#68645d}.gm-ss-error{background:#ffe1dc;color:#8c2b20;padding:10px;border-radius:10px}.gm-ss-notice{background:#dff3e6;color:#195d38;padding:10px;border-radius:10px;margin:8px 0}.gm-ss-warning{background:#fff0ce;color:#705000;padding:10px;border-radius:10px;margin:8px 0}.gm-ss-list{display:grid;gap:9px}.gm-ss-card{background:white;border:1px solid #ded9cd;border-radius:14px;padding:13px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px}.gm-ss-card h3{margin:0 0 4px;color:#143c2f;font-size:17px}.gm-ss-meta,.gm-ss-snippet{font-size:12px;color:#68645d;line-height:1.4}.gm-ss-price{font-size:20px;font-weight:900;color:#143c2f;text-align:right}.gm-ss-actions{display:flex;gap:7px;justify-content:flex-end;align-items:center;margin-top:8px;flex-wrap:wrap}.gm-ss-actions a,.gm-ss-actions button{border:0;border-radius:8px;padding:8px 10px;font-weight:800;text-decoration:none;cursor:pointer}.gm-ss-actions a{background:#143c2f;color:white}.gm-ss-actions button{background:#e7e2d6;color:#143c2f}.gm-ss-badge{display:inline-block;padding:2px 7px;border-radius:999px;background:#e7e2d6;margin-right:5px;font-size:11px;font-weight:800}.gm-ss-empty{padding:26px;text-align:center;background:white;border:1px dashed #cfc9bd;border-radius:14px;color:#68645d}
 .gm-ss-inline{margin-top:7px;border:1px solid #9eb2a8;background:#edf4f0;color:#143c2f;border-radius:8px;padding:6px 8px;font-size:11px;font-weight:900;cursor:pointer;width:max-content;max-width:100%}
 @media(max-width:760px){.gm-ss-shell{padding:14px}.gm-ss-form,.gm-ss-order-form,.gm-ss-receive-form{grid-template-columns:1fr}.gm-ss-check{padding:4px 0}.gm-ss-card{grid-template-columns:1fr}.gm-ss-price{text-align:left}#gm-seed-web-btn{right:12px;bottom:122px}}
 `;
@@ -14,7 +14,7 @@ function esc(value){return String(value??"").replace(/[&<>"']/g,m=>({"&":"&amp;"
 function money(value){return value==null?"cena ni zaznana":`${Number(value).toLocaleString("sl-SI",{minimumFractionDigits:2,maximumFractionDigits:2})} €`;}
 function today(){return new Date().toISOString().slice(0,10);}
 
-const state={open:false,loading:false,error:"",notice:"",data:null,selectedOffer:null,openOrders:null,receiveOrder:null};
+const state={open:false,loading:false,error:"",notice:"",data:null,catalog:null,selectedOffer:null,openOrders:null,receiveOrder:null};
 
 document.head.insertAdjacentHTML("beforeend",`<style>${css}</style>`);
 document.body.insertAdjacentHTML("beforeend",`
@@ -23,8 +23,8 @@ document.body.insertAdjacentHTML("beforeend",`
   <div class="gm-ss-shell">
     <div class="gm-ss-head"><div><h2>Dobavitelji semen</h2><p>Od spletne ponudbe do nabave in fizičnega prevzema semena.</p><div class="gm-ss-top-actions"><button class="gm-ss-action secondary" id="gm-ss-open-orders" type="button">ODPRTA NAROČILA</button></div></div><button class="gm-ss-close" type="button" aria-label="Zapri">×</button></div>
     <form class="gm-ss-form" id="gm-ss-form">
-      <label>Kultura<input name="crop" required minlength="2" placeholder="npr. Koriander"></label>
-      <label>Sorta<input name="variety" placeholder="npr. Calypso"></label>
+      <label>Kultura<select name="crop" required><option value="">Izberi kulturo</option></select></label>
+      <label>Sorta<select name="variety" disabled><option value="">Najprej izberi kulturo</option></select></label>
       <label class="gm-ss-check"><input type="checkbox" name="eu_only" checked> samo EU</label>
       <label class="gm-ss-check"><input type="checkbox" name="refresh"> sveži podatki</label>
       <button class="gm-ss-search" type="submit">POIŠČI</button>
@@ -38,6 +38,31 @@ const form=document.getElementById("gm-ss-form");
 const content=document.getElementById("gm-ss-content");
 
 function offerPayload(o,d){return encodeURIComponent(JSON.stringify({supplier:o.supplier,title:o.title,url:o.url,price_eur:o.price_eur,crop:d.crop,variety:d.variety}));}
+
+function selectedCrop(){
+  return (state.catalog?.crops||[]).find(item=>item.name===form.elements.crop.value);
+}
+
+function renderCropOptions(selected=""){
+  const crops=state.catalog?.crops||[];
+  form.elements.crop.innerHTML='<option value="">Izberi kulturo</option>'+crops.map(item=>`<option value="${esc(item.name)}">${esc(item.name)}</option>`).join("");
+  form.elements.crop.value=selected;
+}
+
+function renderVarietyOptions(selected=""){
+  const crop=selectedCrop();
+  const varieties=crop?.varieties||[];
+  form.elements.variety.disabled=!crop;
+  form.elements.variety.innerHTML=`<option value="">${crop?"Vse sorte":"Najprej izberi kulturo"}</option>`+varieties.map(name=>`<option value="${esc(name)}">${esc(name)}</option>`).join("");
+  form.elements.variety.value=varieties.includes(selected)?selected:"";
+}
+
+async function loadCatalog(){
+  if(state.catalog)return;
+  state.catalog=await apiRequest("/api/seed-suppliers/catalog");
+  renderCropOptions();renderVarietyOptions();
+}
+
 
 function render(){
   if(state.loading){content.innerHTML='<div class="gm-ss-status">Nalagam …</div>';return;}
@@ -84,10 +109,12 @@ async function loadOpenOrders(){
   state.loading=false;render();
 }
 
-function open(crop="",variety=""){
-  root.classList.add("open");state.open=true;
-  form.elements.crop.value=crop||"";form.elements.variety.value=variety||"";
-  if(crop)runSearch(crop,variety,{euOnly:form.elements.eu_only.checked});
+async function open(crop="",variety=""){
+  root.classList.add("open");state.open=true;state.error="";
+  try{
+    await loadCatalog();renderCropOptions(crop||"");renderVarietyOptions(variety||"");
+    if(crop)runSearch(crop,variety,{euOnly:form.elements.eu_only.checked});
+  }catch(error){state.error=error?.message||"Seznama kultur in sort ni mogoče naložiti.";render();}
 }
 function close(){root.classList.remove("open");state.open=false;}
 
@@ -109,6 +136,7 @@ document.getElementById("gm-seed-web-btn").addEventListener("click",()=>open());
 document.getElementById("gm-ss-open-orders").addEventListener("click",loadOpenOrders);
 document.querySelector(".gm-ss-close").addEventListener("click",close);
 root.addEventListener("click",e=>{if(e.target===root)close();});
+form.elements.crop.addEventListener("change",()=>renderVarietyOptions());
 form.addEventListener("submit",e=>{e.preventDefault();const fd=new FormData(form);runSearch(String(fd.get("crop")||"").trim(),String(fd.get("variety")||"").trim(),{euOnly:fd.get("eu_only")==="on",refresh:fd.get("refresh")==="on"});});
 
 content.addEventListener("click",e=>{
