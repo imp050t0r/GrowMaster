@@ -1,11 +1,10 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.15";
+export const APP_VERSION = "1.24.16";
 
-// Release 1.24.15 adds the internet-connected Seed Supplier Search workflow:
-// Plant DB -> live supplier offers -> Nabava -> PREVZEM SEMENA -> Seed Inventory.
-// Physical seed stock is increased only after a confirmed receipt.
+// Release 1.24.16 adds database-backed crop and variety dropdowns to Seed Supplier Search.
+// Varieties follow the selected crop; physical stock still changes only after confirmed receipt.
 function syncReadinessAppVersion() {
   const expected = `Različica ${APP_VERSION}`;
   document.querySelectorAll(".readiness-panel .section-heading > span").forEach((node) => {
