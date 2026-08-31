@@ -15,6 +15,7 @@ from app.seed_inventory_routes import router as seed_inventory_router
 from app.seed_ops_routes import router as seed_ops_router
 from app.seed_purchase_routes import router as seed_purchase_router
 from app.seed_quantity_routes import router as seed_quantity_router
+from app.seed_supplier_search_routes import router as seed_supplier_search_router
 from app.seeding_data_routes import router as seeding_data_router
 from app.successor_routes import router as successor_router
 
@@ -89,5 +90,6 @@ app.include_router(seed_inventory_router)
 app.include_router(seed_forecast_router)
 app.include_router(seed_ops_router)
 app.include_router(seed_purchase_router)
+app.include_router(seed_supplier_search_router)
 app.include_router(seed_actuals_router)
 app.include_router(agronomy_admin_router)
