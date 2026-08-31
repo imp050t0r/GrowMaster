@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from urllib.request import Request, urlopen
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from app.database import get_db
+from app.models import Crop
 
 router = APIRouter()
 
@@ -117,6 +122,29 @@ def _search_source(source: SupplierSource, crop: str, variety: str | None) -> li
             "source": "live-web-search",
         })
     return results
+
+
+def _catalog_payload(crops) -> dict:
+    return {
+        "crops": [
+            {
+                "name": crop.name,
+                "varieties": [
+                    variety.name
+                    for variety in sorted(crop.varieties, key=lambda item: item.name.casefold())
+                ],
+            }
+            for crop in crops
+        ]
+    }
+
+
+@router.get("/api/seed-suppliers/catalog")
+def seed_supplier_catalog(db: Session = Depends(get_db)) -> dict:
+    crops = db.scalars(
+        select(Crop).options(selectinload(Crop.varieties)).order_by(Crop.name)
+    ).all()
+    return _catalog_payload(crops)
 
 
 @router.get("/api/seed-suppliers")
