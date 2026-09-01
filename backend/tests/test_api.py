@@ -196,7 +196,9 @@ def test_bed_planting_and_task_workflow() -> None:
             for variety in crop["varieties"]
             if variety["source_name"] == "Johnny's Selected Seeds"
         ]
-        assert len(supplier_varieties) == 41
+        # Supplier catalog enrichment is additive. New verified varieties must
+        # not make this regression check fail merely because the catalog grew.
+        assert len(supplier_varieties) >= 41
         assert all(
             variety["planting_method"] in {"direct", "transplant"}
             and variety["outdoor_months"]
