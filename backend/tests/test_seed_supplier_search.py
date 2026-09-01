@@ -13,6 +13,7 @@ from app.seed_supplier_search_routes import (
     _real_url,
     _score,
 )
+from app.south_asian_requested_crops import SOUTH_ASIAN_REQUESTED_CROPS
 
 
 def test_price_parses_euro_formats():
@@ -93,3 +94,21 @@ def test_catalog_payload_keeps_crop_variety_dependency_and_sorts_varieties():
             {"name": "Solata", "varieties": ["Tourbillon"]},
         ]
     }
+
+
+def test_professional_coriander_cultivars_are_in_master_source():
+    names = {
+        item["name"]
+        for item in SOUTH_ASIAN_REQUESTED_CROPS
+        if item["crop"] == "Koriander"
+    }
+    assert {
+        "CO-4",
+        "Calypso",
+        "Cruiser",
+        "Leisure",
+        "Santo",
+        "Confetti",
+        "Filtro",
+        "Advanced Turbo II",
+    }.issubset(names)
