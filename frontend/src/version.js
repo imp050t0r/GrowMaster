@@ -1,10 +1,10 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.19";
+export const APP_VERSION = "1.24.20";
 
-// Release 1.24.19 expands the professional coriander database and adds more
-// relevant EU herb-seed suppliers to the live supplier search.
+// Release 1.24.20 uses verified product pages before generic web search and
+// keeps the professional coriander supplier flow usable when search engines fail.
 function syncReadinessAppVersion() {
   const expected = `Različica ${APP_VERSION}`;
   document.querySelectorAll(".readiness-panel .section-heading > span").forEach((node) => {
