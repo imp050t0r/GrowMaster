@@ -8,6 +8,11 @@ TARO_SOURCE = "https://agritech.tnau.ac.in/org_farm/pdf/Horticulture5_231009_094
 ICAR_TORIA = "https://www.icar.gov.in/sites/default/files/2022-09/Rabi-Agro-Advisory-2021-22_0.pdf"
 ICAR_TS38 = "https://icar.gov.in/en/field-day-toria-variety-ts-38-organized"
 TNAU_OYSTER = "https://agritech.tnau.ac.in/pdf/HORTICULTURE.pdf"
+RHS_CORIANDER = "https://www.rhs.org.uk/herbs/coriander/grow-your-own"
+JOHNNYS_CRUISER = "https://www.johnnyseeds.com/herbs/cilantro-coriander/cruiser-organic-cilantro-coriander-seed-3755G.32.html"
+JOHNNYS_LEISURE = "https://www.johnnyseeds.com/herbs/cilantro-coriander/leisure-cilantro-coriander-seed-3409.11.html"
+JOHNNYS_SANTO = "https://prod-na02.johnnyseeds.com/herbs/cilantro-coriander/santo-cilantro-coriander-seed-919.html"
+STOKES_CORIANDER = "https://s3.amazonaws.com/pageturnpro2.com/Publications/202311/2593/110179/PDF/133439282584363611_2024_Stokes_Seeds_Catalog_Digital_US.pdf"
 
 
 def crop(
@@ -15,10 +20,11 @@ def crop(
     outdoor="5,6", protected="4,5,6", heat="visoka", cold="nizka",
     spacing=30.0, rows=45.0, seed_rate=None, traits, note,
     nursery=None, harvest="full_size", interval=None, duration=None,
+    source_name="TNAU/ICAR agronomska priporočila",
 ):
     return {
         "crop": crop_name, "name": name, "family": family, "category": category,
-        "days": days, "source_name": "TNAU/ICAR agronomska priporočila",
+        "days": days, "source_name": source_name,
         "source_url": source, "seed_forms": "navadno seme" if method != "vegetative" else "sadni gomolj",
         "traits": traits, "slovenia_note": note, "days_baby": 25 if harvest == "baby_leaf" else None,
         "seed_rate_g_m2": seed_rate, "seed_spacing_cm": spacing, "row_spacing_cm": rows,
@@ -39,6 +45,7 @@ def crop(
 
 WARM_NOTE = "Toploljubna južnoazijska kultura; v Sloveniji jo sej oziroma presadi po slani, za zanesljiv pridelek pa uporabi tunel."
 COOL_NOTE = "Južnoazijski hladnosezonski tip; v Sloveniji je najzanesljivejši spomladi in jeseni."
+CORIANDER_LEAF_NOTE = "Profesionalni listni koriander za gosto direktno setev in sukcesije; prednost imajo počasneje cvetoči tipi, zlasti v toplejšem delu sezone."
 
 SOUTH_ASIAN_REQUESTED_CROPS = [
     crop("Bamija", "Arka Anamika", "Malvaceae", "Indijska", 55, TNAU_OKRA,
@@ -89,6 +96,34 @@ SOUTH_ASIAN_REQUESTED_CROPS = [
     crop("Koriander", "CO-4", "Apiaceae", "Indijska", 40, TNAU_FENUGREEK,
          outdoor="3,4,5,8,9", protected="2,3,4,9,10", heat="srednja", cold="srednja",
          spacing=5, rows=20, seed_rate=0.6, traits="Koriander/dhania za list in seme.", note=COOL_NOTE, harvest="leaf"),
+    crop("Koriander", "Calypso", "Apiaceae", "Zelišča", 50, RHS_CORIANDER,
+         outdoor="3,4,5,6,7,8,9", protected="2,3,4,9,10,11", heat="visoka", cold="srednja",
+         spacing=1, rows=8, traits="Zelo počasi uhaja v cvet; dolg poletni pridelek in dobra ponovna rast po rezi.",
+         note=CORIANDER_LEAF_NOTE, harvest="leaf", source_name="RHS / profesionalni listni koriander"),
+    crop("Koriander", "Cruiser", "Apiaceae", "Zelišča", 52, JOHNNYS_CRUISER,
+         outdoor="3,4,5,6,7,8,9", protected="2,3,4,9,10,11", heat="visoka", cold="srednja",
+         spacing=1, rows=8, traits="Izenačena, pokončna in počasneje cvetoča sorta z velikimi listi in močnimi stebli; primerna za tržno vezanje.",
+         note=CORIANDER_LEAF_NOTE, harvest="leaf", source_name="Johnny's Selected Seeds"),
+    crop("Koriander", "Leisure", "Apiaceae", "Zelišča", 52, JOHNNYS_LEISURE,
+         outdoor="3,4,5,6,7,8,9", protected="2,3,4,9,10,11", heat="srednja", cold="srednja",
+         spacing=1, rows=8, traits="Standardni profesionalni cilantro z dobro izenačenostjo, okusom in toleranco na uhajanje v cvet.",
+         note=CORIANDER_LEAF_NOTE, harvest="leaf", source_name="Johnny's Selected Seeds"),
+    crop("Koriander", "Santo", "Apiaceae", "Zelišča", 52, JOHNNYS_SANTO,
+         outdoor="3,4,5,6,7,8,9", protected="2,3,4,9,10,11", heat="srednja", cold="srednja",
+         spacing=1, rows=8, traits="Uveljavljen listni in dvonamenski tip za sveže liste ter poznejšo pridelavo semena.",
+         note=CORIANDER_LEAF_NOTE, harvest="leaf", source_name="Johnny's Selected Seeds"),
+    crop("Koriander", "Confetti", "Apiaceae", "Zelišča", 50, RHS_CORIANDER,
+         outdoor="3,4,5,6,7,8,9", protected="2,3,4,9,10,11", heat="srednja", cold="srednja",
+         spacing=1, rows=8, traits="Fino deljeni, dekorativni listi in blažji okus; uporabna specialiteta za premium mešanice in garnish.",
+         note=CORIANDER_LEAF_NOTE, harvest="leaf", source_name="RHS / profesionalni listni koriander"),
+    crop("Koriander", "Filtro", "Apiaceae", "Zelišča", 50, RHS_CORIANDER,
+         outdoor="3,4,5,6,7,8,9", protected="2,3,4,9,10,11", heat="srednja", cold="srednja",
+         spacing=1, rows=8, traits="Bujna listna sorta z obilnim pridelkom aromatičnih listov.",
+         note=CORIANDER_LEAF_NOTE, harvest="leaf", source_name="RHS / profesionalni listni koriander"),
+    crop("Koriander", "Advanced Turbo II", "Apiaceae", "Zelišča", 38, STOKES_CORIANDER,
+         outdoor="4,5,6,7,8,9", protected="3,4,9,10", heat="visoka", cold="srednja",
+         spacing=1, rows=8, traits="Zelo počasi cvetoč, toplotno toleranten profesionalni tip z visoko toleranco na bakterijski ožig listov.",
+         note=CORIANDER_LEAF_NOTE, harvest="leaf", source_name="Stokes Seeds"),
     crop("Chichinda", "CO-2", "Cucurbitaceae", "Indijska", 65, TNAU_GOURDS,
          method="transplant", spacing=100, rows=180, traits="Snake gourd/chichinda za dolge mlade zelene plodove na opori.", note=WARM_NOTE,
          nursery=24, harvest="green_fruit", interval=3, duration=60),
