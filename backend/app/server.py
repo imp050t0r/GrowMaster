@@ -20,7 +20,7 @@ from app.seeding_data_routes import router as seeding_data_router
 from app.successor_routes import router as successor_router
 
 
-APP_VERSION = "1.24.23"
+APP_VERSION = "1.24.24"
 main_module.APP_VERSION = APP_VERSION
 app = main_module.app
 app.version = APP_VERSION
