@@ -36,6 +36,30 @@ def test_indian_professional_batch_has_official_iihr_sources():
         assert "profesionalno" in item["seed_forms"]
 
 
+def test_bitter_gourd_has_verified_professional_indian_varieties():
+    karela = {
+        item["name"]: item
+        for item in SOUTH_ASIAN_REQUESTED_CROPS
+        if item["crop"] == "Karela"
+    }
+    expected = {
+        "Small Indian",
+        "Large Indian",
+        "Pusa Aushadhi",
+        "Pusa Rasdar",
+        "Pusa Purvi",
+        "Kashi Pratishtha",
+        "Arka Harit",
+    }
+
+    assert expected <= karela.keys()
+    for name in expected - {"Small Indian", "Large Indian"}:
+        assert karela[name]["source_name"].startswith("ICAR-")
+        assert karela[name]["source_url"].startswith("https://")
+        assert "profesionalno" in karela[name]["seed_forms"]
+        assert karela[name]["harvest_methods"] == "green_fruit"
+
+
 def test_dandelion_has_separate_standard_and_baby_leaf_profiles():
     dandelion = next(item for item in EU_LEAFY_CROPS if item["crop"] == "Regrat")
     baby = next(item for item in EU_LEAFY_CROPS if item["crop"] == "Baby leaf regrat")

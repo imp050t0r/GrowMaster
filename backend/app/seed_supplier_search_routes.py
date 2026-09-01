@@ -132,7 +132,10 @@ CROP_SEARCH_ALIASES = {
     "dhania": "coriander cilantro",
     "bhindi": "okra",
     "okra": "okra",
-    "karela": "bitter melon bitter gourd",
+    "karela": "grenka bučka grenka bucka grenka melona bitter melon bitter gourd karavella momordica charantia",
+    "grenka bučka": "karela bitter melon bitter gourd karavella momordica charantia",
+    "grenka bucka": "karela bitter melon bitter gourd karavella momordica charantia",
+    "grenka melona": "karela bitter melon bitter gourd karavella momordica charantia",
     "lauki": "bottle gourd",
 }
 

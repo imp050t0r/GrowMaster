@@ -8,6 +8,9 @@ TARO_SOURCE = "https://agritech.tnau.ac.in/org_farm/pdf/Horticulture5_231009_094
 ICAR_TORIA = "https://www.icar.gov.in/sites/default/files/2022-09/Rabi-Agro-Advisory-2021-22_0.pdf"
 ICAR_TS38 = "https://icar.gov.in/en/field-day-toria-variety-ts-38-organized"
 TNAU_OYSTER = "https://agritech.tnau.ac.in/pdf/HORTICULTURE.pdf"
+IARI_BITTER_GOURD = "https://ztmbpd.iari.res.in/technologies/varietieshybrids/vegetables/bitter-gourd/"
+IIVR_BITTER_GOURD = "https://icariivr.org.in/bitter-gourd-3/"
+IIHR_ARKA_HARIT = "https://nhfqr.iihr.res.in/SEEDUNIT-BITTERGOURD-ARKA-HARIT.html"
 RHS_CORIANDER = "https://www.rhs.org.uk/herbs/coriander/grow-your-own"
 JOHNNYS_CRUISER = "https://www.johnnyseeds.com/herbs/cilantro-coriander/cruiser-organic-cilantro-coriander-seed-3755G.32.html"
 JOHNNYS_LEISURE = "https://www.johnnyseeds.com/herbs/cilantro-coriander/leisure-cilantro-coriander-seed-3409.11.html"
@@ -97,6 +100,36 @@ SOUTH_ASIAN_REQUESTED_CROPS = [
     crop("Karela", "Large Indian", "Cucurbitaceae", "Indijska", 60, TNAU_GOURDS,
          method="transplant", spacing=90, rows=150, traits="Velikoplodni indijski tip grenke kumare.", note=WARM_NOTE,
          nursery=24, harvest="green_fruit", interval=3, duration=60),
+    crop("Karela", "Pusa Aushadhi", "Cucurbitaceae", "Indijska", 50, IARI_BITTER_GOURD,
+         method="transplant", spacing=75, rows=150,
+         traits="Profesionalna grenka bučka ICAR-IARI: svetlo zeleni plodovi s 7–8 neprekinjenimi rebri, povprečno dolgi 16,5 cm in težki približno 85 g.",
+         note=WARM_NOTE + " Uradni vir navaja zrelost 48–52 dni v indijskih razmerah; za Gorenjsko načrtuj daljši cikel in visok tunel.",
+         nursery=24, harvest="green_fruit", interval=3, duration=60,
+         source_name="ICAR-IARI – uradni register sort", seed_forms="profesionalno seme"),
+    crop("Karela", "Pusa Rasdar", "Cucurbitaceae", "Indijska", 43, IARI_BITTER_GOURD,
+         method="transplant", spacing=75, rows=150,
+         traits="Zelo zgodnja profesionalna grenka bučka ICAR-IARI za zaščiten prostor; gladki, nežni, mesnati in temno zeleni plodovi brez izrazitih bodic.",
+         note=WARM_NOTE + " Uradno je namenjena zaščiteni pridelavi in prvemu obiranju v 41–45 dneh v indijskih razmerah; pri nas uporabi ogrevan vznik in visok tunel.",
+         nursery=24, harvest="green_fruit", interval=3, duration=60,
+         source_name="ICAR-IARI – uradni register sort", seed_forms="profesionalno seme"),
+    crop("Karela", "Pusa Purvi", "Cucurbitaceae", "Indijska", 50, IARI_BITTER_GOURD,
+         method="transplant", spacing=75, rows=150,
+         traits="Profesionalna drobnoplodna grenka bučka ICAR-IARI s temno zelenimi, hrustljavimi plodovi velikosti približno 4–5 cm, namenjenimi tudi polnjenju.",
+         note=WARM_NOTE + " Smiselna je kot specialiteta za kupce, ki iščejo majhno karelo; v Sloveniji jo preizkusi v visokem tunelu.",
+         nursery=24, harvest="green_fruit", interval=3, duration=55,
+         source_name="ICAR-IARI – uradni register sort", seed_forms="profesionalno seme"),
+    crop("Karela", "Kashi Pratishtha", "Cucurbitaceae", "Indijska", 55, IIVR_BITTER_GOURD,
+         method="transplant", spacing=60, rows=150,
+         traits="Profesionalna sorta ICAR-IIVR z dolgimi, vitkimi in mesnatimi plodovi za svežo prodajo ali predelavo; podaljšano obdobje rodnosti in dobra transportna sposobnost.",
+         note=WARM_NOTE + " Uradno je priporočena za tople razmere; v Gorenjski jo vodi na močni opori v visokem tunelu.",
+         nursery=24, harvest="green_fruit", interval=3, duration=70,
+         source_name="ICAR-IIVR – uradni register sort", seed_forms="profesionalno seme"),
+    crop("Karela", "Arka Harit", "Cucurbitaceae", "Indijska", 60, IIHR_ARKA_HARIT,
+         method="transplant", spacing=75, rows=150,
+         traits="Uradna profesionalna sorta bitter gourd/karele ICAR-IIHR.",
+         note=WARM_NOTE + " Čas do prvega pridelka je konservativna načrtovalska ocena za Slovenijo; preveri ga s poskusno serijo v visokem tunelu.",
+         nursery=24, harvest="green_fruit", interval=3, duration=60,
+         source_name="ICAR-IIHR – uradni register sort", seed_forms="profesionalno seme"),
     crop("Grah", "Arkel", "Fabaceae", "Indijska", 60, TNAU_GARDEN,
          outdoor="2,3,4,8,9", protected="2,3,4,9,10", heat="nizka", cold="visoka",
          spacing=5, rows=30, traits="Zgodnji indijski vrtni grah za sveže stroke.", note=COOL_NOTE,

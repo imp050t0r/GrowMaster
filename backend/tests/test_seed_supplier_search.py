@@ -50,6 +50,14 @@ def test_slovenian_crop_gets_multilingual_search_hint():
     assert _crop_search_terms("Unikatna kultura") == "Unikatna kultura"
 
 
+def test_karela_search_uses_slovenian_indian_english_and_botanical_names():
+    hints = _crop_search_terms("Karela")
+    assert "grenka bučka" in hints
+    assert "bitter gourd" in hints
+    assert "momordica charantia" in hints
+    assert "karela" in _crop_search_terms("Grenka bučka")
+
+
 def test_variety_query_does_not_require_slovenian_crop_name():
     source = SupplierSource("johnnys", "Johnny's", "johnnyseeds.com", "US", False)
     variants = _query_variants(source, "Koriander", "Calypso")
