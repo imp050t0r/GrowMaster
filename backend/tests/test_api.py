@@ -141,6 +141,12 @@ def test_bed_planting_and_task_workflow() -> None:
         crops = client.get("/api/crops").json()
         assert len(beds) == 6
         assert len(crops) >= 50
+        unsourced_crops = [
+            crop["name"]
+            for crop in crops
+            if not any(variety["source_url"] for variety in crop["varieties"])
+        ]
+        assert unsourced_crops == []
         assert {crop["category"] for crop in crops} >= {
             "Domača",
             "Azijska",

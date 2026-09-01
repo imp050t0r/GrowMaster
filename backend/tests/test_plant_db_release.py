@@ -5,11 +5,23 @@ from pathlib import Path
 from app.eu_chard_crops import EU_CHARD_CROPS
 from app.eu_leafy_crops import EU_LEAFY_CROPS
 from app.mix_recipes import BABY_LEAF_MIX_RECIPES, validate_mix_recipe
+from app.professional_completion_catalog import PROFESSIONAL_COMPLETION_CATALOG
 from app.south_asian_chilies import SOUTH_ASIAN_CHILIES
 from app.south_asian_requested_crops import SOUTH_ASIAN_REQUESTED_CROPS
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_completion_catalog_entries_are_traceable_professional_profiles():
+    assert len(PROFESSIONAL_COMPLETION_CATALOG) >= 35
+    for item in PROFESSIONAL_COMPLETION_CATALOG:
+        assert item["crop"]
+        assert item["name"]
+        assert item["source_name"]
+        assert item["source_url"].startswith("https://")
+        assert item["traits"]
+        assert item["slovenia_note"]
 
 
 def test_indian_professional_batch_has_official_iihr_sources():
