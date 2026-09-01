@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 from app.seed_supplier_search_routes import (
     SupplierSource,
+    VERIFIED_PRODUCT_LINKS,
     _catalog_payload,
     _crop_search_terms,
     _extract_supplier_results,
@@ -12,6 +13,7 @@ from app.seed_supplier_search_routes import (
     _query_variants,
     _real_url,
     _score,
+    _supplier_for_url,
 )
 from app.south_asian_requested_crops import SOUTH_ASIAN_REQUESTED_CROPS
 
@@ -41,7 +43,10 @@ def test_exact_variety_and_eu_rank_higher():
 
 
 def test_slovenian_crop_gets_multilingual_search_hint():
-    assert "coriander" in _crop_search_terms("Koriander")
+    hints = _crop_search_terms("Koriander")
+    assert "coriander" in hints
+    assert "dhania" in hints
+    assert "coriandrum sativum" in hints
     assert _crop_search_terms("Unikatna kultura") == "Unikatna kultura"
 
 
@@ -66,12 +71,14 @@ def test_generic_anchor_parser_finds_supplier_result_without_css_class():
     assert results[0]["url"] == "https://www.reinsaat.at/shop/koriander-calypso"
     assert results[0]["price_eur"] == 4.5
     assert results[0]["is_fallback"] is False
+    assert results[0]["verified"] is False
 
 
 def test_fallback_link_is_not_a_real_offer():
     source = SupplierSource("bejo", "Bejo", "bejo.com", "NL", True)
     fallback = _fallback_search_link(source, "Solata", "Tourbillon")
     assert fallback["is_fallback"] is True
+    assert fallback["verified"] is False
     assert fallback["price_eur"] is None
     assert "site%3Abejo.com" in fallback["url"]
 
@@ -112,3 +119,12 @@ def test_professional_coriander_cultivars_are_in_master_source():
         "Filtro",
         "Advanced Turbo II",
     }.issubset(names)
+
+
+def test_calypso_has_verified_eu_product_page():
+    links = VERIFIED_PRODUCT_LINKS[("koriander", "calypso")]
+    voltz_url = next(url for supplier, url in links if supplier == "voltz")
+    source = _supplier_for_url(voltz_url)
+    assert source is not None
+    assert source.key == "voltz"
+    assert source.eu is True
