@@ -1,10 +1,10 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.16";
+export const APP_VERSION = "1.24.17";
 
-// Release 1.24.16 adds database-backed crop and variety dropdowns to Seed Supplier Search.
-// Varieties follow the selected crop; physical stock still changes only after confirmed receipt.
+// Release 1.24.17 fixes Seed Online supplier discovery so searches no longer
+// depend on one search-engine HTML layout or literal Slovenian crop names.
 function syncReadinessAppVersion() {
   const expected = `Različica ${APP_VERSION}`;
   document.querySelectorAll(".readiness-panel .section-heading > span").forEach((node) => {
