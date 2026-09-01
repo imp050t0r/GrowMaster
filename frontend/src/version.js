@@ -1,10 +1,10 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.17";
+export const APP_VERSION = "1.24.18";
 
-// Release 1.24.17 fixes Seed Online supplier discovery so searches no longer
-// depend on one search-engine HTML layout or literal Slovenian crop names.
+// Release 1.24.18 groups mobile floating launchers into one Tools menu so
+// Android bottom navigation remains fully accessible.
 function syncReadinessAppVersion() {
   const expected = `Različica ${APP_VERSION}`;
   document.querySelectorAll(".readiness-panel .section-heading > span").forEach((node) => {
