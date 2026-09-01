@@ -1,10 +1,10 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.18";
+export const APP_VERSION = "1.24.19";
 
-// Release 1.24.18 groups mobile floating launchers into one Tools menu so
-// Android bottom navigation remains fully accessible.
+// Release 1.24.19 expands the professional coriander database and adds more
+// relevant EU herb-seed suppliers to the live supplier search.
 function syncReadinessAppVersion() {
   const expected = `Različica ${APP_VERSION}`;
   document.querySelectorAll(".readiness-panel .section-heading > span").forEach((node) => {
