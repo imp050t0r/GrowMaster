@@ -41,6 +41,42 @@ SOURCES = (
     SupplierSource("rijkzwaan", "Rijk Zwaan", "rijkzwaan.com", "NL", True),
     SupplierSource("enzazaden", "Enza Zaden", "enzazaden.com", "NL", True),
 )
+SOURCE_BY_KEY = {source.key: source for source in SOURCES}
+
+# Verified product pages are a deterministic first tier. They are intentionally
+# small and curated. Generic web search remains the second tier and can discover
+# additional sellers without pretending that an unverified search result is a
+# confirmed product page.
+VERIFIED_PRODUCT_LINKS: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
+    ("koriander", "calypso"): (
+        (
+            "voltz",
+            "https://de.de-shop.voltz-maraichage.com/konventionelles-saatgut/koriander-calypso",
+        ),
+        ("tozer", "https://www.tozerseeds.com/product/coriander-calypso/"),
+    ),
+    ("koriander", "confetti"): (
+        ("tozer", "https://www.tozerseeds.com/product/coriander-confetti/"),
+    ),
+    ("koriander", "cruiser"): (
+        (
+            "johnnys",
+            "https://www.johnnyseeds.com/herbs/cilantro-coriander/cruiser-organic-cilantro-coriander-seed-3755G.32.html",
+        ),
+    ),
+    ("koriander", "leisure"): (
+        (
+            "johnnys",
+            "https://www.johnnyseeds.com/herbs/cilantro-coriander/leisure-cilantro-coriander-seed-3409.11.html",
+        ),
+    ),
+    ("koriander", "santo"): (
+        (
+            "johnnys",
+            "https://prod-na02.johnnyseeds.com/herbs/cilantro-coriander/santo-cilantro-coriander-seed-919.html",
+        ),
+    ),
+}
 
 _CACHE: dict[str, tuple[float, dict]] = {}
 CACHE_SECONDS = 60 * 30
@@ -49,6 +85,7 @@ PRICE_RE = re.compile(
     re.I,
 )
 ANCHOR_RE = re.compile(r"<a\b[^>]*\bhref=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", re.I | re.S)
+TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title>", re.I | re.S)
 TAG_RE = re.compile(r"<[^>]+>")
 
 # Plant DB uses Slovenian crop names. Supplier pages usually use English, German,
@@ -57,7 +94,7 @@ TAG_RE = re.compile(r"<[^>]+>")
 CROP_SEARCH_ALIASES = {
     "solata": "lettuce",
     "rukola": "arugula rocket rucola",
-    "koriander": "coriander cilantro koriander",
+    "koriander": "coriander cilantro koriander dhania coriandrum sativum",
     "paprika": "pepper capsicum paprika",
     "čili": "chili chilli pepper",
     "paradižnik": "tomato",
@@ -163,6 +200,10 @@ def _domain_matches(url: str, domain: str) -> bool:
     return host == domain or host.endswith(f".{domain}")
 
 
+def _supplier_for_url(url: str) -> SupplierSource | None:
+    return next((source for source in SOURCES if _domain_matches(url, source.domain)), None)
+
+
 def _extract_supplier_results(
     page: str,
     source: SupplierSource,
@@ -179,8 +220,6 @@ def _extract_supplier_results(
         title = _clean(match.group(2))
         if len(title) < 2:
             continue
-        # Search engines change their CSS frequently. Instead of depending on one
-        # result class, collect a small amount of neighbouring text as the snippet.
         snippet = _clean(page[match.end() : match.end() + 650])[:360]
         price = _price(f"{title} {snippet}")
         seen.add(product_url)
@@ -201,6 +240,7 @@ def _extract_supplier_results(
                 "score": _score(title, snippet, crop, variety, source.eu, price),
                 "source": f"live-web-search:{engine}",
                 "is_fallback": False,
+                "verified": False,
             }
         )
         if len(results) >= 5:
@@ -217,9 +257,6 @@ def _query_variants(source: SupplierSource, crop: str, variety: str | None) -> l
     crop_terms = _crop_search_terms(crop)
     variants: list[str] = []
     if variety:
-        # Variety names are usually language-independent and are therefore the
-        # strongest first query. Do not require the Slovenian crop name to occur
-        # on the supplier page.
         variants.append(f'site:{source.domain} "{variety}"')
         variants.append(f'site:{source.domain} "{variety}" {crop_terms}')
     else:
@@ -236,7 +273,7 @@ def _search_urls(query: str) -> tuple[tuple[str, str], ...]:
     )
 
 
-def _fetch_search_page(url: str) -> str:
+def _fetch_page(url: str, timeout: int = 7) -> str:
     request = Request(
         url,
         headers={
@@ -244,7 +281,7 @@ def _fetch_search_page(url: str) -> str:
             "Accept-Language": "en-US,en;q=0.8",
         },
     )
-    with urlopen(request, timeout=7) as response:  # nosec B310 - fixed HTTPS search hosts
+    with urlopen(request, timeout=timeout) as response:  # nosec B310 - controlled HTTPS sources/search hosts
         return response.read(900_000).decode("utf-8", errors="replace")
 
 
@@ -255,7 +292,7 @@ def _search_source(source: SupplierSource, crop: str, variety: str | None) -> tu
         for engine, url in _search_urls(query):
             attempts += 1
             try:
-                page = _fetch_search_page(url)
+                page = _fetch_page(url)
             except Exception as exc:
                 failures.append(
                     {
@@ -289,7 +326,75 @@ def _fallback_search_link(source: SupplierSource, crop: str, variety: str | None
         "score": -100,
         "source": "fallback-search-link",
         "is_fallback": True,
+        "verified": False,
     }
+
+
+def _find_crop(db: Session, crop_name: str):
+    crops = db.scalars(select(Crop).options(selectinload(Crop.varieties))).all()
+    return next((item for item in crops if item.name.casefold() == crop_name.casefold()), None)
+
+
+def _verified_candidates(db: Session, crop: str, variety: str | None, eu_only: bool) -> list[tuple[SupplierSource, str, str]]:
+    if not variety:
+        return []
+    candidates: list[tuple[SupplierSource, str, str]] = []
+    seen: set[str] = set()
+
+    crop_record = _find_crop(db, crop)
+    if crop_record is not None:
+        variety_record = next(
+            (item for item in crop_record.varieties if item.name.casefold() == variety.casefold()),
+            None,
+        )
+        source_url = getattr(variety_record, "source_url", None) if variety_record else None
+        source = _supplier_for_url(source_url) if source_url else None
+        if source is not None and (not eu_only or source.eu):
+            candidates.append((source, source_url, "plant-db-source"))
+            seen.add(source_url)
+
+    for supplier_key, url in VERIFIED_PRODUCT_LINKS.get((crop.casefold(), variety.casefold()), ()):
+        source = SOURCE_BY_KEY[supplier_key]
+        if (eu_only and not source.eu) or url in seen:
+            continue
+        candidates.append((source, url, "verified-product-link"))
+        seen.add(url)
+    return candidates
+
+
+def _verified_offer(source: SupplierSource, url: str, crop: str, variety: str, origin: str) -> tuple[dict, dict | None]:
+    page = ""
+    error = None
+    try:
+        page = _fetch_page(url, timeout=6)
+    except Exception as exc:
+        error = {
+            "supplier": source.name,
+            "engine": origin,
+            "error": type(exc).__name__,
+        }
+    title_match = TITLE_RE.search(page) if page else None
+    title = _clean(title_match.group(1)) if title_match else f"{variety} · {source.name}"
+    price = _price(_clean(page)) if page else None
+    offer = {
+        "supplier_key": source.key,
+        "supplier": source.name,
+        "country": source.country,
+        "eu": source.eu,
+        "title": title,
+        "snippet": "Preverjena neposredna stran sorte iz GrowMaster baze oziroma kuriranega kataloga izdelkov.",
+        "url": url,
+        "price_eur": price,
+        "in_stock": None,
+        "package": None,
+        "seed_form": None,
+        "organic": None,
+        "score": 1000 + _score(title, "", crop, variety, source.eu, price),
+        "source": origin,
+        "is_fallback": False,
+        "verified": True,
+    }
+    return offer, error
 
 
 def _catalog_payload(crops) -> dict:
@@ -327,6 +432,7 @@ def search_seed_suppliers(
     eu_only: bool = Query(default=False),
     in_stock_only: bool = Query(default=False),
     refresh: bool = Query(default=False),
+    db: Session = Depends(get_db),
 ) -> dict:
     crop = crop.strip()
     variety = variety.strip() if variety else None
@@ -340,12 +446,17 @@ def search_seed_suppliers(
     source_status: list[dict] = []
     sources = [source for source in SOURCES if not eu_only or source.eu]
 
+    if variety:
+        for source, url, origin in _verified_candidates(db, crop, variety, eu_only):
+            offer, error = _verified_offer(source, url, crop, variety, origin)
+            offers.append(offer)
+            if error:
+                errors.append(error)
+
     def run(source: SupplierSource):
         results, failures, attempts = _search_source(source, crop, variety)
         return source, results, failures, attempts
 
-    # Supplier searches are independent. Running them concurrently keeps a
-    # degraded search engine from making the whole UI wait source by source.
     workers = min(6, max(1, len(sources)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for source, results, failures, attempts in pool.map(run, sources):
@@ -362,16 +473,26 @@ def search_seed_suppliers(
             else:
                 offers.append(_fallback_search_link(source, crop, variety))
 
+    # Keep one card per real URL. A verified direct link wins over a generic web
+    # result to the same product page.
+    unique: dict[str, dict] = {}
+    for offer in offers:
+        key = offer["url"]
+        current = unique.get(key)
+        if current is None or (offer.get("verified") and not current.get("verified")):
+            unique[key] = offer
+    offers = list(unique.values())
+
     if in_stock_only:
-        # Stock is currently unknown for generic web results. Keep prior
-        # behaviour: only exclude a result when stock is explicitly false.
         offers = [offer for offer in offers if offer["in_stock"] is not False]
 
     direct_count = sum(1 for offer in offers if not offer["is_fallback"])
+    verified_count = sum(1 for offer in offers if offer.get("verified"))
     fallback_count = sum(1 for offer in offers if offer["is_fallback"])
     offers.sort(
         key=lambda item: (
             item["is_fallback"],
+            not item.get("verified", False),
             -item["score"],
             item["supplier"],
             item["title"],
@@ -382,6 +503,7 @@ def search_seed_suppliers(
         "variety": variety,
         "offers": offers,
         "offer_count": direct_count,
+        "verified_count": verified_count,
         "fallback_count": fallback_count,
         "supplier_count": len(sources),
         "errors": errors,
@@ -391,9 +513,9 @@ def search_seed_suppliers(
         "degraded": direct_count == 0,
         "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "note": (
-            "GrowMaster najprej išče neposredne strani izdelkov prek več spletnih iskalnikov. "
-            "Če strani ne more zanesljivo razpoznati, prikaže rezervno ciljno iskalno povezavo. "
-            "Cene in zaloga so prikazane samo, kadar jih spletni rezultat zanesljivo vsebuje."
+            "GrowMaster najprej uporabi preverjene neposredne strani sorte iz Plant DB in kuriranega kataloga. "
+            "Nato išče dodatne ponudbe prek več spletnih iskalnikov. Če izdelka ne more zanesljivo razpoznati, "
+            "prikaže rezervno ciljno iskalno povezavo. Cene in zaloga so prikazane samo, kadar jih stran zanesljivo vsebuje."
         ),
     }
     _CACHE[cache_key] = (time.time(), payload)
