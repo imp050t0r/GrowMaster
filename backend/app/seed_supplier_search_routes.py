@@ -31,8 +31,11 @@ class SupplierSource:
 SOURCES = (
     SupplierSource("reinsaat", "ReinSaat", "reinsaat.at", "AT", True),
     SupplierSource("bingenheimer", "Bingenheimer Saatgut", "bingenheimersaatgut.de", "DE", True),
+    SupplierSource("hiseed", "HiSeed", "hiseed.it", "IT", True),
+    SupplierSource("voltz", "Graines Voltz", "voltz-maraichage.com", "FR", True),
     SupplierSource("sativa", "Sativa Rheinau", "sativa.bio", "CH", False),
     SupplierSource("kokopelli", "Kokopelli", "kokopelli-semences.fr", "FR", True),
+    SupplierSource("tozer", "Tozer Seeds", "tozerseeds.com", "UK", False),
     SupplierSource("johnnys", "Johnny's Selected Seeds", "johnnyseeds.com", "US", False),
     SupplierSource("bejo", "Bejo", "bejo.com", "NL", True),
     SupplierSource("rijkzwaan", "Rijk Zwaan", "rijkzwaan.com", "NL", True),
