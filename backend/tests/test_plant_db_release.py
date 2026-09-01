@@ -5,9 +5,35 @@ from pathlib import Path
 from app.eu_chard_crops import EU_CHARD_CROPS
 from app.eu_leafy_crops import EU_LEAFY_CROPS
 from app.mix_recipes import BABY_LEAF_MIX_RECIPES, validate_mix_recipe
+from app.south_asian_chilies import SOUTH_ASIAN_CHILIES
+from app.south_asian_requested_crops import SOUTH_ASIAN_REQUESTED_CROPS
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_indian_professional_batch_has_official_iihr_sources():
+    expected = {
+        ("Bamija", "Arka Abhay"),
+        ("Palak", "Arka Anupama"),
+        ("Kumara", "Arka Veera"),
+        ("Lauki", "Arka Ganga F1"),
+        ("Rebrasta bučka", "Arka Vikram F1"),
+        ("Indijski jajčevec", "Arka Anand F1"),
+        ("Listni amarant", "Arka Arunima"),
+        ("Koriander", "Arka Isha"),
+        ("Indijski čili", "Arka Harita F1"),
+    }
+    catalog = SOUTH_ASIAN_REQUESTED_CROPS + SOUTH_ASIAN_CHILIES
+    found = {(item["crop"], item["name"]) for item in catalog}
+
+    assert expected <= found
+    for item in catalog:
+        if (item["crop"], item["name"]) not in expected:
+            continue
+        assert item["source_name"].startswith("ICAR-IIHR")
+        assert item["source_url"].startswith("https://nhfqr.iihr.res.in/")
+        assert "profesionalno" in item["seed_forms"]
 
 
 def test_dandelion_has_separate_standard_and_baby_leaf_profiles():

@@ -30,6 +30,7 @@ def chili(
     slovenia_note: str,
     days_green_harvest: int,
     harvest_note: str,
+    seed_forms: str = "navadno seme",
 ) -> dict:
     return {
         "crop": crop,
@@ -39,7 +40,7 @@ def chili(
         "days": days,
         "source_name": source_name,
         "source_url": source_url,
-        "seed_forms": "navadno seme",
+        "seed_forms": seed_forms,
         "traits": traits,
         "slovenia_note": slovenia_note,
         "days_baby": None,
@@ -74,6 +75,27 @@ def chili(
 
 
 SOUTH_ASIAN_CHILIES = [
+    chili(
+        "Indijski čili",
+        "Arka Harita F1",
+        125,
+        source_name="ICAR-IIHR – uradni register sort",
+        source_url="https://nhfqr.iihr.res.in/CHILLI-HYBRID-F1-ARKA-HARITA.html",
+        traits=(
+            "Uradni profesionalni F1 hibrid zelenega indijskega čilija ICAR-IIHR. "
+            "GrowMaster ga vodi ločeno od odprto oprašenih sort Pusa Jwala in Pusa Sadabahar."
+        ),
+        slovenia_note=(
+            "Vzgoji ga zelo zgodaj in presadi v topel tunel. Navedeni čas je konservativna "
+            "načrtovalska ocena za Slovenijo; po prvem letu jo prilagodi dejanskemu pridelku."
+        ),
+        days_green_harvest=78,
+        harvest_note=(
+            "Za svežo prodajo obiraj čvrste zelene plodove; 78 dni po presajanju je začetna "
+            "načrtovalska ocena, ne prepis uradne sortne navedbe."
+        ),
+        seed_forms="profesionalno F1 seme",
+    ),
     chili(
         "Indijski čili",
         "Pusa Jwala",
