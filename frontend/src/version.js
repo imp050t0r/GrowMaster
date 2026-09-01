@@ -1,9 +1,9 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.22";
+export const APP_VERSION = "1.24.23";
 
-// Release 1.24.22 adds a verified professional bitter-gourd/karela set and
+// Release 1.24.23 adds verified professional Indian gourd varieties. Release 1.24.22 adds a verified professional bitter-gourd/karela set and
 // multilingual crop aliases. Release 1.24.21 adds the first verified ICAR-IIHR professional Indian crop
 // batch. Release 1.24.20 uses verified product pages before generic web search and
 // keeps the professional coriander supplier flow usable when search engines fail.

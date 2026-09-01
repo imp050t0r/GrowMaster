@@ -60,6 +60,33 @@ def test_bitter_gourd_has_verified_professional_indian_varieties():
         assert karela[name]["harvest_methods"] == "green_fruit"
 
 
+def test_remaining_indian_gourds_have_verified_professional_varieties():
+    expected = {
+        ("Lauki", "Arka Shreyas"),
+        ("Rebrasta bučka", "Arka Prasan"),
+        ("Rebrasta bučka", "Kashi Nanda"),
+        ("Rebrasta bučka", "Kashi Shivani"),
+        ("Gobasta bučka", "Kashi Divya"),
+        ("Gobasta bučka", "Kashi Vandana"),
+        ("Gobasta bučka", "Kashi Rakshita F1"),
+        ("Tinda", "Punjab Tinda-1"),
+        ("Voščena buča", "TNAU Ash Gourd Hybrid CO 1 F1"),
+        ("Voščena buča", "CO 2"),
+    }
+    catalog = {
+        (item["crop"], item["name"]): item
+        for item in SOUTH_ASIAN_REQUESTED_CROPS
+    }
+
+    assert expected <= catalog.keys()
+    for key in expected:
+        item = catalog[key]
+        assert item["source_url"].startswith("https://")
+        assert "profesionalno" in item["seed_forms"]
+        assert item["planting_method"] == "transplant"
+        assert item["harvest_methods"] in {"green_fruit", "full_size"}
+
+
 def test_dandelion_has_separate_standard_and_baby_leaf_profiles():
     dandelion = next(item for item in EU_LEAFY_CROPS if item["crop"] == "Regrat")
     baby = next(item for item in EU_LEAFY_CROPS if item["crop"] == "Baby leaf regrat")

@@ -137,6 +137,10 @@ CROP_SEARCH_ALIASES = {
     "grenka bucka": "karela bitter melon bitter gourd karavella momordica charantia",
     "grenka melona": "karela bitter melon bitter gourd karavella momordica charantia",
     "lauki": "bottle gourd",
+    "rebrasta bučka": "ridge gourd turai tori luffa acutangula",
+    "gobasta bučka": "sponge gourd smooth luffa gilki luffa cylindrica",
+    "tinda": "round melon apple gourd indian round gourd praecitrullus fistulosus",
+    "voščena buča": "wax gourd ash gourd winter melon petha benincasa hispida",
 }
 
 

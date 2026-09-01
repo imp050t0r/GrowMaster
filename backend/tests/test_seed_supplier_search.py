@@ -58,6 +58,13 @@ def test_karela_search_uses_slovenian_indian_english_and_botanical_names():
     assert "karela" in _crop_search_terms("Grenka bučka")
 
 
+def test_indian_gourd_search_uses_market_and_botanical_names():
+    assert "ridge gourd" in _crop_search_terms("Rebrasta bučka")
+    assert "sponge gourd" in _crop_search_terms("Gobasta bučka")
+    assert "round melon" in _crop_search_terms("Tinda")
+    assert "benincasa hispida" in _crop_search_terms("Voščena buča")
+
+
 def test_variety_query_does_not_require_slovenian_crop_name():
     source = SupplierSource("johnnys", "Johnny's", "johnnyseeds.com", "US", False)
     variants = _query_variants(source, "Koriander", "Calypso")
