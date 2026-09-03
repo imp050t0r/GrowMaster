@@ -224,6 +224,19 @@ class RetailSaleCreate(BaseModel):
     items: list[RetailSaleItemCreate] = Field(min_length=1, max_length=100)
 
 
+class InventoryWriteOffItemCreate(BaseModel):
+    harvest_id: int
+    quantity_kg: float = Field(gt=0, le=100000)
+
+
+class InventoryWriteOffCreate(BaseModel):
+    write_off_date: date
+    reason: Literal["unsold", "spoiled", "damaged", "quality", "other"] = "unsold"
+    notes: str | None = Field(default=None, max_length=2000)
+    client_event_id: str | None = Field(default=None, min_length=1, max_length=120)
+    items: list[InventoryWriteOffItemCreate] = Field(min_length=1, max_length=100)
+
+
 class ProductPriceUpdate(BaseModel):
     quality: Literal["A", "B"]
     price_per_kg_eur: float = Field(gt=0, le=100000)

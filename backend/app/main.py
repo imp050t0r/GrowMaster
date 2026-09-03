@@ -82,6 +82,7 @@ from app.models import (
     Invoice,
     InvoiceLine,
     InvoiceProfile,
+    InventoryWriteOff,
     LaborEntry,
     Order,
     OrderItem,
@@ -124,6 +125,7 @@ from app.schemas import (
     HarvestCreate,
     InvoiceCreate,
     InvoiceProfileUpdate,
+    InventoryWriteOffCreate,
     LaborEntryCreate,
     OrderCreate,
     OrderPaymentCreate,
@@ -864,6 +866,7 @@ def serialize_task(task: Task) -> dict:
 
 def serialize_harvest(harvest: Harvest) -> dict:
     sold_kg = round(sum(sale.quantity_kg for sale in harvest.sales), 2)
+    written_off_kg = round(sum(item.quantity_kg for item in harvest.write_offs), 2)
     revenue = round(sum(sale.revenue_eur for sale in harvest.sales), 2)
     return {
         "id": harvest.id,
@@ -877,7 +880,8 @@ def serialize_harvest(harvest: Harvest) -> dict:
         "quality": harvest.quality,
         "notes": harvest.notes,
         "sold_kg": sold_kg,
-        "available_kg": round(harvest.quantity_kg - sold_kg, 2),
+        "written_off_kg": written_off_kg,
+        "available_kg": round(harvest.quantity_kg - sold_kg - written_off_kg, 2),
         "revenue_eur": revenue,
     }
 
@@ -2577,6 +2581,7 @@ def list_harvests(db: Session = Depends(get_db)) -> list[dict]:
         .options(
             selectinload(Harvest.bed),
             selectinload(Harvest.sales),
+            selectinload(Harvest.write_offs),
             selectinload(Harvest.planting).selectinload(Planting.crop),
             selectinload(Harvest.planting).selectinload(Planting.variety),
         )
@@ -2607,6 +2612,7 @@ def create_harvest(payload: HarvestCreate, db: Session = Depends(get_db)) -> dic
     db.commit()
     db.refresh(harvest)
     harvest.sales = []
+    harvest.write_offs = []
     return {"message": "Žetev je zabeležena.", **serialize_harvest(harvest)}
 
 
@@ -2728,8 +2734,9 @@ def create_sale(payload: SaleCreate, db: Session = Depends(get_db)) -> dict:
     if harvest is None:
         raise HTTPException(status_code=404, detail="Žetev ne obstaja.")
     already_sold = sum(sale.quantity_kg for sale in harvest.sales)
+    already_written_off = written_off_quantity(db, harvest.id)
     reserved = reserved_quantity(db, harvest.id)
-    if round(already_sold + reserved + payload.quantity_kg, 6) > round(harvest.quantity_kg, 6):
+    if round(already_sold + already_written_off + reserved + payload.quantity_kg, 6) > round(harvest.quantity_kg, 6):
         raise HTTPException(
             status_code=409,
             detail="Prodana količina posega v prodano ali rezervirano zalogo žetve.",
@@ -2822,6 +2829,17 @@ def sold_quantity(db: Session, harvest_id: int) -> float:
         db.scalar(
             select(func.coalesce(func.sum(Sale.quantity_kg), 0.0)).where(
                 Sale.harvest_id == harvest_id
+            )
+        )
+        or 0
+    )
+
+
+def written_off_quantity(db: Session, harvest_id: int) -> float:
+    return float(
+        db.scalar(
+            select(func.coalesce(func.sum(InventoryWriteOff.quantity_kg), 0.0)).where(
+                InventoryWriteOff.harvest_id == harvest_id
             )
         )
         or 0
@@ -3014,7 +3032,8 @@ def inventory(db: Session = Depends(get_db)) -> list[dict]:
     for harvest in harvests:
         sold_kg = sold_quantity(db, harvest.id)
         reserved_kg = reserved_quantity(db, harvest.id)
-        physical_kg = max(0.0, harvest.quantity_kg - sold_kg)
+        written_off_kg = written_off_quantity(db, harvest.id)
+        physical_kg = max(0.0, harvest.quantity_kg - sold_kg - written_off_kg)
         available_kg = 0.0 if harvest.quality == "waste" else max(0.0, physical_kg - reserved_kg)
         result.append(
             {
@@ -3027,6 +3046,7 @@ def inventory(db: Session = Depends(get_db)) -> list[dict]:
                 "quality": harvest.quality,
                 "harvested_kg": harvest.quantity_kg,
                 "sold_kg": round(sold_kg, 2),
+                "written_off_kg": round(written_off_kg, 2),
                 "reserved_kg": round(reserved_kg, 2),
                 "available_kg": round(available_kg, 2),
                 "suggested_price_per_kg_eur": prices.get(
@@ -3118,7 +3138,7 @@ def create_order(payload: OrderCreate, db: Session = Depends(get_db)) -> dict:
         harvest = harvests[item.harvest_id]
         if harvest.quality == "waste":
             raise HTTPException(status_code=409, detail="Odpadne kakovosti ni mogoče rezervirati za prodajo.")
-        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
+        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - written_off_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
         if item.quantity_kg > round(available, 6):
             raise HTTPException(
                 status_code=409,
@@ -3165,7 +3185,7 @@ def update_order_status(
 
     if payload.status == "fulfilled":
         for item in order.items:
-            available_physical = item.harvest.quantity_kg - sold_quantity(db, item.harvest_id)
+            available_physical = item.harvest.quantity_kg - sold_quantity(db, item.harvest_id) - written_off_quantity(db, item.harvest_id)
             if item.quantity_kg > round(available_physical, 6):
                 raise HTTPException(status_code=409, detail="Zaloga ne zadošča za zaključek naročila.")
             db.add(
@@ -3545,7 +3565,7 @@ def planning_forecast(
     rows = []
     for crop in crops:
         current_stock = sum(
-            max(0.0, harvest.quantity_kg - sold_quantity(db, harvest.id))
+            max(0.0, harvest.quantity_kg - sold_quantity(db, harvest.id) - written_off_quantity(db, harvest.id))
             for harvest in harvests
             if harvest.planting.crop_id == crop.id
         )
@@ -4495,6 +4515,145 @@ def list_retail_sales(db: Session = Depends(get_db)) -> list[dict]:
     return [serialize_retail_sale(retail_sale, settings) for retail_sale in retail_sales]
 
 
+def serialize_inventory_write_off(item: InventoryWriteOff) -> dict:
+    return {
+        "id": item.id,
+        "client_event_id": item.client_event_id,
+        "write_off_date": item.write_off_date,
+        "harvest_id": item.harvest_id,
+        "crop": item.harvest.planting.crop.name,
+        "variety": item.harvest.planting.variety.name,
+        "bed": item.harvest.bed.name,
+        "quantity_kg": round(item.quantity_kg, 3),
+        "reason": item.reason,
+        "notes": item.notes,
+        "created_at": item.created_at,
+    }
+
+
+def inventory_write_off_options():
+    return (
+        selectinload(InventoryWriteOff.harvest).selectinload(Harvest.bed),
+        selectinload(InventoryWriteOff.harvest).selectinload(Harvest.planting).selectinload(Planting.crop),
+        selectinload(InventoryWriteOff.harvest).selectinload(Harvest.planting).selectinload(Planting.variety),
+    )
+
+
+@app.get("/api/inventory-write-offs")
+def list_inventory_write_offs(db: Session = Depends(get_db)) -> list[dict]:
+    items = db.scalars(
+        select(InventoryWriteOff)
+        .where(InventoryWriteOff.farm_id == DEFAULT_FARM_ID)
+        .options(*inventory_write_off_options())
+        .order_by(InventoryWriteOff.write_off_date.desc(), InventoryWriteOff.id.desc())
+    ).all()
+    return [serialize_inventory_write_off(item) for item in items]
+
+
+@app.post("/api/inventory-write-offs", status_code=status.HTTP_201_CREATED)
+def create_inventory_write_off(
+    payload: InventoryWriteOffCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    ensure_business_day_open(db, payload.write_off_date)
+    harvest_ids = [item.harvest_id for item in payload.items]
+    if len(harvest_ids) != len(set(harvest_ids)):
+        raise HTTPException(status_code=422, detail="Ista žetev je lahko v odpisu navedena samo enkrat.")
+
+    if payload.client_event_id:
+        existing = db.scalars(
+            select(InventoryWriteOff)
+            .where(
+                InventoryWriteOff.farm_id == DEFAULT_FARM_ID,
+                InventoryWriteOff.client_event_id == payload.client_event_id,
+            )
+            .options(*inventory_write_off_options())
+            .order_by(InventoryWriteOff.id)
+        ).all()
+        if existing:
+            return {
+                "message": "Odpis je bil že sinhroniziran; zaloga ni bila ponovno zmanjšana.",
+                "already_recorded": True,
+                "items": [serialize_inventory_write_off(item) for item in existing],
+            }
+
+    harvests = {
+        harvest.id: harvest
+        for harvest in db.scalars(
+            select(Harvest)
+            .where(Harvest.id.in_(harvest_ids), Harvest.farm_id == DEFAULT_FARM_ID)
+            .options(selectinload(Harvest.bed))
+            .with_for_update()
+        ).all()
+    }
+    if len(harvests) != len(harvest_ids):
+        raise HTTPException(status_code=404, detail="Ena ali več izbranih žetev ne obstaja.")
+
+    for requested in payload.items:
+        harvest = harvests[requested.harvest_id]
+        available = (
+            harvest.quantity_kg
+            - sold_quantity(db, harvest.id)
+            - written_off_quantity(db, harvest.id)
+            - reserved_quantity(db, harvest.id)
+        )
+        if requested.quantity_kg > round(available, 6):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Na gredici {harvest.bed.name} je za odpis na voljo le "
+                    f"{max(0, round(available, 2))} kg; rezervirana zaloga ostane zaščitena."
+                ),
+            )
+
+    notes = payload.notes.strip() if payload.notes else None
+    created = [
+        InventoryWriteOff(
+            farm_id=DEFAULT_FARM_ID,
+            harvest_id=requested.harvest_id,
+            write_off_date=payload.write_off_date,
+            quantity_kg=requested.quantity_kg,
+            reason=payload.reason,
+            notes=notes,
+            client_event_id=payload.client_event_id,
+        )
+        for requested in payload.items
+    ]
+    db.add_all(created)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_event_id:
+            existing = db.scalars(
+                select(InventoryWriteOff)
+                .where(
+                    InventoryWriteOff.farm_id == DEFAULT_FARM_ID,
+                    InventoryWriteOff.client_event_id == payload.client_event_id,
+                )
+                .options(*inventory_write_off_options())
+                .order_by(InventoryWriteOff.id)
+            ).all()
+            if existing:
+                return {
+                    "message": "Odpis je bil že sinhroniziran; zaloga ni bila ponovno zmanjšana.",
+                    "already_recorded": True,
+                    "items": [serialize_inventory_write_off(item) for item in existing],
+                }
+        raise
+    saved = db.scalars(
+        select(InventoryWriteOff)
+        .where(InventoryWriteOff.id.in_([item.id for item in created]))
+        .options(*inventory_write_off_options())
+        .order_by(InventoryWriteOff.id)
+    ).all()
+    return {
+        "message": "Odpis je evidentiran in zaloga zmanjšana.",
+        "already_recorded": False,
+        "items": [serialize_inventory_write_off(item) for item in saved],
+    }
+
+
 @app.post("/api/retail-sales", status_code=status.HTTP_201_CREATED)
 def create_retail_sale(
     payload: RetailSaleCreate,
@@ -4534,7 +4693,7 @@ def create_retail_sale(
         harvest = harvests[item.harvest_id]
         if harvest.quality == "waste":
             raise HTTPException(status_code=409, detail="Odpadne kakovosti ni mogoče prodati.")
-        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
+        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - written_off_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
         if item.quantity_kg > round(available, 6):
             raise HTTPException(
                 status_code=409,
