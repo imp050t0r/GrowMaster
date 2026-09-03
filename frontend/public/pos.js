@@ -29,6 +29,9 @@
     writeOffReason: document.getElementById("writeOffReason"), confirmWriteOff: document.getElementById("confirmWriteOff"),
     returnOptions: document.getElementById("returnOptions"), returnReason: document.getElementById("returnReason"),
     returnToStock: document.getElementById("returnToStock"), confirmReturn: document.getElementById("confirmReturn"),
+    dayCloseOpen: document.getElementById("dayCloseOpen"), dayDialog: document.getElementById("dayDialog"), dayCloseX: document.getElementById("dayCloseX"),
+    openingCash: document.getElementById("openingCash"), countedCash: document.getElementById("countedCash"), dayNotes: document.getElementById("dayNotes"),
+    daySummary: document.getElementById("daySummary"), dayRefresh: document.getElementById("dayRefresh"), dayConfirm: document.getElementById("dayConfirm"),
   };
 
   function readJson(key, fallback) {
@@ -60,6 +63,7 @@
     els.message.textContent = text; els.message.className = `message ${type}`; els.message.hidden = !text;
     if (text) setTimeout(() => { if (els.message.textContent === text) els.message.hidden = true; }, 4500);
   }
+  function localDate() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 
   function availableFor(item) {
     const pending = state.queue.reduce((sum, event) => sum + event.items.filter(x => x.harvest_id === item.harvest_id).reduce((s, x) => s + x.quantity_kg, 0), 0);
@@ -284,6 +288,36 @@
     } finally { state.syncing = false; renderAll(); }
   }
 
+  function dayCard(label, value) { return `<div class="day-card"><span>${label}</span><strong>${value}</strong></div>`; }
+  async function loadDayPreview() {
+    if (!navigator.onLine) return showMessage("Zaključek dneva potrebuje povezavo z GrowMasterjem.", "error");
+    await syncQueue();
+    if (state.queue.length) return showMessage("Najprej sinhroniziraj vse čakajoče dogodke.", "error");
+    try {
+      const opening = Math.max(0, Number(els.openingCash.value || 0));
+      const data = await api(`/api/day-closes/preview?business_date=${localDate()}&opening_cash_eur=${opening}`);
+      els.daySummary.innerHTML = data.closed
+        ? dayCard("Stanje", "DAN JE ZAKLJUČEN") + dayCard("Prešteta gotovina", money(data.counted_cash_eur)) + dayCard("Razlika", money(data.difference_eur)) + dayCard("Neto prejemki", money(data.net_receipts_eur))
+        : dayCard("Gotovinska prodaja", money(data.cash_in_eur)) + dayCard("Kartična prodaja", money(data.card_in_eur)) + dayCard("Vračila gotovine", money(data.cash_refund_eur)) + dayCard("Vsa vračila", money(data.total_refund_eur)) + dayCard("Pričakovana gotovina", money(data.expected_cash_eur)) + dayCard("Neto prejemki", money(data.net_receipts_eur));
+      els.dayConfirm.disabled = Boolean(data.closed);
+      if (!data.closed && !els.countedCash.value) els.countedCash.value = Number(data.expected_cash_eur || 0).toFixed(2);
+    } catch (error) { showMessage(error.message, "error"); }
+  }
+  async function openDayClose() {
+    els.dayDialog.showModal();
+    await loadDayPreview();
+  }
+  async function confirmDayClose() {
+    const counted = Number(els.countedCash.value);
+    if (!Number.isFinite(counted) || counted < 0) return showMessage("Vnesi prešteto gotovino.", "error");
+    if (!navigator.onLine || state.queue.length) return showMessage("Pred zaključkom sinhroniziraj vse dogodke.", "error");
+    try {
+      const result = await api("/api/day-closes", { method: "POST", body: JSON.stringify({ business_date: localDate(), opening_cash_eur: Math.max(0, Number(els.openingCash.value || 0)), counted_cash_eur: counted, notes: els.dayNotes.value.trim() || null }) });
+      els.dayDialog.close();
+      showMessage(`Dan je zaključen. Razlika blagajne: ${money(result.difference_eur)}.`, result.difference_eur === 0 ? "success" : "");
+    } catch (error) { showMessage(error.message, "error"); }
+  }
+
   document.querySelectorAll("[data-qty]").forEach(button => button.addEventListener("click", () => addSelectedQuantity(button.dataset.qty)));
   els.addQuantity.addEventListener("click", () => addSelectedQuantity(els.quantity.value));
   els.quantity.addEventListener("keydown", event => { if (event.key === "Enter") addSelectedQuantity(els.quantity.value); });
@@ -295,6 +329,11 @@
   els.saleMode.addEventListener("click", () => setMode("sale"));
   els.writeOffMode.addEventListener("click", () => setMode("write_off"));
   els.returnMode.addEventListener("click", () => setMode("return"));
+  els.dayCloseOpen.addEventListener("click", openDayClose);
+  els.dayCloseX.addEventListener("click", () => els.dayDialog.close());
+  els.dayRefresh.addEventListener("click", loadDayPreview);
+  els.dayConfirm.addEventListener("click", confirmDayClose);
+  els.openingCash.addEventListener("change", loadDayPreview);
   els.search.addEventListener("input", renderProducts);
   els.refresh.addEventListener("click", async () => { await syncQueue(); await refreshInventory(); });
   window.addEventListener("online", async () => { renderStatus(); await syncQueue(); await refreshInventory(); });
