@@ -246,6 +246,7 @@ class InventoryWriteOff(Base):
     reason: Mapped[str] = mapped_column(String(30), default="unsold")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    device_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     farm: Mapped[Farm] = relationship(back_populates="inventory_write_offs")
@@ -876,6 +877,7 @@ class Refund(Base):
 
 class RetailSale(Base):
     __tablename__ = "retail_sales"
+    __table_args__ = (UniqueConstraint("farm_id", "client_event_id", name="uq_retail_sale_farm_event"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
@@ -885,6 +887,8 @@ class RetailSale(Base):
     sale_date: Mapped[date] = mapped_column(Date, index=True)
     payment_method: Mapped[str] = mapped_column(String(20), default="cash")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    device_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     farm: Mapped[Farm] = relationship(back_populates="retail_sales")
@@ -914,6 +918,9 @@ class RetailSaleItem(Base):
     )
     quantity_kg: Mapped[float] = mapped_column(Float)
     price_per_kg_eur: Mapped[float] = mapped_column(Float)
+    sale_unit: Mapped[str] = mapped_column(String(30), default="kg")
+    unit_count: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unit_weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     retail_sale: Mapped[RetailSale] = relationship(back_populates="items")
     harvest: Mapped[Harvest] = relationship(back_populates="retail_sale_items")
@@ -922,6 +929,40 @@ class RetailSaleItem(Base):
     @property
     def line_total_eur(self) -> float:
         return round(self.quantity_kg * self.price_per_kg_eur, 2)
+
+
+class ProductUnit(Base):
+    __tablename__ = "product_units"
+    __table_args__ = (UniqueConstraint("farm_id", "crop_id", "quality", "name", name="uq_product_unit"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    crop_id: Mapped[int] = mapped_column(ForeignKey("crops.id", ondelete="CASCADE"), index=True)
+    quality: Mapped[str] = mapped_column(String(20), default="A")
+    name: Mapped[str] = mapped_column(String(80))
+    unit_type: Mapped[str] = mapped_column(String(20), default="package")
+    weight_kg: Mapped[float] = mapped_column(Float)
+    price_eur: Mapped[float] = mapped_column(Float)
+    button_color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    crop: Mapped[Crop] = relationship()
+
+
+class InventoryAdjustment(Base):
+    __tablename__ = "inventory_adjustments"
+    __table_args__ = (UniqueConstraint("farm_id", "client_event_id", name="uq_inventory_adjustment_event"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    harvest_id: Mapped[int] = mapped_column(ForeignKey("harvests.id", ondelete="RESTRICT"), index=True)
+    adjustment_date: Mapped[date] = mapped_column(Date, index=True)
+    expected_kg: Mapped[float] = mapped_column(Float)
+    counted_kg: Mapped[float] = mapped_column(Float)
+    difference_kg: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(40), default="stocktake")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    device_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    harvest: Mapped[Harvest] = relationship()
 
 
 class RetailReturn(Base):
@@ -938,6 +979,7 @@ class RetailReturn(Base):
     reason: Mapped[str] = mapped_column(String(30), default="customer_return")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    device_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     farm: Mapped[Farm] = relationship(back_populates="retail_returns")
