@@ -93,6 +93,8 @@ from app.models import (
     PurchaseOrderItem,
     RetailSale,
     RetailSaleItem,
+    RetailReturn,
+    RetailReturnItem,
     Refund,
     Sale,
     SalesSettings,
@@ -135,6 +137,7 @@ from app.schemas import (
     PurchaseOrderCreate,
     PurchaseOrderReceive,
     RetailSaleCreate,
+    RetailReturnCreate,
     RefundCreate,
     PlantingCreate,
     PlantingSuggestionRequest,
@@ -2736,7 +2739,8 @@ def create_sale(payload: SaleCreate, db: Session = Depends(get_db)) -> dict:
     already_sold = sum(sale.quantity_kg for sale in harvest.sales)
     already_written_off = written_off_quantity(db, harvest.id)
     reserved = reserved_quantity(db, harvest.id)
-    if round(already_sold + already_written_off + reserved + payload.quantity_kg, 6) > round(harvest.quantity_kg, 6):
+    returned_to_stock = returned_to_stock_quantity(db, harvest.id)
+    if round(already_sold + already_written_off + reserved + payload.quantity_kg - returned_to_stock, 6) > round(harvest.quantity_kg, 6):
         raise HTTPException(
             status_code=409,
             detail="Prodana količina posega v prodano ali rezervirano zalogo žetve.",
@@ -2829,6 +2833,20 @@ def sold_quantity(db: Session, harvest_id: int) -> float:
         db.scalar(
             select(func.coalesce(func.sum(Sale.quantity_kg), 0.0)).where(
                 Sale.harvest_id == harvest_id
+            )
+        )
+        or 0
+    )
+
+
+def returned_to_stock_quantity(db: Session, harvest_id: int) -> float:
+    return float(
+        db.scalar(
+            select(func.coalesce(func.sum(RetailReturnItem.quantity_kg), 0.0))
+            .join(RetailSaleItem, RetailReturnItem.retail_sale_item_id == RetailSaleItem.id)
+            .where(
+                RetailSaleItem.harvest_id == harvest_id,
+                RetailReturnItem.return_to_stock.is_(True),
             )
         )
         or 0
@@ -3033,7 +3051,8 @@ def inventory(db: Session = Depends(get_db)) -> list[dict]:
         sold_kg = sold_quantity(db, harvest.id)
         reserved_kg = reserved_quantity(db, harvest.id)
         written_off_kg = written_off_quantity(db, harvest.id)
-        physical_kg = max(0.0, harvest.quantity_kg - sold_kg - written_off_kg)
+        returned_kg = returned_to_stock_quantity(db, harvest.id)
+        physical_kg = max(0.0, harvest.quantity_kg - sold_kg - written_off_kg + returned_kg)
         available_kg = 0.0 if harvest.quality == "waste" else max(0.0, physical_kg - reserved_kg)
         result.append(
             {
@@ -3047,6 +3066,7 @@ def inventory(db: Session = Depends(get_db)) -> list[dict]:
                 "harvested_kg": harvest.quantity_kg,
                 "sold_kg": round(sold_kg, 2),
                 "written_off_kg": round(written_off_kg, 2),
+                "returned_to_stock_kg": round(returned_kg, 2),
                 "reserved_kg": round(reserved_kg, 2),
                 "available_kg": round(available_kg, 2),
                 "suggested_price_per_kg_eur": prices.get(
@@ -3138,7 +3158,7 @@ def create_order(payload: OrderCreate, db: Session = Depends(get_db)) -> dict:
         harvest = harvests[item.harvest_id]
         if harvest.quality == "waste":
             raise HTTPException(status_code=409, detail="Odpadne kakovosti ni mogoče rezervirati za prodajo.")
-        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - written_off_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
+        available = harvest.quantity_kg - sold_quantity(db, harvest.id) + returned_to_stock_quantity(db, harvest.id) - written_off_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
         if item.quantity_kg > round(available, 6):
             raise HTTPException(
                 status_code=409,
@@ -3185,7 +3205,7 @@ def update_order_status(
 
     if payload.status == "fulfilled":
         for item in order.items:
-            available_physical = item.harvest.quantity_kg - sold_quantity(db, item.harvest_id) - written_off_quantity(db, item.harvest_id)
+            available_physical = item.harvest.quantity_kg - sold_quantity(db, item.harvest_id) + returned_to_stock_quantity(db, item.harvest_id) - written_off_quantity(db, item.harvest_id)
             if item.quantity_kg > round(available_physical, 6):
                 raise HTTPException(status_code=409, detail="Zaloga ne zadošča za zaključek naročila.")
             db.add(
@@ -3565,7 +3585,7 @@ def planning_forecast(
     rows = []
     for crop in crops:
         current_stock = sum(
-            max(0.0, harvest.quantity_kg - sold_quantity(db, harvest.id) - written_off_quantity(db, harvest.id))
+            max(0.0, harvest.quantity_kg - sold_quantity(db, harvest.id) + returned_to_stock_quantity(db, harvest.id) - written_off_quantity(db, harvest.id))
             for harvest in harvests
             if harvest.planting.crop_id == crop.id
         )
@@ -3631,6 +3651,7 @@ def retail_sale_options() -> tuple:
         .selectinload(RetailSaleItem.harvest)
         .selectinload(Harvest.planting)
         .selectinload(Planting.variety),
+        selectinload(RetailSale.items).selectinload(RetailSaleItem.return_items),
     )
 
 
@@ -3676,6 +3697,11 @@ def serialize_retail_sale(retail_sale: RetailSale, settings: SalesSettings) -> d
                 "quantity_kg": item.quantity_kg,
                 "price_per_kg_eur": item.price_per_kg_eur,
                 "line_total_eur": item.line_total_eur,
+                "returned_kg": round(sum(return_item.quantity_kg for return_item in item.return_items), 3),
+                "returnable_kg": round(
+                    max(0.0, item.quantity_kg - sum(return_item.quantity_kg for return_item in item.return_items)),
+                    3,
+                ),
             }
             for item in retail_sale.items
         ],
@@ -4595,6 +4621,7 @@ def create_inventory_write_off(
             harvest.quantity_kg
             - sold_quantity(db, harvest.id)
             - written_off_quantity(db, harvest.id)
+            + returned_to_stock_quantity(db, harvest.id)
             - reserved_quantity(db, harvest.id)
         )
         if requested.quantity_kg > round(available, 6):
@@ -4654,6 +4681,173 @@ def create_inventory_write_off(
     }
 
 
+def retail_return_options() -> tuple:
+    return (
+        selectinload(RetailReturn.retail_sale),
+        selectinload(RetailReturn.items)
+        .selectinload(RetailReturnItem.retail_sale_item)
+        .selectinload(RetailSaleItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.crop),
+        selectinload(RetailReturn.items)
+        .selectinload(RetailReturnItem.retail_sale_item)
+        .selectinload(RetailSaleItem.harvest)
+        .selectinload(Harvest.planting)
+        .selectinload(Planting.variety),
+    )
+
+
+def serialize_retail_return(retail_return: RetailReturn) -> dict:
+    return {
+        "id": retail_return.id,
+        "client_event_id": retail_return.client_event_id,
+        "retail_sale_id": retail_return.retail_sale_id,
+        "sale_number": f"MP-{retail_return.retail_sale.sale_date.year}-{retail_return.retail_sale_id:04d}",
+        "return_date": retail_return.return_date,
+        "payment_method": retail_return.payment_method,
+        "reason": retail_return.reason,
+        "notes": retail_return.notes,
+        "total_eur": retail_return.total_eur,
+        "items": [
+            {
+                "id": item.id,
+                "retail_sale_item_id": item.retail_sale_item_id,
+                "harvest_id": item.retail_sale_item.harvest_id,
+                "crop": item.retail_sale_item.harvest.planting.crop.name,
+                "variety": item.retail_sale_item.harvest.planting.variety.name,
+                "quantity_kg": round(item.quantity_kg, 3),
+                "return_to_stock": item.return_to_stock,
+                "line_total_eur": item.line_total_eur,
+            }
+            for item in retail_return.items
+        ],
+    }
+
+
+@app.get("/api/retail-returns")
+def list_retail_returns(db: Session = Depends(get_db)) -> list[dict]:
+    returns = db.scalars(
+        select(RetailReturn)
+        .where(RetailReturn.farm_id == DEFAULT_FARM_ID)
+        .options(*retail_return_options())
+        .order_by(RetailReturn.return_date.desc(), RetailReturn.id.desc())
+    ).all()
+    return [serialize_retail_return(item) for item in returns]
+
+
+@app.post("/api/retail-returns", status_code=status.HTTP_201_CREATED)
+def create_retail_return(
+    payload: RetailReturnCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    ensure_business_day_open(db, payload.return_date)
+    if payload.client_event_id:
+        existing = db.scalar(
+            select(RetailReturn)
+            .where(
+                RetailReturn.farm_id == DEFAULT_FARM_ID,
+                RetailReturn.client_event_id == payload.client_event_id,
+            )
+            .options(*retail_return_options())
+        )
+        if existing:
+            return {
+                "message": "Vračilo je bilo že sinhronizirano; zaloga in denarni tok nista bila ponovno spremenjena.",
+                "already_recorded": True,
+                **serialize_retail_return(existing),
+            }
+
+    item_ids = [item.retail_sale_item_id for item in payload.items]
+    if len(item_ids) != len(set(item_ids)):
+        raise HTTPException(status_code=422, detail="Ista prodajna postavka je lahko navedena samo enkrat.")
+    sale_items = {
+        item.id: item
+        for item in db.scalars(
+            select(RetailSaleItem)
+            .where(RetailSaleItem.id.in_(item_ids))
+            .options(
+                selectinload(RetailSaleItem.retail_sale).selectinload(RetailSale.invoice),
+                selectinload(RetailSaleItem.return_items),
+            )
+            .with_for_update()
+        ).all()
+    }
+    if len(sale_items) != len(item_ids):
+        raise HTTPException(status_code=404, detail="Ena ali več prodajnih postavk ne obstaja.")
+    sale_ids = {item.retail_sale_id for item in sale_items.values()}
+    if len(sale_ids) != 1:
+        raise HTTPException(status_code=422, detail="En dogodek vračila lahko pripada samo enemu računu.")
+    retail_sale = next(iter(sale_items.values())).retail_sale
+    if retail_sale.farm_id != DEFAULT_FARM_ID:
+        raise HTTPException(status_code=404, detail="Prodaja ne obstaja.")
+    if retail_sale.invoice is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Prodaja ima izdan račun; vračilo uredite z dobropisom.",
+        )
+    if payload.return_date < retail_sale.sale_date:
+        raise HTTPException(status_code=422, detail="Datum vračila ne sme biti pred datumom prodaje.")
+
+    for requested in payload.items:
+        sale_item = sale_items[requested.retail_sale_item_id]
+        returned = sum(item.quantity_kg for item in sale_item.return_items)
+        returnable = max(0.0, sale_item.quantity_kg - returned)
+        if requested.quantity_kg > round(returnable, 6):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Za izbrano postavko je mogoče vrniti največ {round(returnable, 3)} kg.",
+            )
+
+    retail_return = RetailReturn(
+        farm_id=DEFAULT_FARM_ID,
+        retail_sale_id=retail_sale.id,
+        return_date=payload.return_date,
+        payment_method=retail_sale.payment_method,
+        reason=payload.reason,
+        notes=payload.notes.strip() if payload.notes else None,
+        client_event_id=payload.client_event_id,
+    )
+    retail_return.items = [
+        RetailReturnItem(
+            retail_sale_item_id=requested.retail_sale_item_id,
+            quantity_kg=requested.quantity_kg,
+            return_to_stock=requested.return_to_stock,
+        )
+        for requested in payload.items
+    ]
+    db.add(retail_return)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_event_id:
+            existing = db.scalar(
+                select(RetailReturn)
+                .where(
+                    RetailReturn.farm_id == DEFAULT_FARM_ID,
+                    RetailReturn.client_event_id == payload.client_event_id,
+                )
+                .options(*retail_return_options())
+            )
+            if existing:
+                return {
+                    "message": "Vračilo je bilo že sinhronizirano; zaloga in denarni tok nista bila ponovno spremenjena.",
+                    "already_recorded": True,
+                    **serialize_retail_return(existing),
+                }
+        raise
+    saved = db.scalar(
+        select(RetailReturn)
+        .where(RetailReturn.id == retail_return.id)
+        .options(*retail_return_options())
+    )
+    return {
+        "message": "Vračilo je evidentirano; denarni tok in zaloga sta posodobljena.",
+        "already_recorded": False,
+        **serialize_retail_return(saved),
+    }
+
+
 @app.post("/api/retail-sales", status_code=status.HTTP_201_CREATED)
 def create_retail_sale(
     payload: RetailSaleCreate,
@@ -4693,7 +4887,7 @@ def create_retail_sale(
         harvest = harvests[item.harvest_id]
         if harvest.quality == "waste":
             raise HTTPException(status_code=409, detail="Odpadne kakovosti ni mogoče prodati.")
-        available = harvest.quantity_kg - sold_quantity(db, harvest.id) - written_off_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
+        available = harvest.quantity_kg - sold_quantity(db, harvest.id) + returned_to_stock_quantity(db, harvest.id) - written_off_quantity(db, harvest.id) - reserved_quantity(db, harvest.id)
         if item.quantity_kg > round(available, 6):
             raise HTTPException(
                 status_code=409,
@@ -4816,6 +5010,18 @@ def build_sales_report(db: Session, start: date | None, end: date | None) -> dic
         )
         .options(*order_load_options())
     ).all()
+    retail_returns = db.scalars(
+        select(RetailReturn)
+        .where(
+            RetailReturn.farm_id == DEFAULT_FARM_ID,
+            RetailReturn.return_date >= range_start,
+            RetailReturn.return_date <= range_end,
+        )
+        .options(
+            selectinload(RetailReturn.retail_sale),
+            selectinload(RetailReturn.items).selectinload(RetailReturnItem.retail_sale_item),
+        )
+    ).all()
 
     entries = []
     for retail_sale in retail_sales:
@@ -4847,6 +5053,20 @@ def build_sales_report(db: Session, start: date | None, end: date | None) -> dic
                 "payment_method": "invoice" if invoice_required else "unclassified",
                 "total_eur": order.total_eur,
                 "invoice_required": invoice_required,
+            }
+        )
+    for retail_return in retail_returns:
+        entries.append(
+            {
+                "key": f"retail-return-{retail_return.id}",
+                "source": "retail_return",
+                "number": f"VR-{retail_return.return_date.year}-{retail_return.id:04d}",
+                "date": retail_return.return_date,
+                "customer": "Končni potrošnik",
+                "customer_type": "consumer",
+                "payment_method": retail_return.payment_method,
+                "total_eur": -retail_return.total_eur,
+                "invoice_required": False,
             }
         )
     entries.sort(key=lambda entry: (entry["date"], entry["key"]), reverse=True)
@@ -4916,7 +5136,7 @@ def build_sales_report(db: Session, start: date | None, end: date | None) -> dic
         "daily": daily,
         "entries": entries,
         "note": (
-            "Register vključuje hitre prodaje in dostavljena naročila. "
+            "Register vključuje hitre prodaje, vračila in dostavljena naročila. "
             "Izdani računi so prikazani ločeno; njihovo plačilo s tem ni samodejno potrjeno."
         ),
     }
@@ -5220,6 +5440,15 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
             selectinload(Refund.credit_note).selectinload(CreditNote.invoice)
         )
     ).all()
+    retail_returns = db.scalars(
+        select(RetailReturn)
+        .where(
+            RetailReturn.farm_id == DEFAULT_FARM_ID,
+            RetailReturn.return_date >= range_start,
+            RetailReturn.return_date <= range_end,
+        )
+        .options(selectinload(RetailReturn.retail_sale), selectinload(RetailReturn.items).selectinload(RetailReturnItem.retail_sale_item))
+    ).all()
     supplier_payments = db.scalars(
         select(SupplierPayment)
         .where(
@@ -5311,6 +5540,21 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
                 "amount_eur": round(refund.amount_eur, 2),
             }
         )
+    for retail_return in retail_returns:
+        entries.append(
+            {
+                "key": f"retail-return-{retail_return.id}",
+                "date": retail_return.return_date,
+                "direction": "outflow",
+                "source": "retail_return",
+                "reference": f"MP-{retail_return.retail_sale.sale_date.year}-{retail_return.retail_sale_id:04d}",
+                "party": "Končni potrošnik",
+                "description": "Vračilo POS prodaje",
+                "method": retail_return.payment_method,
+                "category": None,
+                "amount_eur": retail_return.total_eur,
+            }
+        )
     for payment in supplier_payments:
         entries.append(
             {
@@ -5335,7 +5579,9 @@ def build_cash_flow(db: Session, start: date | None, end: date | None) -> dict:
     outflows = [entry for entry in entries if entry["direction"] == "outflow"]
     inflow_eur = round(sum(entry["amount_eur"] for entry in inflows), 2)
     outflow_eur = round(sum(entry["amount_eur"] for entry in outflows), 2)
-    refund_entries = [entry for entry in entries if entry["source"] == "refund"]
+    refund_entries = [
+        entry for entry in entries if entry["source"] in {"refund", "retail_return"}
+    ]
     supplier_payment_entries = [
         entry for entry in entries if entry["source"] == "supplier_payment"
     ]
@@ -5499,6 +5745,16 @@ def build_day_close_preview(
             Refund.refund_date == business_date,
         )
     ).all()
+    retail_returns = db.scalars(
+        select(RetailReturn)
+        .where(
+            RetailReturn.farm_id == DEFAULT_FARM_ID,
+            RetailReturn.return_date == business_date,
+        )
+        .options(
+            selectinload(RetailReturn.items).selectinload(RetailReturnItem.retail_sale_item)
+        )
+    ).all()
     supplier_payments = db.scalars(
         select(SupplierPayment).where(
             SupplierPayment.farm_id == DEFAULT_FARM_ID,
@@ -5534,6 +5790,14 @@ def build_day_close_preview(
                 refund.amount_eur
                 for refund in refunds
                 if refund.payment_method == method
+            ),
+            2,
+        )
+        + round(
+            sum(
+                retail_return.total_eur
+                for retail_return in retail_returns
+                if retail_return.payment_method == method
             ),
             2,
         )
@@ -5612,7 +5876,7 @@ def build_day_close_preview(
         ),
         "retail_sale_count": len(retail_sales),
         "payment_count": len(payments),
-        "refund_count": len(refunds),
+        "refund_count": len(refunds) + len(retail_returns),
         "supplier_payment_count": len(supplier_payments),
         "farm_expense_count": len(farm_expenses),
     }

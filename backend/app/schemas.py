@@ -237,6 +237,20 @@ class InventoryWriteOffCreate(BaseModel):
     items: list[InventoryWriteOffItemCreate] = Field(min_length=1, max_length=100)
 
 
+class RetailReturnItemCreate(BaseModel):
+    retail_sale_item_id: int
+    quantity_kg: float = Field(gt=0, le=100000)
+    return_to_stock: bool = True
+
+
+class RetailReturnCreate(BaseModel):
+    return_date: date
+    reason: Literal["customer_return", "quality", "damaged", "other"] = "customer_return"
+    notes: str | None = Field(default=None, max_length=2000)
+    client_event_id: str | None = Field(default=None, min_length=1, max_length=120)
+    items: list[RetailReturnItemCreate] = Field(min_length=1, max_length=100)
+
+
 class ProductPriceUpdate(BaseModel):
     quality: Literal["A", "B"]
     price_per_kg_eur: float = Field(gt=0, le=100000)

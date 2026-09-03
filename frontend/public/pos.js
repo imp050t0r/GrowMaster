@@ -1,14 +1,17 @@
 (() => {
   const INVENTORY_KEY = "growmaster:pos:inventory";
   const QUEUE_KEY = "growmaster:pos:queue";
+  const SALES_KEY = "growmaster:pos:recent-sales";
   const SERVER_URL_KEY = "growmaster:server-url";
   const SESSION_TOKEN_KEY = "growmaster:mobile-session";
 
   const state = {
     inventory: readJson(INVENTORY_KEY, []),
     queue: readJson(QUEUE_KEY, []),
+    recentSales: readJson(SALES_KEY, []),
     cart: [],
     selectedHarvestId: null,
+    selectedReturnItemId: null,
     mode: "sale",
     syncing: false,
   };
@@ -21,8 +24,11 @@
     quantity: document.getElementById("quantity"), addQuantity: document.getElementById("addQuantity"),
     payCash: document.getElementById("payCash"), payCard: document.getElementById("payCard"), message: document.getElementById("message"),
     saleMode: document.getElementById("saleMode"), writeOffMode: document.getElementById("writeOffMode"),
+    returnMode: document.getElementById("returnMode"),
     cartTitle: document.getElementById("cartTitle"), writeOffReasonBox: document.getElementById("writeOffReasonBox"),
     writeOffReason: document.getElementById("writeOffReason"), confirmWriteOff: document.getElementById("confirmWriteOff"),
+    returnOptions: document.getElementById("returnOptions"), returnReason: document.getElementById("returnReason"),
+    returnToStock: document.getElementById("returnToStock"), confirmReturn: document.getElementById("confirmReturn"),
   };
 
   function readJson(key, fallback) {
@@ -63,6 +69,7 @@
 
   function renderProducts() {
     const term = els.search.value.trim().toLowerCase();
+    if (state.mode === "return") return renderReturnProducts(term);
     const items = state.inventory.filter(item => {
       const available = availableFor(item);
       const price = Number(item.suggested_price_per_kg_eur || 0);
@@ -82,9 +89,40 @@
     els.inventoryMeta.textContent = `${items.length} artiklov na zalogi · ${state.queue.length} nesinhroniziranih dogodkov`;
   }
 
+  function returnableFor(item) {
+    const pending = state.queue.reduce((sum, event) => {
+      if (event.type !== "return") return sum;
+      return sum + event.items.filter(x => x.retail_sale_item_id === item.id).reduce((s, x) => s + x.quantity_kg, 0);
+    }, 0);
+    const cart = state.cart.find(x => x.retail_sale_item_id === item.id)?.quantity_kg || 0;
+    return Math.max(0, Number(item.returnable_kg || 0) - pending - cart);
+  }
+
+  function returnItems() {
+    const selectedSaleId = state.cart[0]?.retail_sale_id;
+    return state.recentSales.flatMap(sale => sale.items.map(item => ({ ...item, retail_sale_id: sale.id, sale_number: sale.number, sale_date: sale.sale_date, payment_method: sale.payment_method })))
+      .filter(item => !selectedSaleId || item.retail_sale_id === selectedSaleId);
+  }
+
+  function renderReturnProducts(term) {
+    const items = returnItems().filter(item => returnableFor(item) > 0 && `${item.crop} ${item.variety || ""} ${item.sale_number}`.toLowerCase().includes(term));
+    els.products.innerHTML = "";
+    for (const item of items) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `product-button${state.selectedReturnItemId === item.id ? " selected" : ""}`;
+      button.innerHTML = `<strong>${escapeHtml(item.crop)}${item.variety ? ` · ${escapeHtml(item.variety)}` : ""}</strong><span>${escapeHtml(item.sale_number)} · ${escapeHtml(item.sale_date)}</span><b>Vračljivo ${qty(returnableFor(item))}</b>`;
+      button.addEventListener("click", () => { state.selectedReturnItemId = item.id; renderProducts(); });
+      els.products.appendChild(button);
+    }
+    if (!items.length) els.products.innerHTML = '<p class="empty">Ni prodajnih postavk za vračilo.</p>';
+    els.inventoryMeta.textContent = `${items.length} postavk za vračilo · ${state.queue.length} nesinhroniziranih dogodkov`;
+  }
+
   function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c])); }
 
   function addSelectedQuantity(amount) {
+    if (state.mode === "return") return addReturnQuantity(amount);
     const item = state.inventory.find(x => x.harvest_id === state.selectedHarvestId);
     if (!item) return showMessage("Najprej izberi artikel.", "error");
     const quantity = Number(amount);
@@ -97,6 +135,18 @@
     els.quantity.value = ""; renderAll();
   }
 
+  function addReturnQuantity(amount) {
+    const item = returnItems().find(x => x.id === state.selectedReturnItemId);
+    if (!item) return showMessage("Najprej izberi prodajno postavko.", "error");
+    const quantity = Number(amount);
+    if (!Number.isFinite(quantity) || quantity <= 0) return showMessage("Vnesi veljavno količino.", "error");
+    const existing = state.cart.find(x => x.retail_sale_item_id === item.id);
+    if (quantity > returnableFor(item)) return showMessage(`Vrniti je mogoče še ${qty(returnableFor(item))}.`, "error");
+    if (existing) existing.quantity_kg = Number((existing.quantity_kg + quantity).toFixed(3));
+    else state.cart.push({ retail_sale_item_id: item.id, retail_sale_id: item.retail_sale_id, crop: item.crop, variety: item.variety, quantity_kg: quantity, price_per_kg_eur: item.price_per_kg_eur, payment_method: item.payment_method });
+    els.quantity.value = ""; renderAll();
+  }
+
   function renderCart() {
     els.cart.innerHTML = "";
     if (!state.cart.length) els.cart.innerHTML = '<p class="empty">Izberi artikel.</p>';
@@ -105,23 +155,30 @@
       const lineTotal = item.quantity_kg * item.price_per_kg_eur;
       row.innerHTML = state.mode === "sale"
         ? `<div><strong>${escapeHtml(item.crop)}${item.variety ? ` · ${escapeHtml(item.variety)}` : ""}</strong><small>${qty(item.quantity_kg)} × ${money(item.price_per_kg_eur)}/kg</small></div><b>${money(lineTotal)}</b>`
+        : state.mode === "return"
+        ? `<div><strong>${escapeHtml(item.crop)}${item.variety ? ` · ${escapeHtml(item.variety)}` : ""}</strong><small>${qty(item.quantity_kg)} × ${money(item.price_per_kg_eur)}/kg</small></div><b>− ${money(lineTotal)}</b>`
         : `<div><strong>${escapeHtml(item.crop)}${item.variety ? ` · ${escapeHtml(item.variety)}` : ""}</strong><small>${qty(item.quantity_kg)}</small></div><b>ODPIS</b>`;
       const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "✕"; remove.setAttribute("aria-label", "Odstrani");
-      remove.addEventListener("click", () => { state.cart = state.cart.filter(x => x.harvest_id !== item.harvest_id); renderAll(); });
+      remove.addEventListener("click", () => { state.cart = state.cart.filter(x => state.mode === "return" ? x.retail_sale_item_id !== item.retail_sale_item_id : x.harvest_id !== item.harvest_id); renderAll(); });
       row.appendChild(remove); els.cart.appendChild(row);
     }
     const total = state.cart.reduce((sum, x) => sum + x.quantity_kg * x.price_per_kg_eur, 0);
     els.total.textContent = money(total);
     els.payCash.disabled = els.payCard.disabled = state.cart.length === 0;
     els.confirmWriteOff.disabled = state.cart.length === 0;
+    els.confirmReturn.disabled = state.cart.length === 0;
     const writingOff = state.mode === "write_off";
-    document.querySelector(".payment-buttons").hidden = writingOff;
+    const returning = state.mode === "return";
+    document.querySelector(".payment-buttons").hidden = writingOff || returning;
     document.querySelector(".total").hidden = writingOff;
     els.writeOffReasonBox.hidden = !writingOff;
     els.confirmWriteOff.hidden = !writingOff;
-    els.cartTitle.textContent = writingOff ? "Odpis zaloge" : "Račun";
-    els.saleMode.classList.toggle("mode-active", !writingOff);
+    els.returnOptions.hidden = !returning;
+    els.confirmReturn.hidden = !returning;
+    els.cartTitle.textContent = writingOff ? "Odpis zaloge" : returning ? "Vračilo" : "Račun";
+    els.saleMode.classList.toggle("mode-active", state.mode === "sale");
     els.writeOffMode.classList.toggle("mode-active", writingOff);
+    els.returnMode.classList.toggle("mode-active", returning);
   }
 
   function renderStatus() {
@@ -136,7 +193,9 @@
     if (!navigator.onLine) { renderAll(); return; }
     try {
       state.inventory = await api("/api/inventory");
+      state.recentSales = await api("/api/retail-sales");
       saveJson(INVENTORY_KEY, state.inventory);
+      saveJson(SALES_KEY, state.recentSales);
       renderAll();
     } catch (error) { showMessage(error.message, "error"); }
   }
@@ -174,9 +233,24 @@
     if (navigator.onLine) await syncQueue();
   }
 
+  async function confirmReturn() {
+    if (!state.cart.length) return;
+    const d = new Date();
+    const retailReturn = {
+      type: "return", id: uuid(), created_at: d.toISOString(),
+      return_date: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`,
+      reason: els.returnReason.value,
+      items: state.cart.map(({ retail_sale_item_id, quantity_kg }) => ({ retail_sale_item_id, quantity_kg, return_to_stock: els.returnToStock.checked })),
+    };
+    state.queue.push(retailReturn); saveJson(QUEUE_KEY, state.queue);
+    state.cart = []; state.selectedReturnItemId = null; renderAll();
+    showMessage("Vračilo je shranjeno in čaka na sinhronizacijo.", "success");
+    if (navigator.onLine) await syncQueue();
+  }
+
   function setMode(mode) {
     if (state.mode === mode) return;
-    state.mode = mode; state.cart = []; state.selectedHarvestId = null; renderAll();
+    state.mode = mode; state.cart = []; state.selectedHarvestId = null; state.selectedReturnItemId = null; renderAll();
   }
 
   async function syncQueue() {
@@ -189,6 +263,11 @@
           await api("/api/inventory-write-offs", {
             method: "POST",
             body: JSON.stringify({ write_off_date: event.write_off_date, reason: event.reason, client_event_id: event.id, notes: `POS:${event.id}`, items: event.items }),
+          });
+        } else if (event.type === "return") {
+          await api("/api/retail-returns", {
+            method: "POST",
+            body: JSON.stringify({ return_date: event.return_date, reason: event.reason, client_event_id: event.id, notes: `POS:${event.id}`, items: event.items }),
           });
         } else {
           await api("/api/retail-sales", {
@@ -212,8 +291,10 @@
   els.payCash.addEventListener("click", () => checkout("cash"));
   els.payCard.addEventListener("click", () => checkout("card"));
   els.confirmWriteOff.addEventListener("click", confirmWriteOff);
+  els.confirmReturn.addEventListener("click", confirmReturn);
   els.saleMode.addEventListener("click", () => setMode("sale"));
   els.writeOffMode.addEventListener("click", () => setMode("write_off"));
+  els.returnMode.addEventListener("click", () => setMode("return"));
   els.search.addEventListener("input", renderProducts);
   els.refresh.addEventListener("click", async () => { await syncQueue(); await refreshInventory(); });
   window.addEventListener("online", async () => { renderStatus(); await syncQueue(); await refreshInventory(); });
