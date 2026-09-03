@@ -14,6 +14,7 @@
     .write-off-reason{display:block;margin-top:14px;font-size:.85rem;font-weight:800;color:#5e7067}
     .write-off-reason select{display:block;width:100%;min-height:48px;margin-top:6px;border:1px solid #cbd7d0;border-radius:12px;padding:0 12px;background:#fff;font-size:1rem}
     .pay.write-off{width:100%;margin-top:14px;background:#8a3c20;color:#fff;border-color:#8a3c20}
+    .day-dialog{width:min(620px,calc(100% - 24px));border:0;border-radius:18px;padding:0;box-shadow:0 18px 60px #0004}.day-dialog::backdrop{background:#10251dbb}.day-box{padding:20px}.day-head{display:flex;justify-content:space-between;gap:12px}.day-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}.day-card{padding:12px;border-radius:12px;background:#f2f6f3}.day-card span{display:block;color:#65766d;font-size:.8rem}.day-card strong{font-size:1.25rem}.day-input{display:block;margin:12px 0}.day-input input{width:100%;min-height:48px;margin-top:5px;border:1px solid #cbd7d0;border-radius:10px;padding:0 12px;font-size:1rem}.day-actions{display:flex;gap:10px;justify-content:flex-end}.day-actions button{min-height:48px;padding:0 16px;border-radius:10px;font-weight:800}
   </style>
   <title>GrowMaster POS</title>
 </head>
@@ -34,6 +35,7 @@
       <button id="saleMode" type="button" class="secondary mode-active">PRODAJA</button>
       <button id="writeOffMode" type="button" class="secondary">ODPIS</button>
       <button id="returnMode" type="button" class="secondary">VRAČILO</button>
+      <button id="dayCloseOpen" type="button" class="secondary">DAN</button>
       <button id="refresh" type="button" class="secondary">OSVEŽI</button>
       <a class="secondary link-button" href="/">GROWMASTER</a>
     </section>
@@ -87,6 +89,16 @@
       </aside>
     </div>
   </main>
+  <dialog id="dayDialog" class="day-dialog">
+    <div class="day-box">
+      <div class="day-head"><div><span class="eyebrow">POS</span><h2>Dnevni pregled</h2></div><button id="dayCloseX" type="button" class="text-button">ZAPRI</button></div>
+      <label class="day-input">Začetna gotovina (€)<input id="openingCash" type="number" min="0" step="0.01" value="0" inputmode="decimal" /></label>
+      <div id="daySummary" class="day-grid"></div>
+      <label class="day-input">Prešteta gotovina (€)<input id="countedCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0,00" /></label>
+      <label class="day-input">Opomba<input id="dayNotes" maxlength="2000" placeholder="Neobvezno" /></label>
+      <div class="day-actions"><button id="dayRefresh" type="button" class="secondary">OSVEŽI</button><button id="dayConfirm" type="button" class="pay primary">ZAKLJUČI DAN</button></div>
+    </div>
+  </dialog>
   <script src="/pos.js" defer></script>
 </body>
 </html>
