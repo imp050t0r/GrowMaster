@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0008_green_chilli_harvest"
-        assert run_migrations() == "0008_green_chilli_harvest"
+        assert run_migrations() == "0009_inventory_write_offs"
+        assert run_migrations() == "0009_inventory_write_offs"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 8
+            ) == 9
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -1110,6 +1110,39 @@ def test_bed_planting_and_task_workflow() -> None:
             if item["harvest_id"] == second_quality_harvest.json()["id"]
         )
         assert second_stock["suggested_price_per_kg_eur"] == 5
+
+        write_off_payload = {
+            "write_off_date": "2026-09-20",
+            "reason": "unsold",
+            "client_event_id": "pos-write-off-test-1",
+            "items": [{"harvest_id": second_quality_harvest.json()["id"], "quantity_kg": 0.1}],
+        }
+        write_off = client.post("/api/inventory-write-offs", json=write_off_payload)
+        assert write_off.status_code == 201
+        assert write_off.json()["already_recorded"] is False
+        assert write_off.json()["items"][0]["reason"] == "unsold"
+        after_write_off = next(
+            item for item in client.get("/api/inventory").json()
+            if item["harvest_id"] == second_quality_harvest.json()["id"]
+        )
+        assert after_write_off["written_off_kg"] == 0.1
+        assert after_write_off["available_kg"] == 0.9
+
+        duplicate_write_off = client.post("/api/inventory-write-offs", json=write_off_payload)
+        assert duplicate_write_off.status_code == 201
+        assert duplicate_write_off.json()["already_recorded"] is True
+        assert len(client.get("/api/inventory-write-offs").json()) == 1
+
+        excessive_write_off = client.post(
+            "/api/inventory-write-offs",
+            json={
+                "write_off_date": "2026-09-20",
+                "reason": "unsold",
+                "client_event_id": "pos-write-off-test-2",
+                "items": [{"harvest_id": second_quality_harvest.json()["id"], "quantity_kg": 1}],
+            },
+        )
+        assert excessive_write_off.status_code == 409
 
         anonymous_sale = client.post(
             "/api/retail-sales",
@@ -2257,11 +2290,11 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0008_green_chilli_harvest"
+        assert data_safety_summary["schema_revision"] == "0009_inventory_write_offs"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
-        assert data_safety_summary["table_count"] == 37
+        assert data_safety_summary["table_count"] == 38
         assert data_safety_summary["record_count"] > 0
         assert data_safety_summary["daily_backup_retention"] == 14
         assert len(data_safety_summary["daily_backups"]) == 1
@@ -2332,7 +2365,7 @@ def test_bed_planting_and_task_workflow() -> None:
             data_safety_summary["record_count"]
         )
         assert backup_document["payload"]["schema_revision"] == "0001_current_schema"
-        assert len(backup_document["payload"]["tables"]) == 37
+        assert len(backup_document["payload"]["tables"]) == 38
         assert "admin_credentials" not in backup_document["payload"]["tables"]
         assert "auth_sessions" not in backup_document["payload"]["tables"]
         backup_variety = backup_document["payload"]["tables"]["varieties"][0]

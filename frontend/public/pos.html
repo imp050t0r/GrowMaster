@@ -9,6 +9,12 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icons/growmaster-192.png" />
   <link rel="stylesheet" href="/pos.css" />
+  <style>
+    .mode-active{background:#143c2f!important;color:#fff!important;border-color:#143c2f!important}
+    .write-off-reason{display:block;margin-top:14px;font-size:.85rem;font-weight:800;color:#5e7067}
+    .write-off-reason select{display:block;width:100%;min-height:48px;margin-top:6px;border:1px solid #cbd7d0;border-radius:12px;padding:0 12px;background:#fff;font-size:1rem}
+    .pay.write-off{width:100%;margin-top:14px;background:#8a3c20;color:#fff;border-color:#8a3c20}
+  </style>
   <title>GrowMaster POS</title>
 </head>
 <body>
@@ -25,6 +31,8 @@
 
     <section class="toolbar">
       <input id="search" type="search" placeholder="Poišči artikel…" autocomplete="off" />
+      <button id="saleMode" type="button" class="secondary mode-active">PRODAJA</button>
+      <button id="writeOffMode" type="button" class="secondary">ODPIS</button>
       <button id="refresh" type="button" class="secondary">OSVEŽI</button>
       <a class="secondary link-button" href="/">GROWMASTER</a>
     </section>
@@ -36,7 +44,7 @@
       </section>
 
       <aside class="cart-panel">
-        <div class="cart-heading"><h2>Račun</h2><button id="clearCart" type="button" class="text-button">POČISTI</button></div>
+        <div class="cart-heading"><h2 id="cartTitle">Račun</h2><button id="clearCart" type="button" class="text-button">POČISTI</button></div>
         <div id="cart" class="cart-list"><p class="empty">Izberi artikel.</p></div>
         <div class="quick-qty" aria-label="Hitra količina">
           <button type="button" data-qty="0.1">+ 0,10 kg</button>
@@ -48,10 +56,20 @@
           <div><input id="quantity" inputmode="decimal" type="number" min="0.01" step="0.01" placeholder="0,00" /><button id="addQuantity" type="button">DODAJ</button></div>
         </label>
         <div class="total"><span>Skupaj</span><strong id="total">0,00 €</strong></div>
+        <label id="writeOffReasonBox" class="write-off-reason" hidden>Razlog odpisa
+          <select id="writeOffReason">
+            <option value="unsold">Neprodano</option>
+            <option value="spoiled">Pokvarjeno</option>
+            <option value="damaged">Poškodovano</option>
+            <option value="quality">Neustrezna kakovost</option>
+            <option value="other">Drugo</option>
+          </select>
+        </label>
         <div class="payment-buttons">
           <button id="payCash" type="button" class="pay primary">GOTOVINA</button>
           <button id="payCard" type="button" class="pay secondary">KARTICA</button>
         </div>
+        <button id="confirmWriteOff" type="button" class="pay write-off" hidden>ODPIŠI IZ ZALOGE</button>
         <p class="hint">Če povezave ni, se prodaja varno shrani na tej napravi in prenese v GrowMaster ob naslednji povezavi.</p>
       </aside>
     </div>

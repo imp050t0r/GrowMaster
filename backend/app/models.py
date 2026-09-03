@@ -51,6 +51,7 @@ class Farm(Base):
     workers: Mapped[list["Worker"]] = relationship(back_populates="farm")
     labor_entries: Mapped[list["LaborEntry"]] = relationship(back_populates="farm")
     farm_expenses: Mapped[list["FarmExpense"]] = relationship(back_populates="farm")
+    inventory_write_offs: Mapped[list["InventoryWriteOff"]] = relationship(back_populates="farm")
 
 
 class Crop(Base):
@@ -186,6 +187,7 @@ class Harvest(Base):
     sales: Mapped[list["Sale"]] = relationship(back_populates="harvest")
     order_items: Mapped[list["OrderItem"]] = relationship(back_populates="harvest")
     retail_sale_items: Mapped[list["RetailSaleItem"]] = relationship(back_populates="harvest")
+    write_offs: Mapped[list["InventoryWriteOff"]] = relationship(back_populates="harvest")
 
 
 class Cost(Base):
@@ -224,6 +226,29 @@ class Sale(Base):
     @property
     def revenue_eur(self) -> float:
         return round(self.quantity_kg * self.price_per_kg_eur, 2)
+
+
+class InventoryWriteOff(Base):
+    __tablename__ = "inventory_write_offs"
+    __table_args__ = (
+        UniqueConstraint(
+            "farm_id", "client_event_id", "harvest_id",
+            name="uq_write_off_farm_event_harvest",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    harvest_id: Mapped[int] = mapped_column(ForeignKey("harvests.id", ondelete="RESTRICT"), index=True)
+    write_off_date: Mapped[date] = mapped_column(Date, index=True)
+    quantity_kg: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(30), default="unsold")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="inventory_write_offs")
+    harvest: Mapped[Harvest] = relationship(back_populates="write_offs")
 
 
 class Customer(Base):

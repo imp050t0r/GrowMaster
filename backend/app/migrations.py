@@ -179,6 +179,11 @@ def add_green_chilli_harvest(connection: Connection) -> None:
             )
 
 
+def create_inventory_write_offs(connection: Connection) -> None:
+    """Add traceable inventory write-offs without rewriting harvest history."""
+    app.models.InventoryWriteOff.__table__.create(bind=connection, checkfirst=True)
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -188,6 +193,7 @@ MIGRATIONS = (
     Migration("0006_variety_planting_calendar", add_variety_planting_calendar),
     Migration("0007_variety_harvest_profiles", add_variety_harvest_profiles),
     Migration("0008_green_chilli_harvest", add_green_chilli_harvest),
+    Migration("0009_inventory_write_offs", create_inventory_write_offs),
 )
 
 
