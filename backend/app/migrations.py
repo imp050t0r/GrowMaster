@@ -190,6 +190,27 @@ def create_retail_returns(connection: Connection) -> None:
     app.models.RetailReturnItem.__table__.create(bind=connection, checkfirst=True)
 
 
+def add_professional_pos(connection: Connection) -> None:
+    existing = {column["name"] for column in inspect(connection).get_columns("retail_sales")}
+    for name, sql_type in {"client_event_id": "VARCHAR(120)", "device_id": "VARCHAR(120)"}.items():
+        if name not in existing:
+            connection.execute(text(f"ALTER TABLE retail_sales ADD COLUMN {name} {sql_type}"))
+    item_columns = {column["name"] for column in inspect(connection).get_columns("retail_sale_items")}
+    for name, sql_type in {"sale_unit": "VARCHAR(30) DEFAULT 'kg'", "unit_count": "FLOAT", "unit_weight_kg": "FLOAT"}.items():
+        if name not in item_columns:
+            connection.execute(text(f"ALTER TABLE retail_sale_items ADD COLUMN {name} {sql_type}"))
+    app.models.ProductUnit.__table__.create(bind=connection, checkfirst=True)
+    app.models.InventoryAdjustment.__table__.create(bind=connection, checkfirst=True)
+    for table_name in ("inventory_write_offs", "retail_returns"):
+        columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+        if "device_id" not in columns:
+            connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN device_id VARCHAR(120)"))
+    if connection.dialect.name == "sqlite":
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_retail_sale_farm_event ON retail_sales (farm_id, client_event_id) WHERE client_event_id IS NOT NULL"))
+    else:
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_retail_sale_farm_event ON retail_sales (farm_id, client_event_id)"))
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -201,6 +222,7 @@ MIGRATIONS = (
     Migration("0008_green_chilli_harvest", add_green_chilli_harvest),
     Migration("0009_inventory_write_offs", create_inventory_write_offs),
     Migration("0010_retail_returns", create_retail_returns),
+    Migration("0011_professional_pos", add_professional_pos),
 )
 
 

@@ -182,6 +182,12 @@ class OrderStatusUpdate(BaseModel):
     status: Literal["fulfilled", "cancelled"]
 
 
+class PosPickupCreate(BaseModel):
+    payment_method: Literal["cash", "card"] = "cash"
+    client_event_id: str = Field(min_length=1, max_length=120)
+    device_id: str | None = Field(default=None, max_length=120)
+
+
 class OrderPaymentCreate(BaseModel):
     payment_date: date
     amount_eur: float = Field(gt=0, le=1000000)
@@ -214,6 +220,9 @@ class RetailSaleItemCreate(BaseModel):
     harvest_id: int
     quantity_kg: float = Field(gt=0, le=100000)
     price_per_kg_eur: float = Field(gt=0, le=100000)
+    sale_unit: Literal["kg", "piece", "bunch", "package"] = "kg"
+    unit_count: float | None = Field(default=None, gt=0, le=100000)
+    unit_weight_kg: float | None = Field(default=None, gt=0, le=1000)
 
 
 class RetailSaleCreate(BaseModel):
@@ -221,7 +230,29 @@ class RetailSaleCreate(BaseModel):
     sale_date: date
     payment_method: Literal["cash", "card", "bank_transfer"] = "cash"
     notes: str | None = Field(default=None, max_length=2000)
+    client_event_id: str | None = Field(default=None, min_length=1, max_length=120)
+    device_id: str | None = Field(default=None, min_length=1, max_length=120)
     items: list[RetailSaleItemCreate] = Field(min_length=1, max_length=100)
+
+
+class ProductUnitCreate(BaseModel):
+    crop_id: int
+    quality: Literal["A", "B"] = "A"
+    name: str = Field(min_length=1, max_length=80)
+    unit_type: Literal["piece", "bunch", "package"]
+    weight_kg: float = Field(gt=0, le=1000)
+    price_eur: float = Field(gt=0, le=100000)
+    button_color: str | None = Field(default=None, max_length=20)
+
+
+class InventoryAdjustmentCreate(BaseModel):
+    harvest_id: int
+    adjustment_date: date
+    counted_kg: float = Field(ge=0, le=100000)
+    reason: Literal["stocktake", "damage", "measurement", "other"] = "stocktake"
+    notes: str | None = Field(default=None, max_length=2000)
+    client_event_id: str | None = Field(default=None, min_length=1, max_length=120)
+    device_id: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class InventoryWriteOffItemCreate(BaseModel):
@@ -234,6 +265,7 @@ class InventoryWriteOffCreate(BaseModel):
     reason: Literal["unsold", "spoiled", "damaged", "quality", "other"] = "unsold"
     notes: str | None = Field(default=None, max_length=2000)
     client_event_id: str | None = Field(default=None, min_length=1, max_length=120)
+    device_id: str | None = Field(default=None, max_length=120)
     items: list[InventoryWriteOffItemCreate] = Field(min_length=1, max_length=100)
 
 
@@ -248,6 +280,7 @@ class RetailReturnCreate(BaseModel):
     reason: Literal["customer_return", "quality", "damaged", "other"] = "customer_return"
     notes: str | None = Field(default=None, max_length=2000)
     client_event_id: str | None = Field(default=None, min_length=1, max_length=120)
+    device_id: str | None = Field(default=None, max_length=120)
     items: list[RetailReturnItemCreate] = Field(min_length=1, max_length=100)
 
 

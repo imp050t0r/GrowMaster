@@ -4,6 +4,9 @@
   const SALES_KEY = "growmaster:pos:recent-sales";
   const SERVER_URL_KEY = "growmaster:server-url";
   const SESSION_TOKEN_KEY = "growmaster:mobile-session";
+  const DEVICE_ID_KEY = "growmaster:pos:device-id";
+  const deviceId = localStorage.getItem(DEVICE_ID_KEY) || `device-${uuid()}`;
+  localStorage.setItem(DEVICE_ID_KEY, deviceId);
 
   const state = {
     inventory: readJson(INVENTORY_KEY, []),
@@ -32,6 +35,8 @@
     dayCloseOpen: document.getElementById("dayCloseOpen"), dayDialog: document.getElementById("dayDialog"), dayCloseX: document.getElementById("dayCloseX"),
     openingCash: document.getElementById("openingCash"), countedCash: document.getElementById("countedCash"), dayNotes: document.getElementById("dayNotes"),
     daySummary: document.getElementById("daySummary"), dayRefresh: document.getElementById("dayRefresh"), dayConfirm: document.getElementById("dayConfirm"),
+    historyOpen: document.getElementById("historyOpen"), unitsOpen: document.getElementById("unitsOpen"), stocktakeOpen: document.getElementById("stocktakeOpen"), pickupOpen: document.getElementById("pickupOpen"),
+    workDialog: document.getElementById("workDialog"), workTitle: document.getElementById("workTitle"), workBody: document.getElementById("workBody"), workClose: document.getElementById("workClose"),
   };
 
   function readJson(key, fallback) {
@@ -67,7 +72,7 @@
 
   function availableFor(item) {
     const pending = state.queue.reduce((sum, event) => sum + event.items.filter(x => x.harvest_id === item.harvest_id).reduce((s, x) => s + x.quantity_kg, 0), 0);
-    const cart = state.cart.find(x => x.harvest_id === item.harvest_id)?.quantity_kg || 0;
+    const cart = state.cart.filter(x => x.harvest_id === item.harvest_id).reduce((sum, x) => sum + x.quantity_kg, 0);
     return Math.max(0, Number(item.available_kg || 0) - pending - cart);
   }
 
@@ -82,6 +87,17 @@
     });
     els.products.innerHTML = "";
     for (const item of items) {
+      if (state.mode === "sale") {
+        const kgButton = productButton(item, `${item.crop}${item.variety ? ` · ${item.variety}` : ""}`, `${qty(availableFor(item))} · TEHTANO`, null);
+        els.products.appendChild(kgButton);
+        for (const unit of item.sale_units || []) {
+          if (availableFor(item) + 1e-6 < Number(unit.weight_kg)) continue;
+          const button = productButton(item, `${item.crop} · ${unit.name}`, `${money(unit.price_eur)} · ${qty(unit.weight_kg)}`, unit);
+          if (unit.button_color) button.style.borderTop = `8px solid ${unit.button_color}`;
+          els.products.appendChild(button);
+        }
+        continue;
+      }
       const button = document.createElement("button");
       button.type = "button";
       button.className = `product-button${state.selectedHarvestId === item.harvest_id ? " selected" : ""}`;
@@ -91,6 +107,26 @@
     }
     if (!items.length) els.products.innerHTML = '<p class="empty">Ni artiklov na zalogi.</p>';
     els.inventoryMeta.textContent = `${items.length} artiklov na zalogi · ${state.queue.length} nesinhroniziranih dogodkov`;
+  }
+
+  function productButton(item, title, subtitle, unit) {
+    const button = document.createElement("button"); button.type = "button"; button.className = "product-button";
+    button.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(subtitle)}</span>`;
+    button.addEventListener("click", () => {
+      state.selectedHarvestId = item.harvest_id;
+      if (unit) addPackagedUnit(item, unit); else renderProducts();
+    });
+    return button;
+  }
+
+  function addPackagedUnit(item, unit) {
+    const weight = Number(unit.weight_kg), price = Number(unit.price_eur);
+    if (weight > availableFor(item)) return showMessage(`Na voljo je še ${qty(availableFor(item))}.`, "error");
+    const key = `${item.harvest_id}:${unit.id}`;
+    const existing = state.cart.find(x => x.cart_key === key);
+    if (existing) { existing.unit_count += 1; existing.quantity_kg = Number((existing.unit_count * weight).toFixed(3)); }
+    else state.cart.push({ cart_key: key, harvest_id: item.harvest_id, crop: item.crop, variety: `${item.variety} · ${unit.name}`, quality: item.quality, quantity_kg: weight, price_per_kg_eur: price / weight, sale_unit: unit.unit_type, unit_count: 1, unit_weight_kg: weight });
+    renderAll();
   }
 
   function returnableFor(item) {
@@ -131,11 +167,11 @@
     if (!item) return showMessage("Najprej izberi artikel.", "error");
     const quantity = Number(amount);
     if (!Number.isFinite(quantity) || quantity <= 0) return showMessage("Vnesi veljavno količino.", "error");
-    const existing = state.cart.find(x => x.harvest_id === item.harvest_id);
+    const existing = state.cart.find(x => x.harvest_id === item.harvest_id && (x.sale_unit || "kg") === "kg");
     const already = existing?.quantity_kg || 0;
     if (quantity > availableFor(item)) return showMessage(`Na voljo je še ${qty(availableFor(item))}.`, "error");
     if (existing) existing.quantity_kg = Number((already + quantity).toFixed(3));
-    else state.cart.push({ harvest_id: item.harvest_id, crop: item.crop, variety: item.variety, quality: item.quality, quantity_kg: quantity, price_per_kg_eur: Number(item.suggested_price_per_kg_eur || 0) });
+    else state.cart.push({ cart_key: `${item.harvest_id}:kg`, harvest_id: item.harvest_id, crop: item.crop, variety: item.variety, quality: item.quality, quantity_kg: quantity, price_per_kg_eur: Number(item.suggested_price_per_kg_eur || 0), sale_unit: "kg" });
     els.quantity.value = ""; renderAll();
   }
 
@@ -209,7 +245,8 @@
     const saleDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     return {
       id: uuid(), created_at: d.toISOString(), sale_date: saleDate, payment_method: paymentMethod,
-      items: state.cart.map(({ harvest_id, quantity_kg, price_per_kg_eur }) => ({ harvest_id, quantity_kg, price_per_kg_eur })),
+      device_id: deviceId,
+      items: state.cart.map(({ harvest_id, quantity_kg, price_per_kg_eur, sale_unit = "kg", unit_count = null, unit_weight_kg = null }) => ({ harvest_id, quantity_kg, price_per_kg_eur, sale_unit, unit_count, unit_weight_kg })),
     };
   }
 
@@ -266,17 +303,17 @@
         if (event.type === "write_off") {
           await api("/api/inventory-write-offs", {
             method: "POST",
-            body: JSON.stringify({ write_off_date: event.write_off_date, reason: event.reason, client_event_id: event.id, notes: `POS:${event.id}`, items: event.items }),
+            body: JSON.stringify({ write_off_date: event.write_off_date, reason: event.reason, client_event_id: event.id, device_id: deviceId, notes: `POS:${event.id}`, items: event.items }),
           });
         } else if (event.type === "return") {
           await api("/api/retail-returns", {
             method: "POST",
-            body: JSON.stringify({ return_date: event.return_date, reason: event.reason, client_event_id: event.id, notes: `POS:${event.id}`, items: event.items }),
+            body: JSON.stringify({ return_date: event.return_date, reason: event.reason, client_event_id: event.id, device_id: deviceId, notes: `POS:${event.id}`, items: event.items }),
           });
         } else {
           await api("/api/retail-sales", {
             method: "POST",
-            body: JSON.stringify({ sale_date: event.sale_date, payment_method: event.payment_method, customer_id: null, notes: `POS:${event.id}`, items: event.items }),
+            body: JSON.stringify({ sale_date: event.sale_date, payment_method: event.payment_method, customer_id: null, client_event_id: event.id, device_id: event.device_id || deviceId, notes: `POS:${event.id}`, items: event.items }),
           });
         }
         state.queue.shift(); saveJson(QUEUE_KEY, state.queue);
@@ -317,6 +354,32 @@
       showMessage(`Dan je zaključen. Razlika blagajne: ${money(result.difference_eur)}.`, result.difference_eur === 0 ? "success" : "");
     } catch (error) { showMessage(error.message, "error"); }
   }
+  function openWork(title, html) { els.workTitle.textContent = title; els.workBody.innerHTML = html; els.workDialog.showModal(); }
+  async function showHistory() {
+    if (!navigator.onLine) return showMessage("Zgodovina potrebuje povezavo.", "error");
+    const [sales, returns, writeOffs] = await Promise.all([api("/api/retail-sales"), api("/api/retail-returns"), api("/api/inventory-write-offs")]);
+    const rows = [
+      ...returns.map(x => ({ date:x.return_date, type:"VRAČILO", ref:x.sale_number, value:`− ${money(x.total_eur)}`, device:"POS" })),
+      ...writeOffs.map(x => ({ date:x.write_off_date, type:"ODPIS", ref:`Žetev ${x.harvest_id}`, value:qty(x.quantity_kg), device:"POS" })),
+    ].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const saleCards = sales.map(x=>{ const returnable=x.items.filter(i=>i.returnable_kg>0); return `<div class="day-card"><span>${escapeHtml(x.sale_date)} · PRODAJA · ${escapeHtml(x.device_id || "računalnik")}</span><strong>${escapeHtml(x.number)} · ${money(x.total_eur)}</strong>${returnable.length && !x.invoice ? `<button data-void-sale="${x.id}" class="secondary">STORNO</button>`:""}</div>`; }).join("");
+    openWork("Zgodovina POS", saleCards + rows.map(x=>`<div class="day-card"><span>${escapeHtml(x.date)} · ${x.type} · ${escapeHtml(x.device)}</span><strong>${escapeHtml(x.ref)} · ${x.value}</strong></div>`).join("") || '<p class="empty">Ni dogodkov.</p>');
+    els.workBody.querySelectorAll("[data-void-sale]").forEach(button=>button.onclick=async()=>{ const sale=sales.find(x=>x.id===Number(button.dataset.voidSale)); await api("/api/retail-returns",{method:"POST",body:JSON.stringify({return_date:localDate(),reason:"other",notes:`STORNO ${sale.number}`,client_event_id:uuid(),device_id:deviceId,items:sale.items.filter(i=>i.returnable_kg>0).map(i=>({retail_sale_item_id:i.id,quantity_kg:i.returnable_kg,return_to_stock:true}))})}); els.workDialog.close(); await refreshInventory(); showMessage("Prodaja je stornirana; zaloga in denarni tok sta popravljena.","success"); });
+  }
+  async function showUnits() {
+    const crops = [...new Map(state.inventory.filter(x=>x.available_kg>0).map(x=>[`${x.crop_id}:${x.quality}`,x])).values()];
+    openWork("Prodajne enote", `<label class="day-input">Požeti artikel<select id="unitCrop">${crops.map(x=>`<option value="${x.crop_id}" data-quality="${x.quality}">${escapeHtml(x.crop)} · ${escapeHtml(x.quality)}</option>`).join("")}</select></label><label class="day-input">Ime gumba<input id="unitName" placeholder="Pakiranje 150 g ali šopek" /></label><label class="day-input">Vrsta<select id="unitType"><option value="package">Pakiranje</option><option value="bunch">Šopek</option><option value="piece">Kos</option></select></label><label class="day-input">Teža enote (kg)<input id="unitWeight" type="number" min="0.001" step="0.001" /></label><label class="day-input">Cena enote (€)<input id="unitPrice" type="number" min="0.01" step="0.01" /></label><button id="unitSave" class="pay primary">SHRANI VELIK GUMB</button>`);
+    document.getElementById("unitSave").onclick = async()=>{ const select=document.getElementById("unitCrop"), option=select.selectedOptions[0]; await api("/api/product-units",{method:"POST",body:JSON.stringify({crop_id:Number(select.value),quality:option.dataset.quality,name:document.getElementById("unitName").value,unit_type:document.getElementById("unitType").value,weight_kg:Number(document.getElementById("unitWeight").value),price_eur:Number(document.getElementById("unitPrice").value)})}); els.workDialog.close(); await refreshInventory(); showMessage("Prodajni gumb je dodan.","success"); };
+  }
+  function showStocktake() {
+    openWork("Inventura", state.inventory.filter(x=>x.available_kg>0).map(x=>`<div class="day-card"><span>${escapeHtml(x.crop)} · ${escapeHtml(x.variety)} · pričakovano ${qty(x.available_kg)}</span><div class="custom-qty"><div><input data-count-harvest="${x.harvest_id}" type="number" min="0" step="0.01" value="${x.available_kg}"/><button data-save-count="${x.harvest_id}">USKLADI</button></div></div></div>`).join(""));
+    els.workBody.querySelectorAll("[data-save-count]").forEach(button=>button.onclick=async()=>{ const id=Number(button.dataset.saveCount), input=els.workBody.querySelector(`[data-count-harvest="${id}"]`); await api("/api/inventory-adjustments",{method:"POST",body:JSON.stringify({harvest_id:id,adjustment_date:localDate(),counted_kg:Number(input.value),reason:"stocktake",client_event_id:uuid(),device_id:deviceId})}); await refreshInventory(); button.textContent="SHRANJENO"; button.disabled=true; });
+  }
+  async function showPickups() {
+    const orders=(await api("/api/orders")).filter(x=>x.status==="confirmed");
+    openWork("Rezervacije za prevzem", orders.length ? orders.map(x=>`<div class="day-card"><span>${escapeHtml(x.customer)} · ${escapeHtml(x.delivery_date)}</span><strong>${money(x.total_eur)}</strong><div class="day-actions"><button data-pickup="${x.id}" data-method="cash">GOTOVINA</button><button data-pickup="${x.id}" data-method="card">KARTICA</button></div></div>`).join("") : '<p class="empty">Ni potrjenih rezervacij.</p>');
+    els.workBody.querySelectorAll("[data-pickup]").forEach(button=>button.onclick=async()=>{ await api(`/api/orders/${button.dataset.pickup}/pos-fulfill`,{method:"POST",body:JSON.stringify({payment_method:button.dataset.method,client_event_id:uuid(),device_id:deviceId})}); els.workDialog.close(); await refreshInventory(); showMessage("Prevzem je zaključen in plačilo evidentirano.","success"); });
+  }
 
   document.querySelectorAll("[data-qty]").forEach(button => button.addEventListener("click", () => addSelectedQuantity(button.dataset.qty)));
   els.addQuantity.addEventListener("click", () => addSelectedQuantity(els.quantity.value));
@@ -334,6 +397,11 @@
   els.dayRefresh.addEventListener("click", loadDayPreview);
   els.dayConfirm.addEventListener("click", confirmDayClose);
   els.openingCash.addEventListener("change", loadDayPreview);
+  els.historyOpen.addEventListener("click", showHistory);
+  els.unitsOpen.addEventListener("click", showUnits);
+  els.stocktakeOpen.addEventListener("click", showStocktake);
+  els.pickupOpen.addEventListener("click", showPickups);
+  els.workClose.addEventListener("click",()=>els.workDialog.close());
   els.search.addEventListener("input", renderProducts);
   els.refresh.addEventListener("click", async () => { await syncQueue(); await refreshInventory(); });
   window.addEventListener("online", async () => { renderStatus(); await syncQueue(); await refreshInventory(); });

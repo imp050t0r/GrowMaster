@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0010_retail_returns"
-        assert run_migrations() == "0010_retail_returns"
+        assert run_migrations() == "0011_professional_pos"
+        assert run_migrations() == "0011_professional_pos"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 10
+            ) == 11
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -819,6 +819,18 @@ def test_bed_planting_and_task_workflow() -> None:
             ("A", 7),
             ("B", 5),
         ]
+        package = client.post(
+            "/api/product-units",
+            json={
+                "crop_id": crop["id"],
+                "quality": "A",
+                "name": "Pakiranje 150 g",
+                "unit_type": "package",
+                "weight_kg": 0.15,
+                "price_eur": 1.5,
+            },
+        )
+        assert package.status_code == 201
 
         inventory = client.get("/api/inventory").json()
         stock = next(item for item in inventory if item["harvest_id"] == harvest.json()["id"])
@@ -826,6 +838,8 @@ def test_bed_planting_and_task_workflow() -> None:
         assert stock["reserved_kg"] == 0
         assert stock["crop_id"] == crop["id"]
         assert stock["suggested_price_per_kg_eur"] == 7
+        assert stock["sale_units"][0]["name"] == "Pakiranje 150 g"
+        assert stock["sale_units"][0]["weight_kg"] == 0.15
 
         reserved_order = client.post(
             "/api/orders",
@@ -1149,6 +1163,8 @@ def test_bed_planting_and_task_workflow() -> None:
             json={
                 "sale_date": "2026-09-20",
                 "payment_method": "cash",
+                "client_event_id": "pos-sale-idempotency-test",
+                "device_id": "test-tablet",
                 "items": [
                     {
                         "harvest_id": harvest.json()["id"],
@@ -1169,6 +1185,30 @@ def test_bed_planting_and_task_workflow() -> None:
         assert anonymous_sale.json()["invoice_required"] is False
         assert anonymous_sale.json()["total_eur"] == 3.8
         assert len(anonymous_sale.json()["items"]) == 2
+        duplicate_sale = client.post(
+            "/api/retail-sales",
+            json={
+                "sale_date": "2026-09-20",
+                "payment_method": "cash",
+                "client_event_id": "pos-sale-idempotency-test",
+                "device_id": "test-tablet",
+                "items": [
+                    {
+                        "harvest_id": harvest.json()["id"],
+                        "quantity_kg": 0.4,
+                        "price_per_kg_eur": 7,
+                    },
+                    {
+                        "harvest_id": second_quality_harvest.json()["id"],
+                        "quantity_kg": 0.2,
+                        "price_per_kg_eur": 5,
+                    },
+                ],
+            },
+        )
+        assert duplicate_sale.status_code == 201
+        assert duplicate_sale.json()["already_recorded"] is True
+        assert duplicate_sale.json()["id"] == anonymous_sale.json()["id"]
 
         receipt = client.get(
             f"/api/retail-sales/{anonymous_sale.json()['id']}/document?document_type=receipt"
@@ -1682,6 +1722,23 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert returned_stock["returned_to_stock_kg"] == 0.1
         assert returned_stock["available_kg"] == 0.8
+        stocktake_payload = {
+            "harvest_id": second_quality_harvest.json()["id"],
+            "adjustment_date": "2026-09-24",
+            "counted_kg": 0.75,
+            "reason": "stocktake",
+            "client_event_id": "stocktake-test-1",
+            "device_id": "test-tablet",
+        }
+        stocktake = client.post("/api/inventory-adjustments", json=stocktake_payload)
+        assert stocktake.status_code == 201
+        assert stocktake.json()["difference_kg"] == -0.05
+        duplicate_stocktake = client.post("/api/inventory-adjustments", json=stocktake_payload)
+        assert duplicate_stocktake.status_code == 201
+        assert duplicate_stocktake.json()["already_recorded"] is True
+        losses = client.get("/api/inventory-loss-analysis").json()
+        loss_row = next(x for x in losses if x["harvest_id"] == second_quality_harvest.json()["id"])
+        assert loss_row["unexplained_loss_kg"] == 0.05
 
         duplicate_return = client.post("/api/retail-returns", json=retail_return_payload)
         assert duplicate_return.status_code == 201
@@ -2364,11 +2421,11 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0010_retail_returns"
+        assert data_safety_summary["schema_revision"] == "0011_professional_pos"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
-        assert data_safety_summary["table_count"] == 40
+        assert data_safety_summary["table_count"] == 42
         assert data_safety_summary["record_count"] > 0
         assert data_safety_summary["daily_backup_retention"] == 14
         assert len(data_safety_summary["daily_backups"]) == 1
@@ -2439,7 +2496,7 @@ def test_bed_planting_and_task_workflow() -> None:
             data_safety_summary["record_count"]
         )
         assert backup_document["payload"]["schema_revision"] == "0001_current_schema"
-        assert len(backup_document["payload"]["tables"]) == 40
+        assert len(backup_document["payload"]["tables"]) == 42
         assert "admin_credentials" not in backup_document["payload"]["tables"]
         assert "auth_sessions" not in backup_document["payload"]["tables"]
         backup_variety = backup_document["payload"]["tables"]["varieties"][0]

@@ -1,4 +1,4 @@
-const CACHE_NAME = "growmaster-shell-v1.24.27-pos-day-close";
+const CACHE_NAME = "growmaster-shell-v1.24.28-professional-pos";
 const APP_SHELL = [
   "/",
   "/pos.html",
