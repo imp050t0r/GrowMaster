@@ -35,6 +35,7 @@ class Farm(Base):
     crop_plans: Mapped[list["CropPlan"]] = relationship(back_populates="farm")
     sales_settings: Mapped["SalesSettings | None"] = relationship(back_populates="farm")
     retail_sales: Mapped[list["RetailSale"]] = relationship(back_populates="farm")
+    retail_returns: Mapped[list["RetailReturn"]] = relationship(back_populates="farm")
     invoice_profile: Mapped["InvoiceProfile | None"] = relationship(back_populates="farm")
     invoices: Mapped[list["Invoice"]] = relationship(back_populates="farm")
     credit_notes: Mapped[list["CreditNote"]] = relationship(back_populates="farm")
@@ -894,6 +895,7 @@ class RetailSale(Base):
     invoice: Mapped["Invoice | None"] = relationship(
         back_populates="retail_sale", uselist=False
     )
+    returns: Mapped[list["RetailReturn"]] = relationship(back_populates="retail_sale")
 
     @property
     def total_eur(self) -> float:
@@ -915,10 +917,55 @@ class RetailSaleItem(Base):
 
     retail_sale: Mapped[RetailSale] = relationship(back_populates="items")
     harvest: Mapped[Harvest] = relationship(back_populates="retail_sale_items")
+    return_items: Mapped[list["RetailReturnItem"]] = relationship(back_populates="retail_sale_item")
 
     @property
     def line_total_eur(self) -> float:
         return round(self.quantity_kg * self.price_per_kg_eur, 2)
+
+
+class RetailReturn(Base):
+    __tablename__ = "retail_returns"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "client_event_id", name="uq_retail_return_farm_event"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    retail_sale_id: Mapped[int] = mapped_column(ForeignKey("retail_sales.id", ondelete="RESTRICT"), index=True)
+    return_date: Mapped[date] = mapped_column(Date, index=True)
+    payment_method: Mapped[str] = mapped_column(String(20))
+    reason: Mapped[str] = mapped_column(String(30), default="customer_return")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_event_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    farm: Mapped[Farm] = relationship(back_populates="retail_returns")
+    retail_sale: Mapped[RetailSale] = relationship(back_populates="returns")
+    items: Mapped[list["RetailReturnItem"]] = relationship(
+        back_populates="retail_return", cascade="all, delete-orphan"
+    )
+
+    @property
+    def total_eur(self) -> float:
+        return round(sum(item.line_total_eur for item in self.items), 2)
+
+
+class RetailReturnItem(Base):
+    __tablename__ = "retail_return_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    retail_return_id: Mapped[int] = mapped_column(ForeignKey("retail_returns.id", ondelete="CASCADE"), index=True)
+    retail_sale_item_id: Mapped[int] = mapped_column(ForeignKey("retail_sale_items.id", ondelete="RESTRICT"), index=True)
+    quantity_kg: Mapped[float] = mapped_column(Float)
+    return_to_stock: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    retail_return: Mapped[RetailReturn] = relationship(back_populates="items")
+    retail_sale_item: Mapped[RetailSaleItem] = relationship(back_populates="return_items")
+
+    @property
+    def line_total_eur(self) -> float:
+        return round(self.quantity_kg * self.retail_sale_item.price_per_kg_eur, 2)
 
 
 class Task(Base):

@@ -184,6 +184,12 @@ def create_inventory_write_offs(connection: Connection) -> None:
     app.models.InventoryWriteOff.__table__.create(bind=connection, checkfirst=True)
 
 
+def create_retail_returns(connection: Connection) -> None:
+    """Add item-level POS returns after their parent sales tables exist."""
+    app.models.RetailReturn.__table__.create(bind=connection, checkfirst=True)
+    app.models.RetailReturnItem.__table__.create(bind=connection, checkfirst=True)
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -194,6 +200,7 @@ MIGRATIONS = (
     Migration("0007_variety_harvest_profiles", add_variety_harvest_profiles),
     Migration("0008_green_chilli_harvest", add_green_chilli_harvest),
     Migration("0009_inventory_write_offs", create_inventory_write_offs),
+    Migration("0010_retail_returns", create_retail_returns),
 )
 
 

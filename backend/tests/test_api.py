@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0009_inventory_write_offs"
-        assert run_migrations() == "0009_inventory_write_offs"
+        assert run_migrations() == "0010_retail_returns"
+        assert run_migrations() == "0010_retail_returns"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 9
+            ) == 10
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -1654,6 +1654,80 @@ def test_bed_planting_and_task_workflow() -> None:
         assert "že zaključen" in late_refund.json()["detail"]
         assert len(client.get("/api/day-closes").json()) == 2
 
+        anonymous_return_item = next(
+            item
+            for item in anonymous_sale.json()["items"]
+            if item["harvest_id"] == second_quality_harvest.json()["id"]
+        )
+        retail_return_payload = {
+            "return_date": "2026-09-24",
+            "reason": "customer_return",
+            "client_event_id": "pos-return-test-1",
+            "items": [
+                {
+                    "retail_sale_item_id": anonymous_return_item["id"],
+                    "quantity_kg": 0.1,
+                    "return_to_stock": True,
+                }
+            ],
+        }
+        retail_return = client.post("/api/retail-returns", json=retail_return_payload)
+        assert retail_return.status_code == 201
+        assert retail_return.json()["already_recorded"] is False
+        assert retail_return.json()["payment_method"] == "cash"
+        assert retail_return.json()["total_eur"] == 0.5
+        returned_stock = next(
+            item for item in client.get("/api/inventory").json()
+            if item["harvest_id"] == second_quality_harvest.json()["id"]
+        )
+        assert returned_stock["returned_to_stock_kg"] == 0.1
+        assert returned_stock["available_kg"] == 0.8
+
+        duplicate_return = client.post("/api/retail-returns", json=retail_return_payload)
+        assert duplicate_return.status_code == 201
+        assert duplicate_return.json()["already_recorded"] is True
+        assert len(client.get("/api/retail-returns").json()) == 1
+        assert client.post(
+            "/api/retail-returns",
+            json={
+                **retail_return_payload,
+                "client_event_id": "pos-return-test-2",
+                "items": [{**retail_return_payload["items"][0], "quantity_kg": 0.11}],
+            },
+        ).status_code == 409
+
+        business_return_item = business_sale.json()["items"][0]
+        invoiced_return = client.post(
+            "/api/retail-returns",
+            json={
+                "return_date": "2026-09-24",
+                "client_event_id": "pos-return-invoiced-test",
+                "items": [{"retail_sale_item_id": business_return_item["id"], "quantity_kg": 0.01}],
+            },
+        )
+        assert invoiced_return.status_code == 409
+        assert "dobropisom" in invoiced_return.json()["detail"]
+
+        return_cash_flow = client.get(
+            "/api/cash-flow?start=2026-09-24&end=2026-09-24"
+        ).json()
+        assert return_cash_flow["summary"]["outflow_eur"] == 0.5
+        assert return_cash_flow["summary"]["refund_eur"] == 0.5
+        assert return_cash_flow["summary"]["refund_count"] == 1
+        assert return_cash_flow["entries"][0]["source"] == "retail_return"
+        return_day_preview = client.get(
+            "/api/day-closes/preview?business_date=2026-09-24&opening_cash_eur=20"
+        ).json()
+        assert return_day_preview["cash_refund_eur"] == 0.5
+        assert return_day_preview["expected_cash_eur"] == 19.5
+        assert return_day_preview["refund_count"] == 1
+
+        net_sales = client.get(
+            "/api/sales-report?start=2026-09-24&end=2026-09-24"
+        ).json()
+        assert net_sales["summary"]["total_eur"] == -0.5
+        assert net_sales["entries"][0]["source"] == "retail_return"
+
         supplier = client.post(
             "/api/suppliers",
             json={
@@ -2290,11 +2364,11 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0009_inventory_write_offs"
+        assert data_safety_summary["schema_revision"] == "0010_retail_returns"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
-        assert data_safety_summary["table_count"] == 38
+        assert data_safety_summary["table_count"] == 40
         assert data_safety_summary["record_count"] > 0
         assert data_safety_summary["daily_backup_retention"] == 14
         assert len(data_safety_summary["daily_backups"]) == 1
@@ -2365,7 +2439,7 @@ def test_bed_planting_and_task_workflow() -> None:
             data_safety_summary["record_count"]
         )
         assert backup_document["payload"]["schema_revision"] == "0001_current_schema"
-        assert len(backup_document["payload"]["tables"]) == 38
+        assert len(backup_document["payload"]["tables"]) == 40
         assert "admin_credentials" not in backup_document["payload"]["tables"]
         assert "auth_sessions" not in backup_document["payload"]["tables"]
         backup_variety = backup_document["payload"]["tables"]["varieties"][0]

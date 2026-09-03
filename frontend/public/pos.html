@@ -33,6 +33,7 @@
       <input id="search" type="search" placeholder="Poišči artikel…" autocomplete="off" />
       <button id="saleMode" type="button" class="secondary mode-active">PRODAJA</button>
       <button id="writeOffMode" type="button" class="secondary">ODPIS</button>
+      <button id="returnMode" type="button" class="secondary">VRAČILO</button>
       <button id="refresh" type="button" class="secondary">OSVEŽI</button>
       <a class="secondary link-button" href="/">GROWMASTER</a>
     </section>
@@ -65,11 +66,23 @@
             <option value="other">Drugo</option>
           </select>
         </label>
+        <div id="returnOptions" hidden>
+          <label class="write-off-reason">Razlog vračila
+            <select id="returnReason">
+              <option value="customer_return">Vračilo kupca</option>
+              <option value="quality">Neustrezna kakovost</option>
+              <option value="damaged">Poškodovano</option>
+              <option value="other">Drugo</option>
+            </select>
+          </label>
+          <label class="write-off-reason"><input id="returnToStock" type="checkbox" checked /> Vrni uporabno blago na zalogo</label>
+        </div>
         <div class="payment-buttons">
           <button id="payCash" type="button" class="pay primary">GOTOVINA</button>
           <button id="payCard" type="button" class="pay secondary">KARTICA</button>
         </div>
         <button id="confirmWriteOff" type="button" class="pay write-off" hidden>ODPIŠI IZ ZALOGE</button>
+        <button id="confirmReturn" type="button" class="pay write-off" hidden>VRNI BLAGO IN DENAR</button>
         <p class="hint">Če povezave ni, se prodaja varno shrani na tej napravi in prenese v GrowMaster ob naslednji povezavi.</p>
       </aside>
     </div>
