@@ -1,4 +1,4 @@
-const CACHE_NAME = "growmaster-shell-v1.24.31-annual-crops";
+const CACHE_NAME = "growmaster-shell-v1.24.32-windows-launcher";
 const APP_SHELL = [
   "/",
   "/pos.html",
