@@ -1,4 +1,4 @@
-const CACHE_NAME = "growmaster-shell-v1.24.29-eko-history";
+const CACHE_NAME = "growmaster-shell-v1.24.30-annual-profitability";
 const APP_SHELL = [
   "/",
   "/pos.html",
