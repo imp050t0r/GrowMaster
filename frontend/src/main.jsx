@@ -1650,12 +1650,13 @@ function PlantingSuggestions({ suggestions, applySuggestion }) {
     <div className="advisor-card-head"><div><span>Gredica {item.bed} · {item.area_m2} m²</span><strong>{showCrop ? `${item.crop} ${item.variety}` : `${suggestions.selected_crop} ${suggestions.selected_variety}`}</strong></div><span className={`advisor-rating ${item.rating}`}>{item.rating_label}</span></div>
     <div className="advisor-dates"><span>Setev {item.sowing_date}</span><span>Žetev okoli {item.expected_harvest_date}</span></div>
     {item.recent_history.length > 0 && <small className="advisor-history">Zadnji cikli: {item.recent_history.map((entry) => entry.crop).join(" → ")}</small>}
+    <small className="advisor-history">{item.yield_evidence ? `Pridelek: ${item.yield_evidence.harvest_count} zaključenih pridelav · ${item.yield_evidence.yield_kg_m2} kg/m² (kmetija ${item.yield_evidence.farm_yield_kg_m2} kg/m²)` : "Za to kulturo na gredici še ni zabeleženega pridelka."}</small>
     <ul>{item.reasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}</ul>
     {item.warnings.length > 0 && <div className="advisor-warnings">{item.warnings.map((warning) => <span key={warning}>⚠ {warning}</span>)}</div>}
     <button type="button" className="secondary-button" onClick={() => applySuggestion(item)}>UPORABI PREDLOG</button>
   </article>;
   return <section className="panel advisor-panel">
-    <div className="section-heading"><div><p className="eyebrow">Kolobar in zgodovina</p><h2>Pametni predlog zasaditve</h2><p className="muted">Pregledani so zadnji štirje cikli, termin setve in že načrtovane zasedenosti.</p></div><span>{suggestions.empty_beds} praznih gredic</span></div>
+    <div className="section-heading"><div><p className="eyebrow">Kolobar in zgodovina</p><h2>Pametni predlog zasaditve</h2><p className="muted">Predlog upošteva zadnje štiri cikle, termin, načrte in ponovljene pridelke na gredici. Rezultati se posodobijo ob novi zabeleženi žetvi.</p></div><span>{suggestions.empty_beds} praznih gredic</span></div>
     <div className="advisor-section"><h3>Najboljše gredice za {suggestions.selected_crop}</h3><div className="advisor-grid">{suggestions.recommended_beds.slice(0, 3).map((item) => <SuggestionCard key={`bed-${item.bed_id}`} item={item} />)}</div>{suggestions.recommended_beds.length === 0 && <p className="empty-state">Trenutno ni proste gredice za predlog.</p>}</div>
     <div className="advisor-section"><h3>Predlog kulture za vsako prazno gredico</h3><div className="advisor-grid">{suggestions.planting_ideas.map((item) => <SuggestionCard key={`idea-${item.bed_id}`} item={item} showCrop />)}</div></div>
     <p className="advisor-note">{suggestions.note}</p>

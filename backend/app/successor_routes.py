@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
+from app.adaptive_recommendations import apply_yield_evidence, yield_evidence
 from app.maturity import maturity_days_for_date
 from app.models import Bed, Crop, CropPlan, Planting
 from app.planting_advisor import (
@@ -84,6 +85,14 @@ def next_crop_suggestions(
             .order_by(Planting.sowing_date.desc(), Planting.id.desc())
         ).all()
     )
+    all_completed = list(db.scalars(
+        select(Planting).where(Planting.farm_id == DEFAULT_FARM_ID, Planting.status == "completed")
+        .options(selectinload(Planting.harvests))
+    ).all())
+    bed_areas = {item.id: item.area_m2 for item in db.scalars(
+        select(Bed).where(Bed.farm_id == DEFAULT_FARM_ID)
+    ).all()}
+    learned_yields = yield_evidence(all_completed, bed_areas)
     recent_history = history[:history_cycles]
     recent_family_sets = [
         rotation_families(
@@ -168,8 +177,9 @@ def next_crop_suggestions(
             maturity_days,
             seasonal_score,
             has_plan_conflict,
-            previous_yield_per_m2,
+            None,
         )
+        apply_yield_evidence(result, learned_yields.get((bed.id, crop.id)))
         result["reasons"].insert(0, seasonal_reason)
         if seasonal_warning:
             result["warnings"].append(seasonal_warning)
