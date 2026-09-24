@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0011_professional_pos"
-        assert run_migrations() == "0011_professional_pos"
+        assert run_migrations() == "0013_planting_completion_date"
+        assert run_migrations() == "0013_planting_completion_date"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 11
+            ) == 13
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -506,6 +506,15 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert resized_bed.status_code == 200
         assert resized_bed.json()["area_m2"] == 24.0
+        gerk_update = client.put(
+            f"/api/beds/{new_bed.json()['id']}/gerk", json={"gerk_pid": "1234567"}
+        )
+        assert gerk_update.status_code == 200
+        assert client.get(f"/api/beds/{new_bed.json()['id']}").json()["gerk_pid"] == "1234567"
+        rotation_export = client.get("/api/eco/rotation.csv")
+        assert rotation_export.status_code == 200
+        assert "GERK-PID;Gredica;" in rotation_export.text
+        assert client.get("/api/eco/rotation.csv?from_year=2027&to_year=2026").status_code == 422
         assert client.get(f"/api/beds/{new_bed.json()['id']}").json()[
             "length_m"
         ] == 20
@@ -672,6 +681,8 @@ def test_bed_planting_and_task_workflow() -> None:
         finished = client.post(f"/api/plantings/{planting.json()['id']}/finish")
         assert finished.status_code == 200
         refreshed_bed = client.get(f"/api/beds/{bed['id']}").json()
+        assert refreshed_bed["history"][0]["completed_on"] == date.today().isoformat()
+        assert date.today().isoformat() in client.get("/api/eco/rotation.csv").text
         assert refreshed_bed["status"] == "empty"
         assert refreshed_bed["last_crop_family"] == "Brassicaceae"
         suggestions_after_cycle = client.post(
@@ -2421,7 +2432,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0011_professional_pos"
+        assert data_safety_summary["schema_revision"] == "0013_planting_completion_date"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False

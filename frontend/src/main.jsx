@@ -149,7 +149,7 @@ function App() {
     bed_id: "",
     sowing_date: today,
   });
-  const [bedForm, setBedForm] = useState({ name: "", width_m: "0.8", length_m: "15" });
+  const [bedForm, setBedForm] = useState({ name: "", gerk_pid: "", width_m: "0.8", length_m: "15" });
   const [bedSizeForm, setBedSizeForm] = useState({ width_m: "", length_m: "" });
   const [cropForm, setCropForm] = useState({ name: "", family: "", category: "" });
   const [varietyForm, setVarietyForm] = useState({ crop_id: "", name: "", days_spring: "", days_summer: "", days_autumn: "", days_winter: "", composition: "" });
@@ -552,11 +552,12 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: bedForm.name,
+          gerk_pid: bedForm.gerk_pid,
           width_m: Number(bedForm.width_m),
           length_m: Number(bedForm.length_m),
         }),
       });
-      setBedForm({ name: "", width_m: "0.8", length_m: "15" });
+      setBedForm({ name: "", gerk_pid: bedForm.gerk_pid, width_m: "0.8", length_m: "15" });
       setNotice(`Gredica ${data.name} je dodana.`);
       await loadData();
     } catch (requestError) {
@@ -1282,6 +1283,7 @@ function App() {
           setBedSizeForm={setBedSizeForm}
           updateBedSize={updateBedSize}
           finishPlanting={finishPlanting}
+          refreshBeds={loadData}
         />
       )}
 
@@ -1466,7 +1468,7 @@ function DashboardView({ dashboard, beds, setView, taskReview, selectedReviewKey
   );
 }
 
-function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, setSelectedBed, bedSizeForm, setBedSizeForm, updateBedSize, finishPlanting }) {
+function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, setSelectedBed, bedSizeForm, setBedSizeForm, updateBedSize, finishPlanting, refreshBeds }) {
   const previewArea = Number(bedSizeForm.width_m) * Number(bedSizeForm.length_m);
   return (
     <>
@@ -1474,10 +1476,17 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
         <div className="section-heading"><div><p className="eyebrow">Nova lokacija</p><h2>Dodaj gredico</h2></div></div>
         <form className="inline-form" onSubmit={createBed}>
           <label>Ime<input value={bedForm.name} onChange={(event) => setBedForm({ ...bedForm, name: event.target.value })} placeholder="A7" required /></label>
+          <label>GERK-PID<input value={bedForm.gerk_pid} onChange={(event) => setBedForm({ ...bedForm, gerk_pid: event.target.value })} placeholder="Po želji" /></label>
           <label>Širina (m)<input type="number" step="0.01" min="0.1" value={bedForm.width_m} onChange={(event) => setBedForm({ ...bedForm, width_m: event.target.value })} required /></label>
           <label>Dolžina (m)<input type="number" step="0.1" min="0.1" value={bedForm.length_m} onChange={(event) => setBedForm({ ...bedForm, length_m: event.target.value })} required /></label>
           <button className="primary-button" type="submit">DODAJ GREDICO</button>
         </form>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading"><div><p className="eyebrow">EKO evidence</p><h2>Zgodovina posevkov po gredicah</h2></div></div>
+        <p className="muted">Izvoz vključuje vse evidentirane setve, tudi zaključene cikle. Datum zaključka se zapiše ob zaključku cikla; datum spravila je posebej označen kot predviden. Pred oddajo evidence preveri zapise in zahteve svoje kontrolne organizacije.</p>
+        <ProtectedDownloadButton path="/api/eco/rotation.csv" filename="GrowMaster_EKO_kolobar.csv">IZVOZI KOLOBAR CSV</ProtectedDownloadButton>
       </section>
 
       <section className="panel">
@@ -1499,6 +1508,9 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
       {selectedBed && (
         <section className="panel bed-detail">
           <div className="section-heading"><div><p className="eyebrow">Podrobnosti gredice</p><h2>{selectedBed.name} · {selectedBed.area_m2} m²</h2></div><button className="icon-button" onClick={() => setSelectedBed(null)}>✕</button></div>
+          <form className="inline-form" onSubmit={async (event) => { event.preventDefault(); try { await apiRequest(`/api/beds/${selectedBed.id}/gerk`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ gerk_pid: event.currentTarget.elements.gerk_pid.value }) }); await refreshBeds(); await openBed(selectedBed.id); } catch (error) { window.alert(error.message); } }}>
+            <label>GERK-PID<input name="gerk_pid" key={selectedBed.id + ':' + selectedBed.gerk_pid} defaultValue={selectedBed.gerk_pid || ""} placeholder="Vpiši številko GERK" /></label><button className="secondary-button" type="submit">SHRANI GERK</button>
+          </form>
           <form className="bed-size-form" onSubmit={updateBedSize}>
             <div><p className="eyebrow">Mere gredice</p><strong>Popravi velikost</strong></div>
             <label>Širina (m)<input type="number" step="0.01" min="0.01" max="100" value={bedSizeForm.width_m} onChange={(event) => setBedSizeForm({ ...bedSizeForm, width_m: event.target.value })} required /></label>
@@ -1510,7 +1522,7 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
             <div className="current-cycle"><div><span>Trenutno raste</span><strong>{selectedBed.current_planting.crop} {selectedBed.current_planting.variety}</strong><small>{selectedBed.current_planting.sowing_date} → {selectedBed.current_planting.expected_harvest_date}</small></div><button className="secondary-button" onClick={() => finishPlanting(selectedBed.current_planting.id)}>ZAKLJUČI CIKEL</button></div>
           ) : <div className="empty-state-box">Gredica je prazna in pripravljena za setev.</div>}
           <div className="detail-columns">
-            <div><h3>Zgodovina</h3>{selectedBed.history.length ? selectedBed.history.map((item) => <div className="history-row" key={item.id}><strong>{item.crop} {item.variety}</strong><span>{item.sowing_date} · {item.status === "active" ? "aktivno" : "zaključeno"}</span></div>) : <p className="muted">Zgodovine še ni.</p>}</div>
+            <div><h3>Zgodovina</h3>{selectedBed.history.length ? selectedBed.history.map((item) => <div className="history-row" key={item.id}><strong>{item.crop} {item.variety}</strong><span>{item.sowing_date} · {item.status === "active" ? "aktivno" : `zaključeno ${item.completed_on || "(datum ni evidentiran)"}`}</span></div>) : <p className="muted">Zgodovine še ni.</p>}</div>
             <div><h3>Opravila gredice</h3>{selectedBed.tasks.length ? selectedBed.tasks.map((task) => <TaskSummary key={task.id} task={task} />) : <p className="muted">Ni vezanih opravil.</p>}</div>
           </div>
         </section>
