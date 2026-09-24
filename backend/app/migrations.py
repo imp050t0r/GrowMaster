@@ -211,6 +211,11 @@ def add_professional_pos(connection: Connection) -> None:
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_retail_sale_farm_event ON retail_sales (farm_id, client_event_id)"))
 
 
+def add_bed_gerk_pid(connection: Connection) -> None:
+    if "gerk_pid" not in {column["name"] for column in inspect(connection).get_columns("beds")}:
+        connection.execute(text("ALTER TABLE beds ADD COLUMN gerk_pid VARCHAR(30)"))
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -223,6 +228,7 @@ MIGRATIONS = (
     Migration("0009_inventory_write_offs", create_inventory_write_offs),
     Migration("0010_retail_returns", create_retail_returns),
     Migration("0011_professional_pos", add_professional_pos),
+    Migration("0012_bed_gerk_pid", add_bed_gerk_pid),
 )
 
 

@@ -75,6 +75,7 @@ class VarietyCreate(BaseModel):
 
 class BedCreate(BaseModel):
     name: str = Field(min_length=1, max_length=40)
+    gerk_pid: str | None = Field(default=None, max_length=30)
     width_m: float = Field(gt=0, le=100)
     length_m: float = Field(gt=0, le=1000)
 
@@ -82,6 +83,10 @@ class BedCreate(BaseModel):
 class BedSizeUpdate(BaseModel):
     width_m: float = Field(gt=0, le=100)
     length_m: float = Field(gt=0, le=1000)
+
+
+class BedGerkUpdate(BaseModel):
+    gerk_pid: str | None = Field(default=None, max_length=30)
 
 
 class PlantingCreate(BaseModel):

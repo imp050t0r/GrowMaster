@@ -122,6 +122,7 @@ class Bed(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(40), index=True)
+    gerk_pid: Mapped[str | None] = mapped_column(String(30), nullable=True)
     width_m: Mapped[float] = mapped_column(Float)
     length_m: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(30), default="empty")

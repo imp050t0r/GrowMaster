@@ -113,6 +113,7 @@ from app.schemas import (
     AuthLogin,
     AuthSetup,
     BedCreate,
+    BedGerkUpdate,
     BedSizeUpdate,
     CostCreate,
     CropCreate,
@@ -966,6 +967,7 @@ def list_beds(db: Session = Depends(get_db)) -> list[dict]:
             {
                 "id": bed.id,
                 "name": bed.name,
+                "gerk_pid": bed.gerk_pid,
                 "width_m": bed.width_m,
                 "length_m": bed.length_m,
                 "area_m2": bed.area_m2,
@@ -990,6 +992,7 @@ def create_bed(payload: BedCreate, db: Session = Depends(get_db)) -> dict:
     bed = Bed(
         farm_id=DEFAULT_FARM_ID,
         name=normalized_name,
+        gerk_pid=payload.gerk_pid.strip() or None if payload.gerk_pid else None,
         width_m=payload.width_m,
         length_m=payload.length_m,
         status="empty",
@@ -1000,6 +1003,7 @@ def create_bed(payload: BedCreate, db: Session = Depends(get_db)) -> dict:
     return {
         "id": bed.id,
         "name": bed.name,
+        "gerk_pid": bed.gerk_pid,
         "width_m": bed.width_m,
         "length_m": bed.length_m,
         "area_m2": bed.area_m2,
@@ -1029,6 +1033,50 @@ def update_bed_size(
     }
 
 
+@app.put("/api/beds/{bed_id}/gerk")
+def update_bed_gerk(bed_id: int, payload: BedGerkUpdate, db: Session = Depends(get_db)) -> dict:
+    bed = db.get(Bed, bed_id)
+    if bed is None or bed.farm_id != DEFAULT_FARM_ID:
+        raise HTTPException(status_code=404, detail="Gredica ne obstaja.")
+    bed.gerk_pid = (payload.gerk_pid or "").strip() or None
+    db.commit()
+    return {"id": bed.id, "gerk_pid": bed.gerk_pid}
+
+
+@app.get("/api/eco/rotation.csv")
+def export_eco_rotation(
+    from_year: int = Query(2020, ge=1900, le=2200),
+    to_year: int = Query(2100, ge=1900, le=2200),
+    db: Session = Depends(get_db),
+) -> Response:
+    if from_year > to_year:
+        raise HTTPException(status_code=422, detail="Začetno leto mora biti pred končnim.")
+    plantings = db.scalars(
+        select(Planting)
+        .where(Planting.farm_id == DEFAULT_FARM_ID,
+               Planting.sowing_date >= date(from_year, 1, 1),
+               Planting.sowing_date <= date(to_year, 12, 31))
+        .options(selectinload(Planting.bed), selectinload(Planting.crop), selectinload(Planting.variety))
+        .order_by(Planting.bed_id, Planting.sowing_date, Planting.id)
+    ).all()
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["GERK-PID", "Gredica", "ID gredice", "Trenutna površina m2", "Leto setve",
+                     "Datum setve", "Predviden datum spravila", "Kultura", "Sorta",
+                     "Rastlinska družina", "Status cikla", "Preglasitev opozorila kolobarja", "ID setve"])
+    for p in plantings:
+        # Escape spreadsheet formulas in free-text fields before exporting CSV.
+        def safe(value: object) -> str:
+            result = str(value or "")
+            return "'" + result if result.lstrip().startswith(("=", "+", "-", "@")) else result
+        writer.writerow([safe(p.bed.gerk_pid), safe(p.bed.name), p.bed.id, p.bed.area_m2,
+                         p.sowing_date.year, p.sowing_date.isoformat(), p.expected_harvest_date.isoformat(),
+                         safe(p.crop.name), safe(p.variety.name), safe(p.crop.family), p.status,
+                         "da" if p.rotation_override else "ne", p.id])
+    return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="GrowMaster_EKO_kolobar.csv"'})
+
+
 @app.get("/api/beds/{bed_id}")
 def bed_detail(bed_id: int, db: Session = Depends(get_db)) -> dict:
     bed = db.get(Bed, bed_id)
@@ -1053,6 +1101,7 @@ def bed_detail(bed_id: int, db: Session = Depends(get_db)) -> dict:
     return {
         "id": bed.id,
         "name": bed.name,
+        "gerk_pid": bed.gerk_pid,
         "width_m": bed.width_m,
         "length_m": bed.length_m,
         "area_m2": bed.area_m2,
