@@ -10,7 +10,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 FONT_DIR = Path(reportlab.__file__).resolve().parent / "fonts"
 if "GrowMasterAnnual" not in pdfmetrics.getRegisteredFontNames():
@@ -63,6 +63,25 @@ def build_annual_profitability_pdf(report: dict, year: int) -> bytes:
     story += [table, Spacer(1, 4 * mm),
               Paragraph("Rezultat gredice ne vsebuje splošnih stroškov kmetije. Ti so vključeni samo v skupnem rezultatu; zato se vsota rezultatov gredic lahko razlikuje od rezultata kmetije.", small),
               Paragraph(f"Nepripisani stroški in splošni stroški skupaj: {money(summary['unallocated_costs_eur'])}. Za podrobne vnose uporabi CSV izvoz.", small)]
+    story += [PageBreak(), Paragraph("Prihodki in rezultat po kulturah", title), Spacer(1, 2 * mm)]
+    crop_headers = ["Kultura", "Žetev kg", "Prodano kg", "Bruto prihodki", "Dobropisi", "Neto prihodki", "Neposredni", "Material", "Delo", "Stroški", "Rezultat"]
+    crop_rows = [[p(x) for x in crop_headers]]
+    for row in report["by_crop"]:
+        crop_rows.append([p(row["crop"]), p(f'{row["harvested_kg"]:.2f}'),
+                          p(f'{row["sold_kg"]:.2f}'), p(money(row["gross_revenue_eur"])),
+                          p(money(row["credit_notes_eur"])), p(money(row["net_revenue_eur"])),
+                          p(money(row["direct_costs_eur"])), p(money(row["material_costs_eur"])),
+                          p(money(row["labor_costs_eur"])), p(money(row["costs_eur"])),
+                          p(money(row["profit_eur"]))])
+    if len(crop_rows) == 1:
+        crop_rows.append([p("Ni evidentiranih rezultatov po kulturah.")] + [p("")] * 10)
+    crops_table = Table(crop_rows, colWidths=[95, 48, 48, 75, 63, 75, 70, 62, 62, 70, 70], repeatRows=1, hAlign="LEFT")
+    crops_table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e5f0e8")),
+                                     ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f8f5")]),
+                                     ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    story += [crops_table, Spacer(1, 4 * mm),
+              Paragraph("Kulturi se pripišejo prodaja in stroški, povezani z evidentirano setvijo. Stroški brez povezave s setvijo in splošni stroški niso razdeljeni med kulture; vsota rezultatov po kulturah zato ni nujno enaka rezultatu kmetije.", small)]
     def page_number(canvas, doc):
         canvas.saveState()
         canvas.setFont("GrowMasterAnnual", 7)
