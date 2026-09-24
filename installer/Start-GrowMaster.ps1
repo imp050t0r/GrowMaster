@@ -10,6 +10,7 @@ $composeFile = Join-Path $appRoot "docker-compose.yml"
 $stateRoot = Join-Path $env:APPDATA "GrowMaster"
 $envFile = Join-Path $stateRoot ".env"
 $logFile = Join-Path $stateRoot "launcher.log"
+$versionFile = Join-Path $appRoot "frontend\src\version.js"
 
 function Write-LauncherLog([string]$Message) {
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
@@ -153,6 +154,14 @@ try {
     if (-not (Test-Path -LiteralPath $composeFile)) {
         throw "Namestitev GrowMasterja ni popolna. Ponovno zaženi namestitveno datoteko."
     }
+    if (-not (Test-Path -LiteralPath $versionFile)) {
+        throw "Namestitev GrowMasterja nima podatka o različici. Ponovno zaženi namestitveno datoteko."
+    }
+    $versionContents = [IO.File]::ReadAllText($versionFile)
+    if ($versionContents -notmatch 'APP_VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+        throw "Različice nameščenega GrowMasterja ni mogoče prebrati."
+    }
+    $installedVersion = $Matches[1]
     $docker = Find-DockerExecutable
     if (-not $docker) {
         Show-GrowMasterMessage "GrowMaster potrebuje Docker Desktop. Odprla se bo uradna stran za namestitev. Ko Docker namestiš in zaženeš, ponovno klikni ikono GrowMaster." "Potreben je Docker Desktop"
@@ -183,11 +192,34 @@ try {
     $composeBase = @("compose", "--env-file", $envFile, "-f", $composeFile, "-p", "growmaster")
     $composeArguments = $composeBase + @("up", "-d")
     $runningFrontend = & $docker @composeBase ps --status running -q frontend 2>$null
+    if ($runningFrontend -and -not $Build) {
+        try {
+            $currentHealth = Invoke-RestMethod -Uri "http://localhost:3000/api/health" -TimeoutSec 4
+            if ($currentHealth.version -ne $installedVersion) {
+                Write-LauncherLog "Installed version $installedVersion differs from running version $($currentHealth.version); rebuilding."
+                $Build = $true
+            }
+        } catch {
+            Write-LauncherLog "Running frontend has no reachable health endpoint; rebuilding."
+            $Build = $true
+        }
+    }
     if ($Build -or -not $runningFrontend) {
         if ($Build) { $composeArguments += "--build" }
         Write-LauncherLog "Starting GrowMaster services."
-        & $docker @composeArguments | Out-File -LiteralPath $logFile -Append -Encoding UTF8
-        if ($LASTEXITCODE -ne 0) { throw "GrowMasterja ni bilo mogoče zagnati. Podrobnosti so v $logFile" }
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $composeOutput = & $docker @composeArguments 2>&1 | Out-String
+            $composeExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        $composeOutput | Out-File -LiteralPath $logFile -Append -Encoding UTF8
+        if ($composeExitCode -ne 0) {
+            $lastLines = ($composeOutput -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 8) -join "`n"
+            throw "Posodobitev GrowMasterja ni uspela (Docker exit $composeExitCode).`n$lastLines`nPodrobnosti: $logFile"
+        }
     }
 
     $healthy = $false
@@ -195,12 +227,12 @@ try {
     do {
         try {
             $health = Invoke-RestMethod -Uri "http://localhost:3000/api/health" -TimeoutSec 4
-            $healthy = $health.status -eq "running"
+            $healthy = $health.status -eq "running" -and $health.version -eq $installedVersion
         } catch { Start-Sleep -Seconds 2 }
     } until ($healthy -or (Get-Date) -gt $deadline)
-    if (-not $healthy) { throw "GrowMaster se zaganja predolgo. Ponovno klikni ikono čez minuto." }
+    if (-not $healthy) { throw "Nameščena različica $installedVersion se ni zagnala. Preveri $logFile; starejša različica morda še deluje." }
     if (-not $NoBrowser) { Start-Process "http://localhost:3000/" }
-    Write-LauncherLog "GrowMaster is ready."
+    Write-LauncherLog "GrowMaster $installedVersion is ready."
 } catch {
     Write-LauncherLog "ERROR: $($_.Exception.Message)"
     Show-GrowMasterMessage $_.Exception.Message "GrowMaster se ni zagnal"
