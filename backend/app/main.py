@@ -52,6 +52,7 @@ from app.backups import (
     write_automatic_backup,
 )
 from app.annual_profitability_pdf import build_annual_profitability_pdf
+from app.adaptive_recommendations import apply_yield_evidence, yield_evidence
 from app.database import SessionLocal, get_db
 from app.migrations import latest_revision, run_migrations, schema_migrations
 from app.maturity import (
@@ -1225,6 +1226,7 @@ def planting_suggestions(
     history_by_bed: dict[int, list[Planting]] = {}
     for planting in history_rows:
         history_by_bed.setdefault(planting.bed_id, []).append(planting)
+    learned_yields = yield_evidence(history_rows, {bed.id: bed.area_m2 for bed in beds})
 
     planned_rows = list(
         db.scalars(
@@ -1290,8 +1292,9 @@ def planting_suggestions(
             maturity_days,
             seasonal_score,
             has_plan_conflict,
-            previous_yield,
+            None,
         )
+        apply_yield_evidence(result, learned_yields.get((bed.id, crop.id)))
         result["reasons"].insert(0, seasonal_reason)
         if seasonal_warning:
             result["warnings"].append(seasonal_warning)
@@ -1392,7 +1395,7 @@ def planting_suggestions(
         item.pop("_selection_score", None)
 
     return {
-        "message": "Predlog je izračunan iz zadnjih štirih ciklov, termina in načrtov.",
+        "message": "Predlog upošteva kolobar, termin, načrte in ponovljene rezultate žetve.",
         "sowing_date": payload.sowing_date,
         "selected_crop": selected_crop.name,
         "selected_variety": selected_variety.name,
