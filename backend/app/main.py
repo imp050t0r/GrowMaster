@@ -809,6 +809,7 @@ def serialize_planting(planting: Planting) -> dict:
         "variety": planting.variety.name,
         "sowing_date": planting.sowing_date,
         "expected_harvest_date": planting.expected_harvest_date,
+        "completed_on": planting.completed_on,
         "status": planting.status,
         "rotation_override": planting.rotation_override,
         **maturity_details(planting.variety, planting.sowing_date),
@@ -1062,7 +1063,7 @@ def export_eco_rotation(
     output = io.StringIO()
     writer = csv.writer(output, delimiter=";")
     writer.writerow(["GERK-PID", "Gredica", "ID gredice", "Trenutna površina m2", "Leto setve",
-                     "Datum setve", "Predviden datum spravila", "Kultura", "Sorta",
+                     "Datum setve", "Datum zaključka cikla", "Predviden datum spravila", "Kultura", "Sorta",
                      "Rastlinska družina", "Status cikla", "Preglasitev opozorila kolobarja", "ID setve"])
     for p in plantings:
         # Escape spreadsheet formulas in free-text fields before exporting CSV.
@@ -1070,7 +1071,7 @@ def export_eco_rotation(
             result = str(value or "")
             return "'" + result if result.lstrip().startswith(("=", "+", "-", "@")) else result
         writer.writerow([safe(p.bed.gerk_pid), safe(p.bed.name), p.bed.id, p.bed.area_m2,
-                         p.sowing_date.year, p.sowing_date.isoformat(), p.expected_harvest_date.isoformat(),
+                         p.sowing_date.year, p.sowing_date.isoformat(), p.completed_on.isoformat() if p.completed_on else "", p.expected_harvest_date.isoformat(),
                          safe(p.crop.name), safe(p.variety.name), safe(p.crop.family), p.status,
                          "da" if p.rotation_override else "ne", p.id])
     return Response("\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
@@ -1805,6 +1806,7 @@ def finish_planting(planting_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=409, detail="Rastni cikel je že zaključen.")
 
     planting.status = "completed"
+    planting.completed_on = date.today()
     planting.bed.status = "empty"
     planting.bed.last_crop_family = planting.crop.family
     db.commit()

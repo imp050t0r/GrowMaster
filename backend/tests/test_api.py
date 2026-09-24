@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0012_bed_gerk_pid"
-        assert run_migrations() == "0012_bed_gerk_pid"
+        assert run_migrations() == "0013_planting_completion_date"
+        assert run_migrations() == "0013_planting_completion_date"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 12
+            ) == 13
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -681,6 +681,8 @@ def test_bed_planting_and_task_workflow() -> None:
         finished = client.post(f"/api/plantings/{planting.json()['id']}/finish")
         assert finished.status_code == 200
         refreshed_bed = client.get(f"/api/beds/{bed['id']}").json()
+        assert refreshed_bed["history"][0]["completed_on"] == date.today().isoformat()
+        assert date.today().isoformat() in client.get("/api/eco/rotation.csv").text
         assert refreshed_bed["status"] == "empty"
         assert refreshed_bed["last_crop_family"] == "Brassicaceae"
         suggestions_after_cycle = client.post(
@@ -2430,7 +2432,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0012_bed_gerk_pid"
+        assert data_safety_summary["schema_revision"] == "0013_planting_completion_date"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False

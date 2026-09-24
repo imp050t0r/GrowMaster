@@ -152,6 +152,7 @@ class Planting(Base):
     variety_id: Mapped[int] = mapped_column(ForeignKey("varieties.id", ondelete="RESTRICT"))
     sowing_date: Mapped[date] = mapped_column(Date)
     expected_harvest_date: Mapped[date] = mapped_column(Date)
+    completed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
     rotation_override: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -1485,7 +1485,7 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
 
       <section className="panel">
         <div className="section-heading"><div><p className="eyebrow">EKO evidence</p><h2>Zgodovina posevkov po gredicah</h2></div></div>
-        <p className="muted">Izvoz vključuje vse evidentirane setve, tudi zaključene cikle. Datum spravila je trenutno predvideni datum; pred oddajo evidence preveri zapise in zahteve svoje kontrolne organizacije.</p>
+        <p className="muted">Izvoz vključuje vse evidentirane setve, tudi zaključene cikle. Datum zaključka se zapiše ob zaključku cikla; datum spravila je posebej označen kot predviden. Pred oddajo evidence preveri zapise in zahteve svoje kontrolne organizacije.</p>
         <ProtectedDownloadButton path="/api/eco/rotation.csv" filename="GrowMaster_EKO_kolobar.csv">IZVOZI KOLOBAR CSV</ProtectedDownloadButton>
       </section>
 
@@ -1522,7 +1522,7 @@ function BedsView({ beds, bedForm, setBedForm, createBed, openBed, selectedBed, 
             <div className="current-cycle"><div><span>Trenutno raste</span><strong>{selectedBed.current_planting.crop} {selectedBed.current_planting.variety}</strong><small>{selectedBed.current_planting.sowing_date} → {selectedBed.current_planting.expected_harvest_date}</small></div><button className="secondary-button" onClick={() => finishPlanting(selectedBed.current_planting.id)}>ZAKLJUČI CIKEL</button></div>
           ) : <div className="empty-state-box">Gredica je prazna in pripravljena za setev.</div>}
           <div className="detail-columns">
-            <div><h3>Zgodovina</h3>{selectedBed.history.length ? selectedBed.history.map((item) => <div className="history-row" key={item.id}><strong>{item.crop} {item.variety}</strong><span>{item.sowing_date} · {item.status === "active" ? "aktivno" : "zaključeno"}</span></div>) : <p className="muted">Zgodovine še ni.</p>}</div>
+            <div><h3>Zgodovina</h3>{selectedBed.history.length ? selectedBed.history.map((item) => <div className="history-row" key={item.id}><strong>{item.crop} {item.variety}</strong><span>{item.sowing_date} · {item.status === "active" ? "aktivno" : `zaključeno ${item.completed_on || "(datum ni evidentiran)"}`}</span></div>) : <p className="muted">Zgodovine še ni.</p>}</div>
             <div><h3>Opravila gredice</h3>{selectedBed.tasks.length ? selectedBed.tasks.map((task) => <TaskSummary key={task.id} task={task} />) : <p className="muted">Ni vezanih opravil.</p>}</div>
           </div>
         </section>

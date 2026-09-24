@@ -216,6 +216,11 @@ def add_bed_gerk_pid(connection: Connection) -> None:
         connection.execute(text("ALTER TABLE beds ADD COLUMN gerk_pid VARCHAR(30)"))
 
 
+def add_planting_completion_date(connection: Connection) -> None:
+    if "completed_on" not in {column["name"] for column in inspect(connection).get_columns("plantings")}:
+        connection.execute(text("ALTER TABLE plantings ADD COLUMN completed_on DATE"))
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -229,6 +234,7 @@ MIGRATIONS = (
     Migration("0010_retail_returns", create_retail_returns),
     Migration("0011_professional_pos", add_professional_pos),
     Migration("0012_bed_gerk_pid", add_bed_gerk_pid),
+    Migration("0013_planting_completion_date", add_planting_completion_date),
 )
 
 
