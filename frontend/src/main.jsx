@@ -1814,13 +1814,20 @@ function ProfitabilityTable({ rows, nameKey }) {
 }
 
 function ProfitabilityView({ data, start, setStart, end, setEnd }) {
+  const [annualYear, setAnnualYear] = useState(Number(today.slice(0, 4)));
   const summary = data.summary || {};
   const money = (value) => `${Number(value || 0).toFixed(2)} €`;
   const ratio = (value, suffix) => value == null ? "—" : `${Number(value).toFixed(2)} ${suffix}`;
   return <>
     <section className="panel report-heading">
       <div><p className="eyebrow">Sezonski rezultat</p><h2>Dobičkonosnost pridelave</h2><p className="muted">{data.note}</p></div>
-      <div className="report-controls"><label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label><ProtectedDownloadButton className="secondary-button export-button" path={`/api/profitability-report/export.csv?start=${start}&end=${end}`} filename={`donosnost-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton></div>
+      <div className="report-controls">
+        <label>Leto<input type="number" min="2000" max={today.slice(0, 4)} value={annualYear} onChange={(e) => setAnnualYear(Number(e.target.value))} /></label>
+        <button type="button" className="secondary-button" onClick={() => { if (annualYear < 2000 || annualYear > Number(today.slice(0, 4))) return; setStart(`${annualYear}-01-01`); setEnd(annualYear === Number(today.slice(0, 4)) ? today : `${annualYear}-12-31`); }}>PRIKAŽI LETO</button>
+        <ProtectedDownloadButton path={`/api/profitability-report/annual.pdf?year=${annualYear}`} filename={`GrowMaster-letno-porocilo-${annualYear}.pdf`}>LETNO POROČILO PDF</ProtectedDownloadButton>
+        <label>Od<input type="date" value={start} onChange={(e) => { const value = e.target.value; setStart(value); if (end < value) setEnd(value); }} /></label><label>Do<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>
+        <ProtectedDownloadButton className="secondary-button export-button" path={`/api/profitability-report/export.csv?start=${start}&end=${end}`} filename={`donosnost-${start}-${end}.csv`}>IZVOZI CSV</ProtectedDownloadButton>
+      </div>
     </section>
     <section className="metric-grid profitability-metrics">
       <article className="metric-card"><span>Dobiček</span><strong className={Number(summary.profit_eur || 0) >= 0 ? "positive" : "negative"}>{money(summary.profit_eur)}</strong><small>marža {ratio(summary.margin_pct, "%")}</small></article>

@@ -2247,6 +2247,11 @@ def test_bed_planting_and_task_workflow() -> None:
         )
         assert profitability.status_code == 200
         profitability_data = profitability.json()
+        annual_pdf = client.get("/api/profitability-report/annual.pdf?year=2026")
+        assert annual_pdf.status_code == 200
+        assert annual_pdf.headers["content-type"] == "application/pdf"
+        assert annual_pdf.content.startswith(b"%PDF-")
+        assert client.get("/api/profitability-report/annual.pdf?year=2200").status_code == 422
         assert profitability_data["summary"] == {
             "active_area_m2": 8,
             "harvested_kg": 10,

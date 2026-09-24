@@ -51,6 +51,7 @@ from app.backups import (
     restore_parsed_backup,
     write_automatic_backup,
 )
+from app.annual_profitability_pdf import build_annual_profitability_pdf
 from app.database import SessionLocal, get_db
 from app.migrations import latest_revision, run_migrations, schema_migrations
 from app.maturity import (
@@ -2523,6 +2524,23 @@ def profitability_report(
     db: Session = Depends(get_db),
 ) -> dict:
     return build_profitability_report(db, start, end)
+
+
+@app.get("/api/profitability-report/annual.pdf")
+def annual_profitability_pdf(
+    year: int = Query(ge=2000, le=2200),
+    db: Session = Depends(get_db),
+) -> Response:
+    if year > date.today().year:
+        raise HTTPException(status_code=422, detail="Prihodnje leto še nima letnega poročila.")
+    start = date(year, 1, 1)
+    end = min(date(year, 12, 31), date.today())
+    report = build_profitability_report(db, start, end)
+    return Response(
+        content=build_annual_profitability_pdf(report, year),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="GrowMaster-letno-porocilo-{year}.pdf"'},
+    )
 
 
 @app.get("/api/profitability-report/export.csv")
