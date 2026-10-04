@@ -21,7 +21,7 @@ from app.successor_routes import router as successor_router
 from app.irrigation_routes import router as irrigation_router
 
 
-APP_VERSION = "1.25.2"
+APP_VERSION = "1.25.3"
 main_module.APP_VERSION = APP_VERSION
 app = main_module.app
 app.version = APP_VERSION

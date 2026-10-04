@@ -1,5 +1,6 @@
 """Manual, advisory water balance. No weather polling or valve commands."""
 import json
+import math
 from datetime import date, datetime, timezone, timedelta
 from typing import Literal
 
@@ -37,6 +38,8 @@ class BedProfile(Input):
     sensor_dry_pct: float | None = Field(default=None, ge=0, le=100)
     sensor_wet_pct: float | None = Field(default=None, ge=0, le=100)
     source: str = Field(min_length=1, max_length=500)
+    opensprinkler_station_entity: str | None = Field(default=None, pattern=r"^switch\.[a-z0-9_]+$", max_length=150)
+    max_run_seconds: int = Field(default=3600, ge=1, le=86400)
 
     @model_validator(mode="after")
     def ordered(self):
@@ -91,7 +94,7 @@ def profile_row(db, model, key, identifier):
 def profiles(db: Session = Depends(get_db)):
     return {"crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
                       db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))],
-            "beds": [{"bed_id": r.bed_id, **json.loads(r.parameters)} for r in
+            "beds": [{"bed_id": r.bed_id, **BedProfile.model_validate_json(r.parameters).model_dump()} for r in
                      db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))]}
 
 
@@ -213,3 +216,65 @@ def daily(day: date, db: Session = Depends(get_db)):
     return {"day": str(day), "automatic_execution": False, "rows": [json.loads(r.report) for r in
             db.scalars(select(IrrigationDailyReport).where(IrrigationDailyReport.farm_id == FARM_ID,
                         IrrigationDailyReport.day == day).order_by(IrrigationDailyReport.bed_id))]}
+
+
+@router.get("/opensprinkler")
+def opensprinkler_preview(day: date, db: Session = Depends(get_db)):
+    """Produce manual HA action drafts; never call HA or mark watering as executed."""
+    now = datetime.now(timezone.utc)
+    mappings = {}
+    for row in db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID)):
+        bp = BedProfile.model_validate_json(row.parameters)
+        if bp.opensprinkler_station_entity:
+            mappings.setdefault(bp.opensprinkler_station_entity, []).append(row.bed_id)
+    rows = []
+    for row in db.scalars(select(IrrigationDailyReport).where(IrrigationDailyReport.farm_id == FARM_ID,
+                          IrrigationDailyReport.day == day).order_by(IrrigationDailyReport.bed_id)):
+        saved = json.loads(row.report)
+        item = {"bed_id": row.bed_id, "bed": saved.get("bed"), "status": "blocked",
+                "reasons": [], "action": None, "yaml": None}
+        reasons = item["reasons"]
+        if day != date.today():
+            reasons.append("Akcija je lahko pripravljena samo za današnji dan.")
+        try:
+            stamp = datetime.fromisoformat(saved["calculated_at"])
+            if stamp.utcoffset() is None or not timedelta(0) <= now - stamp <= timedelta(hours=6):
+                reasons.append("Dnevni izračun ni svež (največ 6 ur) ali ima neveljaven čas.")
+            payload = DayInput.model_validate(saved["inputs"])
+            if payload.bed_id != row.bed_id or payload.day != row.day:
+                raise ValueError("Posnetek se ne ujema z dnevnim zapisom.")
+            current = report_for(db, payload)
+            bp = BedProfile.model_validate(current.get("bed_profile", {}))
+            old_bp = BedProfile.model_validate(saved.get("bed_profile", {}))
+            cp = CropProfile.model_validate(current.get("crop_profile", {}))
+            old_cp = CropProfile.model_validate(saved.get("crop_profile", {}))
+            if bp != old_bp or cp != old_cp or current["area_m2"] != saved.get("area_m2"):
+                reasons.append("Profil ali površina grede se je spremenila; ponovno izračunaj in shrani dan.")
+            if current["status"] != "irrigate":
+                reasons.append("Bilanca ne priporoča zalivanja ali zahteva pregled meritev.")
+            station = bp.opensprinkler_station_entity
+            if not station:
+                reasons.append("Gredica nima povezane postaje OpenSprinkler.")
+            elif len(mappings[station]) > 1:
+                reasons.append("Ista postaja je povezana z več gredicami; skupne cone še niso podprte.")
+            if bp.flow_l_min is None:
+                reasons.append("Manjka izmerjeni pretok za to gredico.")
+            seconds = math.ceil(current["litres"] / bp.flow_l_min * 60) if current["litres"] and bp.flow_l_min else 0
+            if seconds <= 0:
+                reasons.append("Trajanje zalivanja ni pozitivno.")
+            elif seconds > bp.max_run_seconds:
+                reasons.append("Trajanje presega največji čas postaje; preveri odmerek in pretok.")
+            if not reasons:
+                action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
+                          "data": {"run_seconds": seconds, "queue_option": "append"}}
+                item.update(status="draft", action=action, run_seconds=seconds, litres=current["litres"],
+                            calculated_at=saved["calculated_at"], warnings=current["warnings"],
+                            yaml=f"action: opensprinkler.run_station\ntarget:\n  entity_id: {station}\ndata:\n  run_seconds: {seconds}\n  queue_option: append\n")
+        except (ValueError, KeyError, TypeError, HTTPException):
+            reasons.append("Izračun ali profil ni več veljaven; ponovno preveri podatke in shrani dan.")
+        rows.append(item)
+    return {"day": str(day), "automatic_execution": False, "requires_manual_review": True,
+            "rows": rows, "note": "Osnutki akcij za ročni pregled v Home Assistantu. "
+            "GrowMaster ne preverja obstoja ali stanja HA postaj in ne pošilja ukazov. "
+            "Pred zagonom preveri dež, tla, izbrano postajo in že izvedeno zalivanje. "
+            "Akcije ne ponavljaj samodejno: ni evidence izvedbe ali zaščite pred ponovnim zagonom."}
