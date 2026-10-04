@@ -8,6 +8,7 @@ import { APP_VERSION } from "./version";
 import { DynamicDtm } from "./DynamicDtm";
 import { HarvestComparison } from "./HarvestComparison";
 import { SmartSeedPlanner } from "./SmartSeedPlanner";
+import { ProductionPlanner } from "./ProductionPlanner";
 import { HarvestForecast } from "./HarvestForecast";
 import { WorkloadForecast } from "./WorkloadForecast";
 import { DtmLearning } from "./DtmLearning";
@@ -2404,9 +2405,16 @@ function GredicnikView({ crops, beds, savePlan }) {
 }
 
 function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, selectedCrop, changeCrop, createPlan, activatePlan, cancelPlan, start, setStart, end, setEnd, reloadData }) {
+  function chooseProductionProposal(proposal) {
+    setForm({bed_id:String(proposal.bed_id),crop_id:String(proposal.crop_id),variety_id:String(proposal.variety_id),
+      sowing_date:proposal.sowing_date,transplant_date:proposal.transplant_date || "",expected_yield_kg:"",
+      succession_count:"1",succession_interval_days:"14",notes:"Predlog lokalnega Production Plannerja; pred shranjevanjem preveri pogoje pridelave, seme in razpoložljivo delo."});
+    document.getElementById("production-plan-form")?.scrollIntoView({behavior:"smooth",block:"start"});
+  }
   return <>
+    <ProductionPlanner crops={crops} plans={plans} start={start} end={end} setStart={setStart} setEnd={setEnd} onChoose={chooseProductionProposal} />
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Sezonski načrt</p><h2>Načrtuj setev ali serijo</h2></div></div>
-      <form className="planning-form" onSubmit={createPlan}>
+      <form id="production-plan-form" className="planning-form" onSubmit={createPlan}>
         <label>Gredica<select value={form.bed_id} onChange={(e) => setForm({ ...form, bed_id: e.target.value })} required>{beds.map((bed) => <option key={bed.id} value={bed.id}>{bed.name} · {bed.area_m2} m²</option>)}</select></label>
         <label>Kultura<select value={form.crop_id} onChange={changeCrop} required>{crops.map((crop) => <option key={crop.id} value={crop.id}>{crop.name}</option>)}</select></label>
         <label>Sorta<select value={form.variety_id} onChange={(e) => setForm({ ...form, variety_id: e.target.value })} required>{(selectedCrop?.varieties || []).map((item) => <option key={item.id} value={item.id}>{item.name} · {maturityDaysForDate(item, form.sowing_date)} dni ({maturitySeasonForDate(form.sowing_date).label})</option>)}</select></label>

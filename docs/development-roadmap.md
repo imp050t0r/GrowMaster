@@ -9,4 +9,4 @@
 - 1.24.40 — Harvest Forecast
 - 1.25.0 — AI Production Planner
 
-Razvoj in preizkusi potekajo na ločenih testnih podatkih; ni treba čakati na prve dejanske spomladanske zasaditve. Primerjava in učenje v uporabi potrebujeta resnično zgodovino. Naslednja razvojna faza po 1.24.40 je AI Production Planner.
+Razvoj in preizkusi potekajo na ločenih testnih podatkih; ni treba čakati na prve dejanske spomladanske zasaditve. Primerjava in učenje v uporabi potrebujeta resnično zgodovino. 1.25.0 vsebuje začetni lokalni Production Planner: razložljivi predlogi izbranih kultur po pravilih, s prenosom v obrazec za ročni pregled. Zunanji AI model in globalna optimizacija nista vključena.

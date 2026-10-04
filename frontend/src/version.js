@@ -1,9 +1,9 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.40";
+export const APP_VERSION = "1.25.0";
 
-// Release 1.24.40 adds weekly workload forecasts and partial historical task-hour estimates.
+// Release 1.25.0 adds weekly workload forecasts and partial historical task-hour estimates.
 // Release 1.24.37 adds explicitly confirmed per-plan historical DTM suggestions.
 // Release 1.24.35 adds explicit succession proposals and final bed occupancy dates.
 // Release 1.24.34 adds advisory Dynamic DTM with preserved catalog and planned dates.

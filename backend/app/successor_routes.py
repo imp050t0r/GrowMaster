@@ -25,10 +25,38 @@ from app.harvest_comparison import harvest_report
 from app.dtm_learning import learning_report, apply_suggestion, save_result, snapshot
 from app.workload import workload_report
 from app.harvest_forecast import harvest_forecast
+from app.production_planner import production_proposals
 
 
 router = APIRouter()
 DEFAULT_FARM_ID = 1
+
+
+class ProductionProposalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start: date
+    end: date
+    crop_ids: list[int] = Field(min_length=1, max_length=10)
+    max_beds: int = Field(default=5, ge=1, le=100)
+
+
+@router.post("/api/planning/production-proposals")
+def get_production_proposals(payload: ProductionProposalRequest, db: Session = Depends(get_db)) -> dict:
+    if payload.start <= date.today() or payload.end < payload.start or (payload.end-payload.start).days > 366:
+        raise HTTPException(status_code=422, detail="Izberi prihodnje obdobje, dolgo največ 367 dni.")
+    if any(crop_id <= 0 for crop_id in payload.crop_ids):
+        raise HTTPException(status_code=422, detail="Izberi veljavne kulture.")
+    crops = db.scalars(select(Crop).where(Crop.id.in_(payload.crop_ids)).options(selectinload(Crop.varieties)).order_by(Crop.id)).all()
+    if len(crops) != len(set(payload.crop_ids)):
+        raise HTTPException(status_code=422, detail="Ena od izbranih kultur ne obstaja; osveži katalog.")
+    beds = db.scalars(select(Bed).where(Bed.farm_id == DEFAULT_FARM_ID).order_by(Bed.id)).all()
+    plans = db.scalars(select(CropPlan).where(
+        CropPlan.farm_id == DEFAULT_FARM_ID, CropPlan.status == "planned",
+    ).options(selectinload(CropPlan.crop), selectinload(CropPlan.variety))).all()
+    plantings = db.scalars(select(Planting).where(
+        Planting.farm_id == DEFAULT_FARM_ID, Planting.status.in_(["active", "completed"]),
+    ).options(selectinload(Planting.crop), selectinload(Planting.variety))).all()
+    return production_proposals(beds, crops, plans, plantings, payload.start, payload.end, payload.max_beds)
 
 
 @router.get("/api/planning/harvest-forecast")
