@@ -1,0 +1,10 @@
+.succession-bed { border: 1px solid #c5d5c8; border-radius: .6rem; padding: .85rem; margin: .8rem 0; }
+.succession-bed summary { cursor: pointer; font-weight: 700; }
+.succession-bed article { border-top: 1px solid #dce5dc; margin-top: .8rem; padding: .8rem 0; }
+.succession-dates { display: grid; gap: .35rem; margin: .6rem 0; }
+.succession-release { display: flex; align-items: end; gap: .6rem; flex-wrap: wrap; margin: .8rem 0; }
+.succession-release label { display: grid; gap: .3rem; }
+.succession-release small { flex-basis: 100%; }
+.succession-warning { color: #794817; background: #fff5de; padding: .6rem; border-radius: .3rem; }
+.succession-alternatives button { margin: .3rem .5rem .3rem 0; }
+.succession-panel { overflow-wrap: anywhere; }

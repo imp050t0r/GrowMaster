@@ -143,6 +143,14 @@ class Bed(Base):
 
 
 class Planting(Base):
+    expected_bed_release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    dynamic_dtm_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dynamic_dtm_confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    predicted_harvest_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    predicted_harvest_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    dynamic_dtm_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dynamic_dtm_initial_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     __tablename__ = "plantings"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -351,6 +359,14 @@ class OrderPayment(Base):
 
 
 class CropPlan(Base):
+    expected_bed_release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    dynamic_dtm_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dynamic_dtm_confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    predicted_harvest_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    predicted_harvest_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    dynamic_dtm_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dynamic_dtm_initial_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     __tablename__ = "crop_plans"
 
     id: Mapped[int] = mapped_column(primary_key=True)

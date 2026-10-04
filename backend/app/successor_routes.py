@@ -5,11 +5,12 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.database import get_db
 from app.adaptive_recommendations import apply_yield_evidence, yield_evidence
 from app.maturity import maturity_days_for_date
-from app.models import Bed, Crop, CropPlan, Planting
+from app.models import Bed, Crop, CropPlan, Planting, Task
 from app.planting_advisor import (
     ROTATION_RULES,
     rotation_families,
@@ -18,10 +19,129 @@ from app.planting_advisor import (
 )
 from app.seed_quantity import calculate_seed_quantity
 from app.seeding_profiles import seeding_profile
+from app.dynamic_dtm import store_prediction
+from app.succession import review as succession_review
+from app.harvest_comparison import harvest_report
+from app.dtm_learning import learning_report, apply_suggestion, save_result, snapshot
+from app.workload import workload_report
 
 
 router = APIRouter()
 DEFAULT_FARM_ID = 1
+
+
+@router.get("/api/planning/workload")
+def get_workload(start: date, end: date, db: Session = Depends(get_db)) -> dict:
+    if end < start or (end-start).days > 366:
+        raise HTTPException(status_code=422, detail="Izberi veljavno obdobje, dolgo največ 367 dni.")
+    from app.main import planning_calendar
+    events=planning_calendar(start=start,end=end,db=db)["events"]
+    pending=db.scalars(select(Task).where(
+        Task.farm_id == DEFAULT_FARM_ID, Task.status == "planned",
+        Task.due_date >= start, Task.due_date <= end,
+    ).options(selectinload(Task.bed))).all()
+    completed=db.scalars(select(Task).where(
+        Task.farm_id == DEFAULT_FARM_ID, Task.status == "completed",
+    ).options(selectinload(Task.bed))).all()
+    return workload_report(events,pending,completed,start,end)
+
+
+class SuccessionAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class BedReleaseUpdate(SuccessionAction):
+    expected_bed_release_date: date | None
+
+
+class SuccessionMove(SuccessionAction):
+    bed_id: int = Field(gt=0)
+
+
+def succession_state(db: Session, *, lock=False):
+    beds_query = select(Bed).where(Bed.farm_id == DEFAULT_FARM_ID).order_by(Bed.id)
+    plans_query = select(CropPlan).where(
+        CropPlan.farm_id == DEFAULT_FARM_ID, CropPlan.status == "planned"
+    ).order_by(CropPlan.id).options(selectinload(CropPlan.variety), selectinload(CropPlan.crop), selectinload(CropPlan.bed))
+    plantings_query = select(Planting).where(
+        Planting.farm_id == DEFAULT_FARM_ID, Planting.status.in_(["active", "completed"])
+    ).order_by(Planting.id).options(selectinload(Planting.variety), selectinload(Planting.crop))
+    if lock:
+        beds_query = beds_query.with_for_update()
+        plans_query = plans_query.with_for_update()
+        plantings_query = plantings_query.with_for_update()
+    beds = list(db.scalars(beds_query).all())
+    plans = list(db.scalars(plans_query).all())
+    plantings = list(db.scalars(plantings_query).all())
+    return beds, plans, plantings, succession_review(beds, plans, plantings)
+
+
+def checked_succession_state(db: Session, token: str):
+    state = succession_state(db, lock=True)
+    if state[3]["token"] != token:
+        raise HTTPException(status_code=409, detail="Načrt ali napoved se je spremenila. Osveži pregled sukcesij in ponovno preveri predlog.")
+    return state
+
+
+@router.get("/api/planning/successions")
+def get_successions(db: Session = Depends(get_db)) -> dict:
+    return succession_state(db)[3]
+
+
+@router.put("/api/planning/successions/{record_type}/{record_id}/release")
+def update_bed_release(record_type: str, record_id: int, payload: BedReleaseUpdate,
+                       db: Session = Depends(get_db)) -> dict:
+    _, plans, plantings, _ = checked_succession_state(db, payload.token)
+    records = {"plans": plans, "plantings": [p for p in plantings if p.status == "active"]}.get(record_type, [])
+    record = next((p for p in records if p.id == record_id), None)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Odprt zapis ne obstaja.")
+    minimum = max(date.today(), record.expected_harvest_date) if record_type == "plantings" else record.expected_harvest_date
+    if payload.expected_bed_release_date and payload.expected_bed_release_date < minimum:
+        raise HTTPException(status_code=422, detail=f"Zaključek zasedenosti mora biti {minimum} ali pozneje. Dejansko končan cikel zaključi v gredicah.")
+    record.expected_bed_release_date = payload.expected_bed_release_date
+    db.commit()
+    return {"message": "Predvideni zaključek zasedenosti je shranjen."}
+
+
+@router.post("/api/planning/successions/{bed_id}/apply")
+def apply_succession(bed_id: int, payload: SuccessionAction, db: Session = Depends(get_db)) -> dict:
+    _, plans, _, report = checked_succession_state(db, payload.token)
+    group = next((g for g in report["beds"] if g["bed_id"] == bed_id), None)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Gredica nima načrtovanih sukcesij.")
+    if not group["can_apply"]:
+        raise HTTPException(status_code=409, detail="Predlog ni pripravljen za uporabo. Dopolni zaključke zasedenosti oziroma preveri že začete setve.")
+    by_id = {p.id: p for p in plans}
+    changed = []
+    for row in group["plans"]:
+        if not row["shift_days"]:
+            continue
+        plan = by_id[row["plan_id"]]
+        before = row["original"]
+        for name, value in row["proposed"].items():
+            setattr(plan, name, value)
+        # Temperatures anchored to the old dates cannot be silently reused.
+        # The initial snapshot remains intact for planned-versus-actual work.
+        store_prediction(plan, plan.variety)
+        changed.append({"plan_id": plan.id, "before": before, "after": row["proposed"]})
+    db.commit()
+    return {"message": f"Posodobljenih je {len(changed)} načrtov. Razmik med setvijo sadik in presajanjem je ohranjen.", "changes": changed}
+
+
+@router.post("/api/planning/successions/plans/{plan_id}/move")
+def move_succession(plan_id: int, payload: SuccessionMove, db: Session = Depends(get_db)) -> dict:
+    _, plans, _, report = checked_succession_state(db, payload.token)
+    row = next((r for g in report["beds"] for r in g["plans"] if r["plan_id"] == plan_id), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
+    if payload.bed_id not in {b["id"] for b in row["alternative_beds"]}:
+        raise HTTPException(status_code=409, detail="Gredica ni več med preverjenimi možnostmi. Osveži pregled.")
+    plan = next(p for p in plans if p.id == plan_id)
+    plan.bed_id = payload.bed_id
+    db.commit()
+    return {"message": "Načrt je prestavljen na preverjeno prazno gredico enakih mer; datumi ostanejo ohranjeni."}
 
 
 def _plan_start(plan: CropPlan) -> date:
@@ -286,3 +406,67 @@ def next_crop_suggestions(
             "in razpoložljive zaščite."
         ),
     }
+
+
+@router.get("/api/planning/harvest-comparison")
+def get_harvest_comparison(db: Session = Depends(get_db)) -> dict:
+    plantings = db.scalars(select(Planting).where(
+        Planting.farm_id == DEFAULT_FARM_ID,
+        Planting.status.in_(["active", "completed"]),
+    ).order_by(Planting.sowing_date.desc(), Planting.id.desc()).options(
+        selectinload(Planting.harvests), selectinload(Planting.crop),
+        selectinload(Planting.variety), selectinload(Planting.bed),
+    )).all()
+    return harvest_report(plantings)
+
+
+def dtm_learning_state(db: Session, *, lock=False):
+    plans_query = select(CropPlan).where(
+        CropPlan.farm_id == DEFAULT_FARM_ID, CropPlan.status == "planned",
+    ).order_by(CropPlan.id).options(
+        selectinload(CropPlan.variety), selectinload(CropPlan.crop), selectinload(CropPlan.bed),
+    )
+    history_query = select(Planting).where(
+        Planting.farm_id == DEFAULT_FARM_ID, Planting.status == "completed",
+    ).order_by(Planting.id).options(
+        selectinload(Planting.harvests), selectinload(Planting.variety),
+        selectinload(Planting.crop), selectinload(Planting.bed),
+    )
+    if lock:
+        plans_query = plans_query.with_for_update()
+        history_query = history_query.with_for_update()
+    plans = list(db.scalars(plans_query).all())
+    history = list(db.scalars(history_query).all())
+    return plans, learning_report(plans, history)
+
+
+@router.get("/api/planning/dtm-learning")
+def get_dtm_learning(db: Session = Depends(get_db)) -> dict:
+    return dtm_learning_state(db)[1]
+
+
+@router.post("/api/planning/dtm-learning/{plan_id}/{action}")
+def confirm_dtm_learning(plan_id: int, action: str, payload: SuccessionAction,
+                         db: Session = Depends(get_db)) -> dict:
+    if action not in ("apply", "reset"):
+        raise HTTPException(status_code=404, detail="Neznano dejanje.")
+    plans, report = dtm_learning_state(db, lock=True)
+    if payload.token != report["token"]:
+        raise HTTPException(status_code=409, detail="Načrt ali zgodovina se je spremenila. Osveži predlog.")
+    plan = next((p for p in plans if p.id == plan_id), None)
+    row = next((r for r in report["rows"] if r["plan_id"] == plan_id), None)
+    if plan is None or row is None:
+        raise HTTPException(status_code=404, detail="Odprt načrt ne obstaja.")
+    if action == "apply":
+        if not row["can_apply"]:
+            raise HTTPException(status_code=409, detail="Za ta načrt ni primernega predloga popravka.")
+        apply_suggestion(plan, row)
+        message = "Potrjeni popravek napovedi je shranjen za ta načrt."
+    else:
+        if not row["can_reset"]:
+            raise HTTPException(status_code=409, detail="Popravek je mogoče odstraniti samo pred začetkom načrta.")
+        baseline = snapshot(plan.dynamic_dtm_explanation)["history_correction"]["baseline"]
+        save_result(plan, baseline)
+        message = "Obnovljena je napoved pred potrjenim popravkom."
+    db.commit()
+    return {"message": message}

@@ -53,6 +53,7 @@ from app.backups import (
 )
 from app.annual_profitability_pdf import build_annual_profitability_pdf
 from app.adaptive_recommendations import apply_yield_evidence, yield_evidence
+from app.dynamic_dtm import ClimateInput, store_prediction, serialized_prediction
 from app.database import SessionLocal, get_db
 from app.migrations import latest_revision, run_migrations, schema_migrations
 from app.maturity import (
@@ -812,8 +813,10 @@ def serialize_planting(planting: Planting) -> dict:
         "sowing_date": planting.sowing_date,
         "expected_harvest_date": planting.expected_harvest_date,
         "completed_on": planting.completed_on,
+        "expected_bed_release_date": planting.expected_bed_release_date,
         "status": planting.status,
         "rotation_override": planting.rotation_override,
+        "dynamic_dtm": serialized_prediction(planting),
         **maturity_details(planting.variety, planting.sowing_date),
     }
 
@@ -1777,6 +1780,7 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
         rotation_override=payload.override_rotation,
         status="active",
     )
+    store_prediction(planting, variety)
     bed.status = "growing"
     db.add(planting)
     db.flush()
@@ -1793,6 +1797,7 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
         "crop": crop.name,
         "variety": variety.name,
         "expected_harvest_date": planting.expected_harvest_date,
+        "dynamic_dtm": serialized_prediction(planting),
         **maturity_details(variety, payload.sowing_date),
     }
 
@@ -3420,11 +3425,13 @@ def serialize_crop_plan(plan: CropPlan) -> dict:
         "variety": plan.variety.name,
         "sowing_date": plan.sowing_date,
         "transplant_date": plan.transplant_date,
+        "expected_bed_release_date": plan.expected_bed_release_date,
         "expected_harvest_date": plan.expected_harvest_date,
         "expected_yield_kg": plan.expected_yield_kg,
         "status": plan.status,
         "planting_id": plan.planting_id,
         "notes": plan.notes,
+        "dynamic_dtm": serialized_prediction(plan),
         **maturity_details(plan.variety, plan.transplant_date or plan.sowing_date),
     }
 
@@ -3524,6 +3531,7 @@ def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> 
         plan.bed = bed
         plan.crop = crop
         plan.variety = variety
+        store_prediction(plan, variety)
         db.add(plan)
         created.append(plan)
     db.commit()
@@ -3567,9 +3575,19 @@ def activate_crop_plan(
         variety_id=plan.variety_id,
         sowing_date=plan.sowing_date,
         expected_harvest_date=plan.expected_harvest_date,
+        expected_bed_release_date=plan.expected_bed_release_date,
         rotation_override=payload.override_rotation,
         status="active",
     )
+    # Keep the original plan snapshot and transplant reference for later comparisons.
+    if plan.dynamic_dtm_explanation:
+        from app.dynamic_dtm import DTM_COLUMNS
+        for name in DTM_COLUMNS:
+            setattr(planting, name, getattr(plan, name))
+    else:
+        store_prediction(planting, plan.variety,
+                         reference_date=plan.transplant_date or plan.sowing_date,
+                         reference_kind="transplant" if plan.transplant_date else "sowing")
     plan.bed.status = "growing"
     db.add(planting)
     db.flush()
@@ -6740,3 +6758,31 @@ def record_supplier_payment(
         else "Delno plačilo dobavitelju je evidentirano."
     )
     return {"message": message, **data}
+
+
+@app.post("/api/{record_type}/{record_id}/dynamic-dtm")
+def update_dynamic_dtm(record_type: str, record_id: int, payload: ClimateInput,
+                       db: Session = Depends(get_db)) -> dict:
+    """Explicit recalculation stores advice only, without rescheduling operations."""
+    model = {"plantings": Planting, "plans": CropPlan}.get(record_type)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Vrsta zapisa ne obstaja.")
+    record = db.scalar(select(model).where(model.id == record_id, model.farm_id == DEFAULT_FARM_ID))
+    if record is None:
+        raise HTTPException(status_code=404, detail="Zapis ne obstaja.")
+    if record.status not in {"planned", "active"}:
+        raise HTTPException(status_code=409, detail="Napoved je mogoče osvežiti le za odprte zapise.")
+    previous = serialized_prediction(record)
+    reference = date.fromisoformat(previous["reference_date"]) if previous else None
+    kind = previous["reference_kind"] if previous else None
+    if model is Planting and previous is None:
+        # Pre-upgrade activations have no snapshot, but their linked plan still
+        # supplies the field/transplant date. Do not count nursery time twice.
+        source_plan = db.scalar(select(CropPlan).where(
+            CropPlan.planting_id == record.id, CropPlan.farm_id == DEFAULT_FARM_ID))
+        if source_plan is not None:
+            reference = source_plan.transplant_date or source_plan.sowing_date
+            kind = "transplant" if source_plan.transplant_date else "sowing"
+    result = store_prediction(record, record.variety, payload, reference, kind)
+    db.commit()
+    return {"dynamic_dtm": result}

@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0013_planting_completion_date"
-        assert run_migrations() == "0013_planting_completion_date"
+        assert run_migrations() == "0015_bed_release_date"
+        assert run_migrations() == "0015_bed_release_date"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 13
+            ) == 15
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -538,6 +538,19 @@ def test_bed_planting_and_task_workflow() -> None:
         assert planting.json()["maturity_season_label"] == "poletje"
         assert planting.json()["maturity_days"] == variety["days_summer"]
         assert planting.json()["expected_harvest_date"] == "2026-09-06"
+        prediction = planting.json()["dynamic_dtm"]
+        assert prediction["catalog_dtm_days"] == variety["days_to_harvest"]
+        assert prediction["dynamic_dtm_days"] == variety["days_summer"]
+        assert prediction["fallback"] is True
+        refreshed = client.post(f"/api/plantings/{planting.json()['id']}/dynamic-dtm", json={})
+        assert refreshed.status_code == 200
+        assert refreshed.json()["dynamic_dtm"]["reference_kind"] == "sowing"
+        assert client.post("/api/plantings/999999/dynamic-dtm", json={}).status_code == 404
+        assert client.post(f"/api/plantings/{planting.json()['id']}/dynamic-dtm", json={"target_gdd": -1}).status_code == 422
+        with SessionLocal() as db:
+            stored = db.get(Planting, planting.json()["id"])
+            assert json.loads(stored.dynamic_dtm_initial_snapshot) == prediction
+            assert stored.expected_harvest_date == date(2026, 9, 6)
 
         detail = client.get(f"/api/beds/{bed['id']}")
         assert detail.status_code == 200
@@ -1104,6 +1117,21 @@ def test_bed_planting_and_task_workflow() -> None:
         assert activated.status_code == 200
         assert activated.json()["plan"]["status"] == "activated"
         assert activated.json()["planting_id"]
+        with SessionLocal() as db:
+            stored = db.get(Planting, activated.json()["planting_id"])
+            assert json.loads(stored.dynamic_dtm_explanation) == first_plan["dynamic_dtm"]
+        refreshed = client.post(f"/api/plantings/{activated.json()['planting_id']}/dynamic-dtm", json={})
+        assert refreshed.status_code == 200
+        assert refreshed.json()["dynamic_dtm"]["reference_date"] == "2026-09-27"
+        assert refreshed.json()["dynamic_dtm"]["reference_kind"] == "transplant"
+        with SessionLocal() as db:
+            stored = db.get(Planting, activated.json()["planting_id"])
+            stored.dynamic_dtm_explanation = None
+            stored.dynamic_dtm_initial_snapshot = None
+            db.commit()
+        legacy_refresh = client.post(f"/api/plantings/{activated.json()['planting_id']}/dynamic-dtm", json={})
+        assert legacy_refresh.status_code == 200
+        assert legacy_refresh.json()["dynamic_dtm"]["reference_date"] == "2026-09-27"
 
         cancelled_plan = client.post(
             f"/api/plans/{second_plan['id']}/status",
@@ -2437,7 +2465,7 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0013_planting_completion_date"
+        assert data_safety_summary["schema_revision"] == "0015_bed_release_date"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
@@ -2523,6 +2551,17 @@ def test_bed_planting_and_task_workflow() -> None:
             "days_winter",
         } <= set(backup_variety)
         assert "composition" in backup_variety
+
+        from app.dynamic_dtm import DTM_COLUMNS
+        old_document = json.loads(portable_backup.content)
+        for table in ("plantings", "crop_plans"):
+            for row in old_document["payload"]["tables"][table]:
+                for field in (*DTM_COLUMNS, "expected_bed_release_date"):
+                    row.pop(field)
+        old_document["checksum_sha256"] = hashlib.sha256(canonical_json(old_document["payload"])).hexdigest()
+        parsed_old = parse_backup(json.dumps(old_document).encode())
+        for table in ("plantings", "crop_plans"):
+            assert all(row[field] is None for row in parsed_old.rows_by_table[table] for field in DTM_COLUMNS)
 
         metadata_fields = {
             "source_name",

@@ -12,6 +12,7 @@ import tempfile
 from sqlalchemy import Integer, func, select, text
 from sqlalchemy.orm import Session
 
+from app.dynamic_dtm import DTM_COLUMNS
 from app.database import Base
 from app.maturity import estimated_seasonal_days
 from app.migrations import latest_revision
@@ -304,6 +305,9 @@ def parse_backup(content: bytes) -> ParsedBackup:
                     and row_columns <= expected_columns
                     and seasonal_columns_valid
                 )
+            if table_name in {"plantings", "crop_plans"}:
+                valid_columns = (expected_columns - set(DTM_COLUMNS) - {"expected_bed_release_date"} <= row_columns
+                                 and row_columns <= expected_columns)
             if not valid_columns:
                 raise BackupValidationError(
                     f"Zapis v tabeli {table_name} nima pričakovanih polj."
@@ -311,6 +315,9 @@ def parse_backup(content: bytes) -> ParsedBackup:
             decoded_row = {
                 key: decode_value(value) for key, value in encoded_row.items()
             }
+            if table_name in {"plantings", "crop_plans"}:
+                for name in (*DTM_COLUMNS, "expected_bed_release_date"):
+                    decoded_row.setdefault(name, None)
             if table_name == "varieties" and not seasonal_columns <= row_columns:
                 estimates = estimated_seasonal_days(decoded_row["days_to_harvest"])
                 decoded_row.update(

@@ -1,0 +1,6 @@
+.dynamic-dtm { margin-top: .75rem; padding: .8rem; border: 1px solid #b4cbb5; border-radius: .6rem; background: #f4f8f1; color: #223c29; display: grid; gap: .35rem; overflow-wrap: anywhere; }
+.dynamic-dtm span, .dynamic-dtm small { display: block; }
+.dynamic-dtm summary { cursor: pointer; font-weight: 600; }
+.dynamic-dtm ul { padding-left: 1.2rem; margin: .5rem 0; }
+.dynamic-dtm li { margin-bottom: .4rem; }
+.dynamic-dtm [role="alert"] { color: #9b2626; }

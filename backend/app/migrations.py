@@ -221,6 +221,23 @@ def add_planting_completion_date(connection: Connection) -> None:
         connection.execute(text("ALTER TABLE plantings ADD COLUMN completed_on DATE"))
 
 
+def add_dynamic_dtm(connection: Connection) -> None:
+    """Add nullable advisory fields; preserve all historical dates and catalog values."""
+    from app.dynamic_dtm import DTM_COLUMNS
+    for table in ("plantings", "crop_plans"):
+        columns = {column["name"] for column in inspect(connection).get_columns(table)}
+        for name, sql_type in DTM_COLUMNS.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+
+
+def add_bed_release_date(connection: Connection) -> None:
+    """First harvest and final bed occupancy must remain separate."""
+    for table in ("plantings", "crop_plans"):
+        if "expected_bed_release_date" not in {c["name"] for c in inspect(connection).get_columns(table)}:
+            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN expected_bed_release_date DATE"))
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -235,6 +252,8 @@ MIGRATIONS = (
     Migration("0011_professional_pos", add_professional_pos),
     Migration("0012_bed_gerk_pid", add_bed_gerk_pid),
     Migration("0013_planting_completion_date", add_planting_completion_date),
+    Migration("0014_dynamic_dtm", add_dynamic_dtm),
+    Migration("0015_bed_release_date", add_bed_release_date),
 )
 
 

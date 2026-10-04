@@ -1,8 +1,12 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.24.33";
+export const APP_VERSION = "1.24.39";
 
+// Release 1.24.39 adds weekly workload forecasts and partial historical task-hour estimates.
+// Release 1.24.37 adds explicitly confirmed per-plan historical DTM suggestions.
+// Release 1.24.35 adds explicit succession proposals and final bed occupancy dates.
+// Release 1.24.34 adds advisory Dynamic DTM with preserved catalog and planned dates.
 // Release 1.24.33 improves Windows upgrade diagnostics and version checks. Release 1.24.31 adds revenue and results by crop to annual PDF. Release 1.24.30 adds annual PDF profitability reports by bed. Release 1.24.29 adds GERK-linked bed history and actual cycle completion dates. Release 1.24.28 completes the professional POS workflow: idempotent sales, harvested-stock buttons, units, history, stocktake, devices, losses and pickups. Release 1.24.27 adds tablet POS day review and cash closing. Release 1.24.26 adds item-level offline POS returns with stock and cash-flow reversal. Release 1.24.25 adds traceable offline-capable POS inventory write-offs. Release 1.24.24 completes professional source coverage for every crop. Release 1.24.23 adds verified professional Indian gourd varieties. Release 1.24.22 adds a verified professional bitter-gourd/karela set and
 // multilingual crop aliases. Release 1.24.21 adds the first verified ICAR-IIHR professional Indian crop
 // batch. Release 1.24.20 uses verified product pages before generic web search and

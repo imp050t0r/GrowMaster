@@ -5,6 +5,12 @@ import { GREDICNIK_MODES, getGredicnikSpacing, getGredicnikSpacingOptions } from
 import { formatPlantingMonths, PLANTING_ENVIRONMENTS, plantingTiming, toleranceLabel } from "./plantingCalendar";
 import { calculateHarvestPlan, harvestOptions, harvestTypeLabel, propagationLabel, propagationOptions } from "./harvestPlanning";
 import { APP_VERSION } from "./version";
+import { DynamicDtm } from "./DynamicDtm";
+import { HarvestComparison } from "./HarvestComparison";
+import { SmartSeedPlanner } from "./SmartSeedPlanner";
+import { WorkloadForecast } from "./WorkloadForecast";
+import { DtmLearning } from "./DtmLearning";
+import { SuccessionReview } from "./SuccessionReview";
 import {
   apiFetch,
   apiRequest,
@@ -1394,7 +1400,7 @@ function App() {
       {view === "planning" && (
         <PlanningView crops={crops} beds={beds} plans={plans} calendar={planningCalendar} forecast={forecast}
           form={planForm} setForm={setPlanForm} selectedCrop={selectedPlanCrop} changeCrop={changePlanCrop} createPlan={createPlan}
-          activatePlan={activatePlan} cancelPlan={cancelPlan} start={planStart} setStart={setPlanStart} end={planEnd} setEnd={setPlanEnd} />
+          reloadData={loadData} activatePlan={activatePlan} cancelPlan={cancelPlan} start={planStart} setStart={setPlanStart} end={planEnd} setEnd={setPlanEnd} />
       )}
       {view === "gredicnik" && (
         <GredicnikView crops={crops} beds={beds} savePlan={createGredicnikPlan} />
@@ -1640,7 +1646,7 @@ function PlantingView({ crops, beds, plantings, form, setForm, selectedCrop, cha
         {rotationWarning && <div className="rotation-warning"><strong>Opozorilo kolobarja</strong><p>{rotationWarning.message}</p><p>{rotationWarning.warnings?.[0]}</p><div className="warning-actions"><button type="button" onClick={() => setRotationWarning(null)}>IZBERI DRUGO GREDICO</button><button type="button" className="danger-button" onClick={() => savePlanting(true)}>VSEENO POSEJ</button></div></div>}
       </section>
       {suggestions && <PlantingSuggestions suggestions={suggestions} applySuggestion={applySuggestion} />}
-      <section className="panel"><div className="section-heading"><div><p className="eyebrow">Aktivni rastni cikli</p><h2>Setve</h2></div><span>{plantings.length} aktivnih</span></div>{plantings.length === 0 ? <p className="empty-state">Prva setev še ni dodana.</p> : <div className="planting-list">{plantings.map((planting) => <article key={planting.id}><strong>{planting.bed} · {planting.crop} {planting.variety}</strong><span>{planting.sowing_date} → {planting.expected_harvest_date}</span>{planting.rotation_override && <small>Kolobar je uporabnik zavestno preglasil.</small>}</article>)}</div>}</section>
+      <section className="panel"><div className="section-heading"><div><p className="eyebrow">Aktivni rastni cikli</p><h2>Setve</h2></div><span>{plantings.length} aktivnih</span></div>{plantings.length === 0 ? <p className="empty-state">Prva setev še ni dodana.</p> : <div className="planting-list">{plantings.map((planting) => <article key={planting.id}><strong>{planting.bed} · {planting.crop} {planting.variety}</strong><span>{planting.sowing_date} → {planting.expected_harvest_date}</span><DynamicDtm prediction={planting.dynamic_dtm} recordType="plantings" recordId={planting.id} />{planting.rotation_override && <small>Kolobar je uporabnik zavestno preglasil.</small>}</article>)}</div>}</section>
     </>
   );
 }
@@ -2396,7 +2402,7 @@ function GredicnikView({ crops, beds, savePlan }) {
   </>;
 }
 
-function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, selectedCrop, changeCrop, createPlan, activatePlan, cancelPlan, start, setStart, end, setEnd }) {
+function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, selectedCrop, changeCrop, createPlan, activatePlan, cancelPlan, start, setStart, end, setEnd, reloadData }) {
   return <>
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Sezonski načrt</p><h2>Načrtuj setev ali serijo</h2></div></div>
       <form className="planning-form" onSubmit={createPlan}>
@@ -2411,11 +2417,16 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
         <button className="primary-button">DODAJ V NAČRT</button>
       </form>
     </section>
+    <SuccessionReview plans={plans} onApplied={reloadData} />
+    <HarvestComparison />
+    <DtmLearning plans={plans} onApplied={reloadData} />
     <section className="planning-summary-grid">
       <div className="panel"><div className="section-heading"><div><p className="eyebrow">Obdobje</p><h2>Koledar dela</h2></div></div><div className="range-form"><label>Od<input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Do<input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></label></div><div className="calendar-list">{calendar.map((event, index) => <article key={`${event.date}-${event.type}-${index}`}><time>{event.date}</time><div><strong>{event.title}</strong><span>{event.bed ? `Gredica ${event.bed}` : event.type === "delivery" ? "Prodaja" : "Splošno"}</span></div><span className={`event-type ${event.type}`}>{event.type === "sowing" ? "Setev" : event.type === "transplant" ? "Presajanje" : event.type === "planned_harvest" ? "Žetev" : event.type === "delivery" ? "Dostava" : "Opravilo"}</span></article>)}</div></div>
       <div className="panel"><div className="section-heading"><div><p className="eyebrow">Ponudba in povpraševanje</p><h2>Napoved pridelka</h2></div></div>{forecast.warnings.map((warning) => <div className="forecast-warning" key={warning}>⚠ {warning}</div>)}<div className="forecast-list">{forecast.rows.map((row) => <article key={row.crop_id}><div><strong>{row.crop}</strong><span>Zaloga {row.current_stock_kg} kg + načrt {row.planned_yield_kg} kg − naročila {row.confirmed_demand_kg} kg</span></div><b className={row.shortage ? "negative" : "positive"}>{row.projected_balance_kg} kg</b></article>)}</div></div>
     </section>
-    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prihodnje setve</p><h2>Načrtovane gredice</h2></div><span>{plans.length} zapisov</span></div><div className="plan-grid">{plans.map((plan) => <article key={plan.id}><div><span className={`plan-state ${plan.status}`}>{plan.status === "planned" ? "Načrtovano" : "Aktivirano"}</span><strong>{plan.crop} {plan.variety}</strong><span>Gredica {plan.bed} · setev {plan.sowing_date}</span><span>Žetev {plan.expected_harvest_date} · {plan.expected_yield_kg} kg</span></div>{plan.status === "planned" && <div className="order-actions"><button className="secondary-button" onClick={() => activatePlan(plan.id)}>AKTIVIRAJ</button><button className="text-button danger-text" onClick={() => cancelPlan(plan.id)}>PREKLIČI</button></div>}</article>)}</div></section>
+    <WorkloadForecast plans={plans} start={start} end={end} />
+    <SmartSeedPlanner plans={plans} start={start} end={end} />
+    <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prihodnje setve</p><h2>Načrtovane gredice</h2></div><span>{plans.length} zapisov</span></div><div className="plan-grid">{plans.map((plan) => <article key={plan.id}><div><span className={`plan-state ${plan.status}`}>{plan.status === "planned" ? "Načrtovano" : "Aktivirano"}</span><strong>{plan.crop} {plan.variety}</strong><span>Gredica {plan.bed} · setev {plan.sowing_date}</span><span>Žetev {plan.expected_harvest_date} · {plan.expected_yield_kg} kg</span><DynamicDtm prediction={plan.dynamic_dtm} recordType="plans" recordId={plan.id} canRefresh={plan.status === "planned"} /></div>{plan.status === "planned" && <div className="order-actions"><button className="secondary-button" onClick={() => activatePlan(plan.id)}>AKTIVIRAJ</button><button className="text-button danger-text" onClick={() => cancelPlan(plan.id)}>PREKLIČI</button></div>}</article>)}</div></section>
   </>;
 }
 
