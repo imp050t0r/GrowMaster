@@ -55,6 +55,34 @@ class Farm(Base):
     inventory_write_offs: Mapped[list["InventoryWriteOff"]] = relationship(back_populates="farm")
 
 
+class IrrigationCropProfile(Base):
+    __tablename__ = "irrigation_crop_profiles"
+    __table_args__ = (UniqueConstraint("farm_id", "crop_id", name="uq_irrigation_crop"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
+    crop_id: Mapped[int] = mapped_column(ForeignKey("crops.id", ondelete="CASCADE"))
+    parameters: Mapped[str] = mapped_column(Text)
+
+
+class IrrigationBedProfile(Base):
+    __tablename__ = "irrigation_bed_profiles"
+    __table_args__ = (UniqueConstraint("farm_id", "bed_id", name="uq_irrigation_bed"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="CASCADE"))
+    parameters: Mapped[str] = mapped_column(Text)
+
+
+class IrrigationDailyReport(Base):
+    __tablename__ = "irrigation_daily_reports"
+    __table_args__ = (UniqueConstraint("farm_id", "bed_id", "day", name="uq_irrigation_day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="CASCADE"))
+    day: Mapped[date] = mapped_column(Date)
+    report: Mapped[str] = mapped_column(Text)
+
+
 class Crop(Base):
     __tablename__ = "crops"
 

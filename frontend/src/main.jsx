@@ -8,6 +8,7 @@ import { APP_VERSION } from "./version";
 import { DynamicDtm } from "./DynamicDtm";
 import { HarvestComparison } from "./HarvestComparison";
 import { SmartSeedPlanner } from "./SmartSeedPlanner";
+import { IrrigationPlanner } from "./IrrigationPlanner";
 import { ProductionPlanner } from "./ProductionPlanner";
 import { HarvestForecast } from "./HarvestForecast";
 import { WorkloadForecast } from "./WorkloadForecast";
@@ -2436,6 +2437,7 @@ function PlanningView({ crops, beds, plans, calendar, forecast, form, setForm, s
     <WorkloadForecast plans={plans} start={start} end={end} />
     <SmartSeedPlanner plans={plans} start={start} end={end} />
     <HarvestForecast plans={plans} start={start} end={end} />
+    <IrrigationPlanner crops={crops} beds={beds} />
     <section className="panel"><div className="section-heading"><div><p className="eyebrow">Prihodnje setve</p><h2>Načrtovane gredice</h2></div><span>{plans.length} zapisov</span></div><div className="plan-grid">{plans.map((plan) => <article key={plan.id}><div><span className={`plan-state ${plan.status}`}>{plan.status === "planned" ? "Načrtovano" : "Aktivirano"}</span><strong>{plan.crop} {plan.variety}</strong><span>Gredica {plan.bed} · setev {plan.sowing_date}</span><span>Žetev {plan.expected_harvest_date} · {plan.expected_yield_kg} kg</span><DynamicDtm prediction={plan.dynamic_dtm} recordType="plans" recordId={plan.id} canRefresh={plan.status === "planned"} /></div>{plan.status === "planned" && <div className="order-actions"><button className="secondary-button" onClick={() => activatePlan(plan.id)}>AKTIVIRAJ</button><button className="text-button danger-text" onClick={() => cancelPlan(plan.id)}>PREKLIČI</button></div>}</article>)}</div></section>
   </>;
 }

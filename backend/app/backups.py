@@ -268,7 +268,8 @@ def parse_backup(content: bytes) -> ParsedBackup:
         raise BackupValidationError("Seznam tabel v varnostni kopiji ni veljaven.")
 
     known_tables = {table.name: table for table in backup_tables()}
-    if set(tables_payload) != set(known_tables):
+    optional_tables = {"irrigation_crop_profiles", "irrigation_bed_profiles", "irrigation_daily_reports"}
+    if set(tables_payload) - set(known_tables) or set(known_tables) - set(tables_payload) - optional_tables:
         raise BackupValidationError(
             "Varnostna kopija nima vseh pričakovanih podatkovnih tabel."
         )
@@ -276,7 +277,7 @@ def parse_backup(content: bytes) -> ParsedBackup:
     rows_by_table: dict[str, list[dict]] = {}
     record_count = 0
     for table_name, table in known_tables.items():
-        encoded_rows = tables_payload[table_name]
+        encoded_rows = tables_payload.get(table_name, [])
         if not isinstance(encoded_rows, list):
             raise BackupValidationError(
                 f"Podatki tabele {table_name} niso v pričakovani obliki."
@@ -335,7 +336,7 @@ def parse_backup(content: bytes) -> ParsedBackup:
         rows_by_table[table_name] = decoded_rows
         record_count += len(decoded_rows)
 
-    if payload.get("table_count") != len(known_tables):
+    if payload.get("table_count") != len(tables_payload):
         raise BackupValidationError("Število tabel v varnostni kopiji ni pravilno.")
     if payload.get("record_count") != record_count:
         raise BackupValidationError("Število zapisov v varnostni kopiji ni pravilno.")

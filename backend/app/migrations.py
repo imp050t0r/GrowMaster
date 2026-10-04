@@ -238,6 +238,13 @@ def add_bed_release_date(connection: Connection) -> None:
             connection.execute(text(f"ALTER TABLE {table} ADD COLUMN expected_bed_release_date DATE"))
 
 
+def add_irrigation_schema(connection: Connection) -> None:
+    """Create separate advisory tables without altering crops, beds or plantings."""
+    for model in (app.models.IrrigationCropProfile, app.models.IrrigationBedProfile,
+                  app.models.IrrigationDailyReport):
+        model.__table__.create(bind=connection, checkfirst=True)
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -254,6 +261,7 @@ MIGRATIONS = (
     Migration("0013_planting_completion_date", add_planting_completion_date),
     Migration("0014_dynamic_dtm", add_dynamic_dtm),
     Migration("0015_bed_release_date", add_bed_release_date),
+    Migration("0016_irrigation", add_irrigation_schema),
 )
 
 
