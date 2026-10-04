@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.database import get_db
 from app.adaptive_recommendations import apply_yield_evidence, yield_evidence
 from app.maturity import maturity_days_for_date
-from app.models import Bed, Crop, CropPlan, Planting, Task
+from app.models import Bed, Crop, CropPlan, Harvest, Planting, Task
 from app.planting_advisor import (
     ROTATION_RULES,
     rotation_families,
@@ -24,10 +24,27 @@ from app.succession import review as succession_review
 from app.harvest_comparison import harvest_report
 from app.dtm_learning import learning_report, apply_suggestion, save_result, snapshot
 from app.workload import workload_report
+from app.harvest_forecast import harvest_forecast
 
 
 router = APIRouter()
 DEFAULT_FARM_ID = 1
+
+
+@router.get("/api/planning/harvest-forecast")
+def get_harvest_forecast(start: date, end: date, db: Session = Depends(get_db)) -> dict:
+    if end < start or (end-start).days > 366:
+        raise HTTPException(status_code=422, detail="Izberi veljavno obdobje, dolgo največ 367 dni.")
+    plans = db.scalars(select(CropPlan).where(
+        CropPlan.farm_id == DEFAULT_FARM_ID, CropPlan.status.in_(["planned", "activated"]),
+    ).options(selectinload(CropPlan.bed), selectinload(CropPlan.crop), selectinload(CropPlan.variety))).all()
+    plantings = db.scalars(select(Planting).where(
+        Planting.farm_id == DEFAULT_FARM_ID, Planting.status == "active",
+    ).options(selectinload(Planting.bed), selectinload(Planting.crop), selectinload(Planting.variety))).all()
+    harvests = db.scalars(select(Harvest).join(Planting).where(
+        Harvest.farm_id == DEFAULT_FARM_ID, Planting.farm_id == DEFAULT_FARM_ID,
+    )).all()
+    return harvest_forecast(plans, plantings, harvests, start, end)
 
 
 @router.get("/api/planning/workload")

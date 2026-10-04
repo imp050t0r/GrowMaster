@@ -9,4 +9,4 @@
 - 1.24.40 — Harvest Forecast
 - 1.25.0 — AI Production Planner
 
-Razvoj in preizkusi potekajo na ločenih testnih podatkih; ni treba čakati na prve dejanske spomladanske zasaditve. Primerjava in učenje v uporabi potrebujeta resnično zgodovino. Naslednja razvojna faza po 1.24.39 je Harvest Forecast.
+Razvoj in preizkusi potekajo na ločenih testnih podatkih; ni treba čakati na prve dejanske spomladanske zasaditve. Primerjava in učenje v uporabi potrebujeta resnično zgodovino. Naslednja razvojna faza po 1.24.40 je AI Production Planner.
