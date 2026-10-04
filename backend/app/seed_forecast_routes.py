@@ -4,13 +4,13 @@ import math
 from collections import defaultdict
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
 from app.models import CropPlan
-from app.seed_inventory_service import convert_quantity, list_lots
+from app.seed_inventory_service import convert_quantity, list_lots, requirement_from_target_plants
 from app.seed_quantity import calculate_seed_quantity
 from app.seeding_profiles import seeding_profile
 
@@ -51,6 +51,8 @@ def _allocate_lots(lots: list[dict], plans: list[dict], target_unit: str) -> dic
             quantity = convert_quantity(lot["quantity"], lot["unit"], target_unit, lot.get("thousand_seed_weight_g"))
             if not math.isfinite(quantity) or quantity < 0:
                 raise ValueError("Neveljavna količina.")
+            if target_unit in ("seeds", "pellets"):
+                quantity = math.floor(quantity)
             expiry = date.fromisoformat(lot["expiry_date"]) if lot.get("expiry_date") else date.max
             usable.append({"quantity": quantity, "expiry": expiry})
             if expiry == date.max:
@@ -73,6 +75,63 @@ def _allocate_lots(lots: list[dict], plans: list[dict], target_unit: str) -> dic
     available = sum(p["required_quantity"] for p in plans) - shortage + sum(l["quantity"] for l in usable if l["expiry"] >= last_date)
     expired = sum(l["quantity"] for l in usable if l["expiry"] < last_date)
     return {"available": available, "shortage": shortage, "expired_quantity": expired, "warnings": warnings}
+
+
+def _nursery_packages(lots: list[dict], shortage: int) -> list[dict]:
+    packages = []
+    for lot in lots:
+        try:
+            size = float(lot["package_size"])
+            unit = lot["unit"]
+            if not math.isfinite(size) or size <= 0 or (unit in ("seeds", "pellets") and not size.is_integer()):
+                continue
+            count = convert_quantity(size, unit, "seeds", lot.get("thousand_seed_weight_g"))
+            if not math.isfinite(count) or count < 1:
+                continue
+            seeds_per_package = math.floor(count)
+            needed = math.ceil(shortage / seeds_per_package) if shortage else 0
+            packages.append({"lot_id": lot.get("id"), "supplier": lot.get("supplier"),
+                             "package_size": size, "unit": unit, "seeds_per_package": seeds_per_package,
+                             "packages_to_order": needed, "order_quantity": round(needed*size, 4)})
+        except (ValueError, TypeError, KeyError):
+            continue
+    return sorted(packages, key=lambda p: (p["packages_to_order"], p["seeds_per_package"], str(p["lot_id"])))
+
+
+@router.get("/api/seed-inventory/nursery-forecast/{plan_id}")
+def nursery_seed_forecast(
+    plan_id: int,
+    target_plants: int = Query(ge=1, le=1000000),
+    germination_pct: float = Query(ge=0.01, le=100, allow_inf_nan=False),
+    nursery_survival_pct: float = Query(ge=0.01, le=100, allow_inf_nan=False),
+    reserve_pct: float = Query(default=5, ge=0, le=100, allow_inf_nan=False),
+    db: Session = Depends(get_db),
+) -> dict:
+    plan = db.scalar(select(CropPlan).where(
+        CropPlan.id == plan_id, CropPlan.farm_id == DEFAULT_FARM_ID,
+    ).options(selectinload(CropPlan.bed), selectinload(CropPlan.crop), selectinload(CropPlan.variety)))
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
+    if plan.status != "planned":
+        raise HTTPException(status_code=409, detail="Izberi še neaktiviran načrt presajanja.")
+    if plan.transplant_date is None or plan.transplant_date < plan.sowing_date:
+        raise HTTPException(status_code=422, detail="Izračun zahteva veljaven načrt s setvijo in presajanjem.")
+    if plan.sowing_date < date.today():
+        raise HTTPException(status_code=422, detail="Izračun je namenjen današnjim in prihodnjim setvam.")
+    required = requirement_from_target_plants(target_plants, germination_pct, nursery_survival_pct, reserve_pct)
+    lots = list_lots(plan.crop.name, plan.variety.name)
+    allocation = _allocate_lots(lots, [{"sowing_date": plan.sowing_date, "required_quantity": required}], "seeds")
+    shortage = int(allocation["shortage"])
+    return {"crop_plan_id": plan.id, "bed": plan.bed.name, "crop": plan.crop.name, "variety": plan.variety.name,
+            "sowing_date": plan.sowing_date, "transplant_date": plan.transplant_date,
+            "target_plants": target_plants, "germination_pct": germination_pct,
+            "nursery_survival_pct": nursery_survival_pct, "reserve_pct": reserve_pct,
+            "required_quantity": required, "available_quantity": int(allocation["available"]),
+            "shortage": shortage, "unit": "seeds", "status": "ORDER" if shortage else "OK",
+            "expired_quantity": int(allocation["expired_quantity"]), "stock_warnings": allocation["warnings"],
+            "packages": _nursery_packages(lots, shortage),
+            "formula": "ceil(target_plants / (germination_pct/100 × nursery_survival_pct/100) × (1 + reserve_pct/100))",
+            "note": "Samostojni izračun za en načrt z enim semenom na sadiko. Vnesena kalivost in delež uporabnih sadik veljata za ta izračun, ne potrjujeta kakovosti posameznih serij. Druge setve in rezervacije niso odštete. Zaloga se ne spreminja. Podatki o pakiranjih so iz evidence, ne ponudba dobavitelja."}
 
 
 @router.get("/api/seed-inventory/forecast")
@@ -123,7 +182,7 @@ def seed_inventory_forecast(
                     "variety": plan.variety.name,
                     "sowing_date": plan.sowing_date,
                     "status": "missing_seed_rate",
-                    "message": "Za neposredno setev manjka veljavna norma; pri sadikah potrebujemo število sadik in kalivost. Potreba ni vključena v skupno količino.",
+                    "message": "Načrt presajanja: uporabi izračun Seme za sadike; potreba ni vključena v gramovsko napoved." if plan.transplant_date else "Za neposredno setev manjka veljavna norma. Potreba ni vključena v skupno količino.",
                 }
             )
             continue

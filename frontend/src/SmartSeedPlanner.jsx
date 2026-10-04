@@ -1,5 +1,6 @@
 import React, {useEffect,useState} from "react";
 import {apiRequest} from "./platform";
+import {NurserySeedPlanner} from "./NurserySeedPlanner";
 export function SmartSeedPlanner({plans,start,end}) {
   const [report,setReport]=useState(null),[error,setError]=useState(""),[refresh,setRefresh]=useState(0);
   useEffect(()=>{
@@ -24,6 +25,7 @@ export function SmartSeedPlanner({plans,start,end}) {
       </details>)}
       {report.warnings.map(w=><p key={w.crop_plan_id}>{w.sowing_date} · {w.crop} · {w.variety}: {w.message}</p>)}
     </>}
-    <small>Za sadike še ni izračuna iz števila sadik in kalivosti. Zaloga brez roka je vključena z opozorilom. Upoštevane so samo serije iste sorte; obloženo seme se ne pretvarja v grame.</small>
+    <small>Zaloga brez roka je vključena z opozorilom. Upoštevane so samo serije iste sorte; obloženo seme se ne pretvarja v grame. Potrebe sadik izračunaj posebej spodaj.</small>
+    <NurserySeedPlanner plans={plans} start={start} end={end}/>
   </section>;
 }
