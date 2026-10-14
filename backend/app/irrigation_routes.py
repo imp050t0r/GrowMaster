@@ -535,17 +535,40 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                 except (httpx.RequestError, ValueError, KeyError, TypeError):
                     smart_irrigation_seconds = None
                     reasons.append("Trajanja Smart Irrigation ni mogoče varno prebrati.")
-            if smart_irrigation_seconds is not None and smart_irrigation_seconds > 0:
-                station = profile.opensprinkler_station_entity
-                if not station:
-                    reasons.append("Smart Irrigation priporoča zalivanje, vendar OpenSprinkler postaja ni povezana.")
-                elif station_beds.get(station, 0) > 1:
-                    reasons.append("OpenSprinkler postajo uporablja več gredic; skupno krmiljenje še ni podprto.")
-                elif smart_irrigation_seconds > profile.max_run_seconds:
-                    reasons.append("Smart Irrigation trajanje presega omejitev postaje.")
+        # The valve belongs permanently to the bed. A crop change affects its
+        # water calculation, never the bed-to-valve mapping.
+        if profile and profile.mode == "smart_irrigation" and smart_irrigation_seconds is not None and smart_irrigation_seconds > 0:
+            station = profile.opensprinkler_station_entity
+            if not station:
+                reasons.append("Zalivanje je priporočeno, vendar gredica nima povezane OpenSprinkler postaje.")
+            elif station_beds.get(station, 0) > 1:
+                reasons.append("OpenSprinkler postajo uporablja več gredic; vsaka gredica mora imeti svoj ventil.")
+            elif smart_irrigation_seconds > profile.max_run_seconds:
+                reasons.append("Smart Irrigation trajanje presega omejitev postaje.")
+            else:
+                smart_action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
+                                "data": {"run_seconds": math.ceil(smart_irrigation_seconds), "queue_option": "append"}}
+        elif profile and profile.mode == "soil_sensor" and report and report_status == "irrigate":
+            station = profile.opensprinkler_station_entity
+            if not station:
+                reasons.append("Zalivanje je priporočeno, vendar gredica nima povezane OpenSprinkler postaje.")
+            elif station_beds.get(station, 0) > 1:
+                reasons.append("OpenSprinkler postajo uporablja več gredic; vsaka gredica mora imeti svoj ventil.")
+            elif profile.flow_l_min is None:
+                reasons.append("Manjka izmerjeni pretok te gredice za izračun trajanja ventila.")
+            else:
+                litres = report.get("litres")
+                if litres is None or not math.isfinite(float(litres)) or float(litres) <= 0:
+                    reasons.append("Izračun ne vsebuje veljavnega pozitivnega odmerka vode.")
                 else:
-                    smart_action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
-                                    "data": {"run_seconds": math.ceil(smart_irrigation_seconds), "queue_option": "append"}}
+                    run_seconds = math.ceil(float(litres) / profile.flow_l_min * 60)
+                    if run_seconds > profile.max_run_seconds:
+                        reasons.append("Izračunano trajanje presega omejitev ventila.")
+                    else:
+                        smart_action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
+                                        "data": {"run_seconds": run_seconds, "queue_option": "append"}}
+        if reasons:
+            smart_action = None
         days_after_sowing = (day - planting.sowing_date).days
         suggested_stage = "initial" if days_after_sowing < 20 else "mid"
         rows.append({"bed_id": bed.id, "bed": bed.name, "area_m2": bed.area_m2,

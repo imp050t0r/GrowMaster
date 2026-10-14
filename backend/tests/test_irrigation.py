@@ -111,6 +111,33 @@ def test_daily_readiness_with_soil_sensor_requires_fresh_sensor_read(irrigation,
     assert result["rows"][0]["mode"]=="soil_sensor" and not result["rows"][0]["ready"]
     assert any("Povezava Home Assistant" in reason for reason in result["rows"][0]["reasons"])
 
+def test_wh51_daily_readiness_prepares_action_for_the_bed_valve(irrigation,monkeypatch):
+    db,c,_=irrigation
+    db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,days_summer=35,days_autumn=45,days_winter=55))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
+                    expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.commit()
+    c.put("/api/irrigation/sensor-groups/1",json={"name":"WH51 1","entity_id":"sensor.wh51_group_1"})
+    c.put("/api/irrigation/beds/1",json={**BP,"mode":"soil_sensor","wh51_group":1,"irrigation_zone":"zone_1",
+        "smart_irrigation_entity":"sensor.smart_irrigation_a1","opensprinkler_station_entity":"switch.bed_1_valve"})
+    c.put("/api/irrigation/daily",json=payload(soil_moisture_pct=32,sensor_observed_at=datetime.now(timezone.utc).isoformat()))
+    monkeypatch.setenv("HOME_ASSISTANT_URL","http://ha.local:8123");monkeypatch.setenv("HOME_ASSISTANT_TOKEN","token")
+    monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs:[(None,None,None,None,("192.168.1.10",8123))])
+    class Response:
+        status_code=200
+        def json(self):return {"state":"32","attributes":{"unit_of_measurement":"%"},"last_updated":datetime.now(timezone.utc).isoformat()}
+    class Client:
+        def __init__(self,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def get(self,url,headers):assert url.endswith("sensor.wh51_group_1");return Response()
+    monkeypatch.setattr(irrigation_routes.httpx,"Client",Client)
+    row=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()["rows"][0]
+    assert row["ready"]
+    assert row["action"]=={"action":"opensprinkler.run_station","target":{"entity_id":"switch.bed_1_valve"},
+                            "data":{"run_seconds":5625,"queue_option":"append"}}
+    assert row["planting_id"] and row["crop"]=="Solata"
+
 def test_wh51_groups_limit_to_16_sensor_entities(irrigation):
     _,c,_=irrigation
     for group in range(1,17):
