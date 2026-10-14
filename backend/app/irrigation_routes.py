@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 15407)
+Total output lines: 1012
+
 """Manual, advisory water balance. No weather polling or valve commands."""
 import json
 import math
@@ -521,26 +524,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                         ha_state_cache[profile.smart_irrigation_entity] = (si_response.status_code, si_response.json() if si_response.status_code == 200 else None)
                     si_status, si_data = ha_state_cache[profile.smart_irrigation_entity]
                     if si_status != 200:
-                        reasons.append("Smart Irrigation entity ni dosegljiv v Home Assistantu.")
-                    else:
-                        smart_irrigation_seconds = float(si_data.get("state"))
-                        si_updated = datetime.fromisoformat(si_data.get("attributes", {}).get("last_calculated") or si_data["last_updated"])
-                        si_age = (datetime.now(timezone.utc) - si_updated.astimezone(timezone.utc)).total_seconds()
-                        if not math.isfinite(smart_irrigation_seconds) or smart_irrigation_seconds < 0:
-                            raise ValueError("Trajanje ni veljavno nenegativno število.")
-                        if si_data.get("attributes", {}).get("unit_of_measurement") != "seconds":
-                            raise ValueError("Smart Irrigation trajanje nima enote seconds.")
-                        if not 0 <= si_age <= 6 * 3600:
-                            reasons.append("Smart Irrigation izračun je starejši od šestih ur.")
-                except (httpx.RequestError, ValueError, KeyError, TypeError):
-                    smart_irrigation_seconds = None
-                    reasons.append("Trajanja Smart Irrigation ni mogoče varno prebrati.")
-        # The valve belongs permanently to the bed. A crop change affects its
-        # water calculation, never the bed-to-valve mapping.
-        if profile and profile.mode == "smart_irrigation" and smart_irrigation_seconds is not None and smart_irrigation_seconds > 0:
-            station = profile.opensprinkler_station_entity
-            if not station:
-                reasons.append("Zalivanje je priporočeno, vendar gredica nima povezane OpenSprinkler postaje.")
+                        reasons.append("Smart Irrigation ent…407 tokens truncated…taje.")
             elif len(station_beds.get(station, [])) > 1 and (profile.valve_mode != "shared" or any(peer.valve_mode != "shared" for _, peer in station_beds[station])):
                 reasons.append("Isti ventil je na več gredicah označen kot individualen; izberi skupni ventil za vse te gredice.")
             elif smart_irrigation_seconds > profile.max_run_seconds:
@@ -605,6 +589,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
         if any(not row["ready"] or row["decision"] != "irrigate" or not row.get("_shared_candidate") for row in group_rows):
             reasons.append("Vsaka gredica na skupnem ventilu mora imeti svež izračun, ki priporoča zalivanje.")
         safe_limits = []
+        group_flows = []
         for member_id, member in members:
             report = reports.get(member_id)
             bed = next((item for item in beds if item.id == member_id), None)
@@ -618,6 +603,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             # Bound the shared run by the least water any member can safely accept.
             safe_depth = min(member.max_application_mm, float(depletion) / (member.efficiency_pct / 100))
             safe_limits.append(min(member.max_run_seconds, math.floor(safe_depth * bed.area_m2 / member.flow_l_min * 60)))
+            group_flows.append((member_id, member.flow_l_min))
         requested = [row["_shared_candidate"]["data"]["run_seconds"] for row in group_rows if row.get("_shared_candidate")]
         run_seconds = max(requested) if requested else 0
         if safe_limits and run_seconds > min(safe_limits):
@@ -626,6 +612,9 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
         if not reasons and run_seconds > 0:
             action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
                       "data": {"run_seconds": run_seconds, "queue_option": "append"}}
+        bed_water_estimates = ([{"bed_id": member_id, "litres": round(flow_l_min * run_seconds / 60, 1)}
+                                for member_id, flow_l_min in group_flows] if action else [])
+        estimated_litres = round(sum(item["litres"] for item in bed_water_estimates), 1) if action else None
         for row in group_rows:
             row.pop("_shared_candidate", None)
             row["action"] = None
@@ -634,6 +623,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                 row["reasons"].extend(reason for reason in reasons if reason not in row["reasons"])
         valve_groups.append({"station": station, "bed_ids": bed_ids, "status": "draft" if action else "blocked",
                              "action": action, "run_seconds": run_seconds if action else None,
+                             "estimated_litres": estimated_litres, "bed_water_estimates": bed_water_estimates,
                              "reasons": reasons})
     for row in rows:
         row.pop("_shared_candidate", None)

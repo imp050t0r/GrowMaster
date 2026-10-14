@@ -1,4 +1,4 @@
-# Navodila za namakanje v GrowMasterju 1.25.5
+# Navodila za namakanje v GrowMasterju 1.25.8
 
 Ta navodila pokrivajo obe možnosti profila grede. Uporabiš ju lahko tudi skupaj: nekatere grede imajo WH51, druge ostanejo brez talnega senzorja.
 
@@ -17,8 +17,8 @@ Ta navodila pokrivajo obe možnosti profila grede. Uporabiš ju lahko tudi skupa
 2. Odpri **Namakanje**, izberi aktivno kulturo in gredico.
 3. Odpri **Profil kulture — koeficienti in korenine**. Vnesi Kc za začetno, polno in pozno fazo, učinkovito globino korenin, dovoljeni delež izsušitve ter vir podatkov. Uporabi vrednosti, primerne za dejansko kulturo, tla in način pridelave; če jih nimaš, jih najprej preveri pri strokovnem viru.
 4. Shrani profil kulture.
-5. Odpri **Profil grede — tla, pretok in WH51**. Izberi namakalni način po enem od spodnjih postopkov.
-6. Shrani profil grede. Vsako gredico nastavi posebej. Trenutna različica ne sešteva hidravličnih zahtev več gredic na skupnem ventilu.
+5. Odpri **Profil grede — tla, pretok in WH51**. Izberi namakalni način in razporeditev ventila.
+6. Shrani profil grede. Ventil ostane vezan na gredico, tudi ko pozneje spremeniš kulturo.
 
 ## Možnost A: gredica z WH51
 
@@ -82,7 +82,7 @@ Za vsako gredico posebej izberi način. Do 16 skupin WH51 lahko ročno razporedi
 
 V profilu grede izberi **Razporeditev ventila**. Pri individualnem načinu ima gredica svoj OpenSprinkler entity ID. Pri skupnem načinu izberi skupno možnost na vseh gredicah, ki jih napaja isti fizični ventil, in vsem vpiši isti entity ID. GrowMaster za skupino pripravi en osnutek samo, če so vse priključene gredice aktivne, imajo današnji veljaven izračun in vse priporočajo zalivanje. Skupni čas omeji z najnižjo varno mejo članic skupine.
 
-Pretok v profilu mora biti izmerjen za posamezno vejo oziroma gredico. Če ne poznaš porazdelitve pretoka ali ista količina vode ne doseže gredic primerljivo, skupinskega osnutka ne uporabi; skupni ventil lahko zalije tudi gredico, ki tega ne potrebuje. GrowMaster ne izvede skupinskega osnutka samodejno.
+Pretok v profilu mora biti izmerjen za posamezno vejo pri odprtem skupnem ventilu. Osnutek pokaže skupni čas in oceno litrov za vsako gredico ter vsoto. Ocena temelji na vpisanih pretokih; GrowMaster nima merilnika dejanskega pretoka. Če ne poznaš porazdelitve pretoka ali ista količina vode ne doseže gredic primerljivo, skupinskega osnutka ne uporabi. Skupni ventil lahko zalije tudi gredico, ki tega ne potrebuje. GrowMaster ne izvede skupinskega osnutka samodejno.
 
 ## OpenSprinkler: priprava ročnega osnutka
 
@@ -99,4 +99,4 @@ Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMas
 - Ali se kultura in profili od shranjenega izračuna niso spremenili? Po spremembi ponovno izračunaj in shrani dan.
 - Ali je OpenSprinkler postaja pravilno povezana z eno gredico in je trajanje znotraj nastavljene omejitve?
 
-**Varnostno pravilo:** GrowMaster 1.25.5 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.
+**Varnostno pravilo:** GrowMaster 1.25.8 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.

@@ -168,6 +168,8 @@ def test_shared_valve_requires_every_active_bed_to_request_water(irrigation,monk
     assert group["status"]==expected
     if expected=="draft":
         assert group["run_seconds"]==300 and group["bed_ids"]==[1,3]
+        assert group["estimated_litres"]==20
+        assert group["bed_water_estimates"]==[{"bed_id":1,"litres":10},{"bed_id":3,"litres":10}]
         assert group["action"]["target"]["entity_id"]=="switch.shared_valve"
     else:
         assert group["action"] is None and any(not row["ready"] for row in result["rows"])
