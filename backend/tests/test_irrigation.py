@@ -119,7 +119,8 @@ def test_wh51_daily_readiness_prepares_action_for_the_bed_valve(irrigation,monke
     db.commit()
     c.put("/api/irrigation/sensor-groups/1",json={"name":"WH51 1","entity_id":"sensor.wh51_group_1"})
     c.put("/api/irrigation/beds/1",json={**BP,"mode":"soil_sensor","wh51_group":1,"irrigation_zone":"zone_1",
-        "smart_irrigation_entity":"sensor.smart_irrigation_a1","opensprinkler_station_entity":"switch.bed_1_valve"})
+        "smart_irrigation_entity":"sensor.smart_irrigation_a1","opensprinkler_station_entity":"switch.bed_1_valve",
+        "max_run_seconds":10000})
     c.put("/api/irrigation/daily",json=payload(soil_moisture_pct=32,sensor_observed_at=datetime.now(timezone.utc).isoformat()))
     monkeypatch.setenv("HOME_ASSISTANT_URL","http://ha.local:8123");monkeypatch.setenv("HOME_ASSISTANT_TOKEN","token")
     monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs:[(None,None,None,None,("192.168.1.10",8123))])
