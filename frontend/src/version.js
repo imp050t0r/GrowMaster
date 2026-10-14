@@ -1,7 +1,7 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.25.10";
+export const APP_VERSION = "1.25.11";
 
 // Release 1.25.3 adds weekly workload forecasts and partial historical task-hour estimates.
 // Release 1.24.37 adds explicitly confirmed per-plan historical DTM suggestions.

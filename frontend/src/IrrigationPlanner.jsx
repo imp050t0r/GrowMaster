@@ -3,7 +3,7 @@ import {apiRequest} from "./platform";
 import {cropIdForBed,dailyBedStates} from "./irrigationHelpers";
 
 const cropEmpty={kc_initial:"",kc_mid:"",kc_late:"",root_depth_m:"",depletion_fraction:"",source:""};
-const bedEmpty={mode:"smart_irrigation",valve_mode:"individual",irrigation_zone:"",wh51_group:null,field_capacity_pct:"",wilting_point_pct:"",efficiency_pct:"",flow_l_min:"",max_application_mm:"",sensor_dry_pct:"",sensor_wet_pct:"",source:"",opensprinkler_station_entity:null,smart_irrigation_entity:null,max_run_seconds:3600};
+const bedEmpty={mode:"smart_irrigation",valve_mode:"individual",irrigation_zone:"",wh51_group:null,field_capacity_pct:"",wilting_point_pct:"",efficiency_pct:"",flow_l_min:"",dripline_total_length_m:"",emitter_spacing_cm:"",emitter_flow_l_h:"",max_application_mm:"",sensor_dry_pct:"",sensor_wet_pct:"",source:"",opensprinkler_station_entity:null,smart_irrigation_entity:null,max_run_seconds:3600};
 const localDay=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;};
 const dayEmpty={day:localDay(),stage:"mid",initial_depletion_mm:"",eto_mm:"",effective_rain_mm:"",applied_irrigation_mm:"",weather_source:"",soil_moisture_pct:"",sensor_observed_at:""};
 const statusNames={missing_data:"Manjkajo podatki",review:"Potreben pregled",irrigate:"Predlagano zalivanje",hold:"Brez predlaganega zalivanja"};
@@ -113,6 +113,9 @@ export function IrrigationPlanner({crops,beds}) {
   const storedCrop=profiles.crops.find(p=>String(p.crop_id)===cropId),storedBed=profiles.beds.find(p=>String(p.bed_id)===bedId);
   const selectedBed=beds.find(item=>String(item.id)===bedId);
   const currentPlanting=selectedBed?.current_planting;
+  const driplineInputs=[bp.dripline_total_length_m,bp.emitter_spacing_cm,bp.emitter_flow_l_h].map(Number);
+  const hasDriplineInputs=[bp.dripline_total_length_m,bp.emitter_spacing_cm,bp.emitter_flow_l_h].every(v=>v!==""&&v!=null&&Number(v)>0);
+  const calculatedFlow=hasDriplineInputs?driplineInputs[0]/(driplineInputs[1]/100)*driplineInputs[2]/60:null;
   const reportByBed=new Map(saved.map(item=>[item.bed_id,item]));
   const dailyStates=dailyBedStates(beds,crops,profiles,saved);
   const dirty=JSON.stringify(numeric(cp))!==JSON.stringify(numeric(storedCrop||cropEmpty))||JSON.stringify(numeric(bp))!==JSON.stringify(numeric({...bedEmpty,...storedBed}));
@@ -156,8 +159,13 @@ export function IrrigationPlanner({crops,beds}) {
         {bp.mode==="soil_sensor"?<p>Način z merjenjem: za pripravljeno dnevno bilanco zahteva svež, povezan senzor tal. Njegova meritev preverja vodno bilanco.</p>:<p>Način brez talnega senzorja: Smart Irrigation vodi dnevno vremensko bilanco. GrowMaster potrebuje ET₀, dež in potrjeno začetno vodno stanje.</p>}
         <label>Namakalna cona (1–16)<select value={bp.irrigation_zone||""} onChange={e=>setBp({...bp,irrigation_zone:e.target.value})}><option value="">Izberi cono</option>{Array.from({length:16},(_,i)=><option key={i+1} value={`zone_${i+1}`}>Cona {i+1}</option>)}</select></label>
         {field(bp,setBp,"field_capacity_pct","Poljska kapaciteta (% vol.)",0.001,70)}{field(bp,setBp,"wilting_point_pct","Točka venenja (% vol.)",0,69.999)}
-        {field(bp,setBp,"efficiency_pct","Učinkovitost namakanja (%)",0.001,100)}{field(bp,setBp,"flow_l_min","Skupni pretok vseh kapljičnih cevi na gredici (l/min)",0.001,10000,true)}
-        <p>Pretok izračunaj iz specifikacije kapalnikov in dejanske razporeditve: vsota po vseh ceveh [(dolžina cevi ÷ razmik kapalnikov) × pretok enega kapalnika] ÷ 60. Pretok kapalnika je običajno podan v l/h. Pri skupnem ventilu upoštevaj pretok posamezne gredice, ko so odprte vse cevi, ki jih napaja ta ventil. Uporabi podatek pri delovnem tlaku sistema; nazivni pretok kapalnika se spreminja s tlakom, razen znotraj območja kompenzacije pri tlačno kompenziranih kapljačih.</p>
+        {field(bp,setBp,"efficiency_pct","Učinkovitost namakanja (%)",0.001,100)}
+        <h4>Pretok kapljičnih cevi</h4>
+        <p>Vnesi vsoto dolžin vseh kapljičnih cevi na tej gredici. GrowMaster izračuna število kapljačev in skupni pretok. Pretok kapljača vnesi pri dejanskem delovnem tlaku.</p>
+        {field(bp,setBp,"dripline_total_length_m","Skupna dolžina vseh cevi na gredici (m)",0.001,100000,true)}
+        {field(bp,setBp,"emitter_spacing_cm","Razmik med kapljači (cm)",0.001,500,true)}
+        {field(bp,setBp,"emitter_flow_l_h","Pretok enega kapljača (l/h)",0.001,100,true)}
+        {hasDriplineInputs?<p>Izračunani skupni pretok: <strong>{calculatedFlow.toFixed(2)} l/min</strong> (ocenjeno { (driplineInputs[0]/(driplineInputs[1]/100)).toFixed(1)} kapljačev). Ob skupnem ventilu se za čas zalivanja sešteje pretok vseh dodeljenih gredic.</p>:<>{[bp.dripline_total_length_m,bp.emitter_spacing_cm,bp.emitter_flow_l_h].some(v=>v!==""&&v!=null)&&<p>Za izračun pretoka izpolni vsa tri polja.</p>}{field(bp,setBp,"flow_l_min","Skupni pretok vseh kapljičnih cevi (l/min), če ga vneseš ročno",0.001,10000,true)}</>}
         {field(bp,setBp,"max_application_mm","Največji enkratni odmerek (mm)",0.001,100)}{field(bp,setBp,"sensor_dry_pct","Umerjeni suhi prag WH51 (%)",0,100,true)}{field(bp,setBp,"sensor_wet_pct","Umerjeni mokri prag WH51 (%)",0,100,true)}
         <label>Vir profila tal in umerjanja<input required maxLength={500} value={bp.source} onChange={e=>setBp({...bp,source:e.target.value})}/></label>
         <label>Razporeditev ventila<select value={bp.valve_mode||"individual"} onChange={e=>setBp({...bp,valve_mode:e.target.value})}><option value="individual">Individualni ventil — samo ta gredica</option><option value="shared">Skupni ventil — deli ga več gredic</option></select></label>

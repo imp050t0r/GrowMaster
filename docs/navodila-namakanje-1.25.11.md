@@ -1,4 +1,4 @@
-# Navodila za namakanje v GrowMasterju 1.25.10
+# Navodila za namakanje v GrowMasterju 1.25.11
 
 Ta navodila pokrivajo obe možnosti profila grede. Uporabiš ju lahko tudi skupaj: nekatere grede imajo WH51, druge ostanejo brez talnega senzorja.
 
@@ -82,7 +82,7 @@ Za vsako gredico posebej izberi način. Do 16 skupin WH51 lahko ročno razporedi
 
 V profilu grede izberi **Razporeditev ventila**. Pri individualnem načinu ima gredica svoj OpenSprinkler entity ID. Pri skupnem načinu izberi skupno možnost na vseh gredicah, ki jih napaja isti fizični ventil, in vsem vpiši isti entity ID. GrowMaster za skupino pripravi en osnutek samo, če so vse priključene gredice aktivne, imajo današnji veljaven izračun in vse priporočajo zalivanje. Skupni čas omeji z najnižjo varno mejo članic skupine.
 
-Pretok v profilu pomeni vsoto pretokov vseh kapljičnih cevi na gredici. Iz specifikacije ga izračunaš tako, da za vsako cev deliš dolžino cevi z razmikom kapalnikov, pomnožiš s pretokom enega kapalnika v l/h, rezultate vseh cevi sešteješ in deliš s 60. Uporabi nazivni pretok pri tlaku, ki ga cevi dejansko dobijo med namakanjem. Pri skupnem ventilu vnesi ločen skupni pretok vsake gredice, ko so vse priključene cevi odprte. Osnutek pokaže skupni čas in oceno litrov za vsako gredico ter vsoto. Ocena temelji na vpisanih pretokih; GrowMaster nima merilnika dejanskega pretoka. Če ne poznaš porazdelitve pretoka ali ista količina vode ne doseže gredic primerljivo, skupinskega osnutka ne uporabi. Skupni ventil lahko zalije tudi gredico, ki tega ne potrebuje. GrowMaster ne izvede skupinskega osnutka samodejno.
+Pretok v profilu pomeni vsoto pretokov vseh kapljičnih cevi na gredici. V GrowMasterju lahko vneseš skupno dolžino vseh cevi, razmik kapalnikov in pretok enega kapalnika v l/h; aplikacija izračuna ocenjeno število kapljačev in skupni pretok. Pretok kapalnika mora ustrezati tlaku, ki ga cevi dejansko dobijo med namakanjem. Če te specifikacije nimaš, lahko še vedno vneseš skupni pretok ročno. Pri skupnem ventilu vnesi ločen skupni pretok vsake gredice, ko so vse priključene cevi odprte. Osnutek pokaže skupni čas in oceno litrov za vsako gredico ter vsoto. Ocena temelji na vpisanih pretokih; GrowMaster nima merilnika dejanskega pretoka. Če ne poznaš porazdelitve pretoka ali ista količina vode ne doseže gredic primerljivo, skupinskega osnutka ne uporabi. Skupni ventil lahko zalije tudi gredico, ki tega ne potrebuje. GrowMaster ne izvede skupinskega osnutka samodejno.
 
 ## OpenSprinkler: priprava ročnega osnutka
 
@@ -99,4 +99,4 @@ Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMas
 - Ali se kultura in profili od shranjenega izračuna niso spremenili? Po spremembi ponovno izračunaj in shrani dan.
 - Ali je OpenSprinkler postaja pravilno povezana z eno gredico in je trajanje znotraj nastavljene omejitve?
 
-**Varnostno pravilo:** GrowMaster 1.25.10 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.
+**Varnostno pravilo:** GrowMaster 1.25.11 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.

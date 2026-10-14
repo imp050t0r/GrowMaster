@@ -46,6 +46,9 @@ class BedProfile(Input):
     wilting_point_pct: float = Field(ge=0, lt=70)
     efficiency_pct: float = Field(gt=0, le=100)
     flow_l_min: float | None = Field(default=None, gt=0, le=10000)
+    dripline_total_length_m: float | None = Field(default=None, gt=0, le=100000)
+    emitter_spacing_cm: float | None = Field(default=None, gt=0, le=500)
+    emitter_flow_l_h: float | None = Field(default=None, gt=0, le=100)
     max_application_mm: float = Field(gt=0, le=100)
     sensor_dry_pct: float | None = Field(default=None, ge=0, le=100)
     sensor_wet_pct: float | None = Field(default=None, ge=0, le=100)
@@ -62,6 +65,16 @@ class BedProfile(Input):
             raise ValueError("Vnesi oba umerjena praga WH51 ali nobenega.")
         if self.sensor_dry_pct is not None and self.sensor_dry_pct >= self.sensor_wet_pct:
             raise ValueError("Suhi prag WH51 mora biti manjši od mokrega.")
+        dripline_inputs = (self.dripline_total_length_m, self.emitter_spacing_cm, self.emitter_flow_l_h)
+        if any(value is not None for value in dripline_inputs):
+            if any(value is None for value in dripline_inputs):
+                raise ValueError("Za izračun pretoka vnesi skupno dolžino cevi, razmik in pretok kapljača.")
+            # Input length is the sum of all dripline laterals on this bed.
+            emitter_count = self.dripline_total_length_m / (self.emitter_spacing_cm / 100)
+            calculated_flow = emitter_count * self.emitter_flow_l_h / 60
+            if not math.isfinite(calculated_flow) or calculated_flow <= 0 or calculated_flow > 10000:
+                raise ValueError("Izračunani skupni pretok je zunaj dovoljenega območja.")
+            self.flow_l_min = calculated_flow
         return self
 
 

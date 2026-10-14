@@ -63,6 +63,20 @@ def test_stage_and_no_flow(irrigation):
     assert calc(c,stage="initial").json()["etc_mm"]==2.5
     assert calc(c).json()["minutes"] is None
 
+def test_dripline_specs_calculate_total_bed_flow(irrigation):
+    _,client,_=irrigation
+    response=client.put("/api/irrigation/beds/1",json={**BP,"flow_l_min":1,
+        "dripline_total_length_m":40,"emitter_spacing_cm":20,"emitter_flow_l_h":2})
+    assert response.status_code==200
+    profile=client.get("/api/irrigation/profiles").json()["beds"][0]
+    assert profile["flow_l_min"]==pytest.approx(6.6666667)
+    assert profile["dripline_total_length_m"]==40
+
+def test_dripline_specs_must_be_complete(irrigation):
+    _,client,_=irrigation
+    response=client.put("/api/irrigation/beds/1",json={**BP,"dripline_total_length_m":40})
+    assert response.status_code==422
+
 def test_missing_et0_is_not_zero(irrigation):
     _,c,_=irrigation;r=calc(c,eto_mm=None).json()
     assert r["status"]=="missing_data" and r["litres"] is None
