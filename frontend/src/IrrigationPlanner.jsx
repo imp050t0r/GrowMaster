@@ -150,13 +150,14 @@ export function IrrigationPlanner({crops,beds}) {
         <button className="secondary-button" disabled={!cropId||busy}>SHRANI PROFIL KULTURE</button>
       </form></details>
     <details><summary>Profil grede — tla, pretok in WH51</summary>
-      <p>Poljska kapaciteta in točka venenja sta volumenska deleža vode v tleh, ne odstotka WH52. Pretok naj velja samo za izbrano gredico. Skupnih ventilov ali con ta različica ne sešteva.</p>
+      <p>Poljska kapaciteta in točka venenja sta volumenska deleža vode v tleh, ne odstotka WH51. Pretok pomeni skupni pretok vseh kapljičnih cevi na izbrani gredici.</p>
       <form className="planning-form" onSubmit={e=>{e.preventDefault();saveProfile("beds");}}>
         <label>Način namakanja<select value={bp.mode||"smart_irrigation"} onChange={e=>setBp({...bp,mode:e.target.value})}><option value="soil_sensor">S senzorjem vlage v tleh</option><option value="smart_irrigation">Brez talnega senzorja — Smart Irrigation</option></select></label>
         {bp.mode==="soil_sensor"?<p>Način z merjenjem: za pripravljeno dnevno bilanco zahteva svež, povezan senzor tal. Njegova meritev preverja vodno bilanco.</p>:<p>Način brez talnega senzorja: Smart Irrigation vodi dnevno vremensko bilanco. GrowMaster potrebuje ET₀, dež in potrjeno začetno vodno stanje.</p>}
         <label>Namakalna cona (1–16)<select value={bp.irrigation_zone||""} onChange={e=>setBp({...bp,irrigation_zone:e.target.value})}><option value="">Izberi cono</option>{Array.from({length:16},(_,i)=><option key={i+1} value={`zone_${i+1}`}>Cona {i+1}</option>)}</select></label>
         {field(bp,setBp,"field_capacity_pct","Poljska kapaciteta (% vol.)",0.001,70)}{field(bp,setBp,"wilting_point_pct","Točka venenja (% vol.)",0,69.999)}
-        {field(bp,setBp,"efficiency_pct","Učinkovitost namakanja (%)",0.001,100)}{field(bp,setBp,"flow_l_min",bp.valve_mode==="shared"?"Pretok veje pri odprtem ventilu (l/min)":"Pretok grede (l/min)",0.001,10000,true)}
+        {field(bp,setBp,"efficiency_pct","Učinkovitost namakanja (%)",0.001,100)}{field(bp,setBp,"flow_l_min","Skupni pretok vseh kapljičnih cevi na gredici (l/min)",0.001,10000,true)}
+        <p>Pretok izračunaj iz specifikacije kapalnikov in dejanske razporeditve: vsota po vseh ceveh [(dolžina cevi ÷ razmik kapalnikov) × pretok enega kapalnika] ÷ 60. Pretok kapalnika je običajno podan v l/h. Pri skupnem ventilu upoštevaj pretok posamezne gredice, ko so odprte vse cevi, ki jih napaja ta ventil. Uporabi podatek pri delovnem tlaku sistema; nazivni pretok kapalnika se spreminja s tlakom, razen znotraj območja kompenzacije pri tlačno kompenziranih kapljačih.</p>
         {field(bp,setBp,"max_application_mm","Največji enkratni odmerek (mm)",0.001,100)}{field(bp,setBp,"sensor_dry_pct","Umerjeni suhi prag WH51 (%)",0,100,true)}{field(bp,setBp,"sensor_wet_pct","Umerjeni mokri prag WH51 (%)",0,100,true)}
         <label>Vir profila tal in umerjanja<input required maxLength={500} value={bp.source} onChange={e=>setBp({...bp,source:e.target.value})}/></label>
         <label>Razporeditev ventila<select value={bp.valve_mode||"individual"} onChange={e=>setBp({...bp,valve_mode:e.target.value})}><option value="individual">Individualni ventil — samo ta gredica</option><option value="shared">Skupni ventil — deli ga več gredic</option></select></label>
