@@ -1,16 +1,21 @@
 """Manual, advisory water balance. No weather polling or valve commands."""
 import json
 import math
+import os
+import re
+import socket
 from datetime import date, datetime, timezone, timedelta
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport
+from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, Planting, Variety
 
 router = APIRouter(prefix="/api/irrigation")
 FARM_ID = 1
@@ -30,6 +35,11 @@ class CropProfile(Input):
 
 
 class BedProfile(Input):
+    mode: Literal["soil_sensor", "smart_irrigation"] = "smart_irrigation"
+    irrigation_zone: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{1,40}$")
+    wh51_group: int | None = Field(default=None, ge=1, le=16)
+    # Parse profiles saved by older GrowMaster versions; new assignments use wh51_group.
+    soil_moisture_entity: str | None = Field(default=None, pattern=r"^sensor\.[a-z0-9_]+$", max_length=150, exclude=True)
     field_capacity_pct: float = Field(gt=0, le=70)
     wilting_point_pct: float = Field(ge=0, lt=70)
     efficiency_pct: float = Field(gt=0, le=100)
@@ -39,6 +49,7 @@ class BedProfile(Input):
     sensor_wet_pct: float | None = Field(default=None, ge=0, le=100)
     source: str = Field(min_length=1, max_length=500)
     opensprinkler_station_entity: str | None = Field(default=None, pattern=r"^switch\.[a-z0-9_]+$", max_length=150)
+    smart_irrigation_entity: str | None = Field(default=None, pattern=r"^sensor\.smart_irrigation_[a-z0-9_]+$", max_length=150)
     max_run_seconds: int = Field(default=3600, ge=1, le=86400)
 
     @model_validator(mode="after")
@@ -46,9 +57,9 @@ class BedProfile(Input):
         if self.wilting_point_pct >= self.field_capacity_pct:
             raise ValueError("Točka venenja mora biti manjša od poljske kapacitete.")
         if (self.sensor_dry_pct is None) != (self.sensor_wet_pct is None):
-            raise ValueError("Vnesi oba umerjena praga WH52 ali nobenega.")
+            raise ValueError("Vnesi oba umerjena praga WH51 ali nobenega.")
         if self.sensor_dry_pct is not None and self.sensor_dry_pct >= self.sensor_wet_pct:
-            raise ValueError("Suhi prag WH52 mora biti manjši od mokrega.")
+            raise ValueError("Suhi prag WH51 mora biti manjši od mokrega.")
         return self
 
 
@@ -70,10 +81,31 @@ class DayInput(Input):
         if self.day > date.today():
             raise ValueError("Dnevna bilanca zahteva današnji ali pretekli datum.")
         if (self.soil_moisture_pct is None) != (self.sensor_observed_at is None):
-            raise ValueError("Meritev WH52 zahteva tudi čas meritve.")
+            raise ValueError("Meritev vlage v tleh zahteva tudi čas meritve.")
         if self.sensor_observed_at is not None and self.sensor_observed_at.utcoffset() is None:
             raise ValueError("Čas meritve mora vsebovati časovni pas.")
         return self
+
+
+class WaterLedgerInput(Input):
+    bed_id: int = Field(gt=0)
+    day: date
+    opening_depletion_mm: float = Field(ge=0, le=2100)
+    etc_mm: float = Field(ge=0, le=30)
+    effective_rain_mm: float = Field(ge=0, le=500)
+    applied_irrigation_mm: float = Field(ge=0, le=100)
+    source: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def day_not_future(self):
+        if self.day > date.today():
+            raise ValueError("Vodna bilanca ne more biti v prihodnosti.")
+        return self
+
+
+class SensorGroupInput(Input):
+    name: str = Field(min_length=1, max_length=80)
+    entity_id: str | None = Field(default=None, pattern=r"^sensor\.[a-z0-9_]+$", max_length=150)
 
 
 def entity(db, model, identifier):
@@ -95,7 +127,23 @@ def profiles(db: Session = Depends(get_db)):
     return {"crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
                       db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))],
             "beds": [{"bed_id": r.bed_id, **BedProfile.model_validate_json(r.parameters).model_dump()} for r in
-                     db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))]}
+                     db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))],
+            "sensor_groups": [{"group_number": row.group_number, "name": row.name, "entity_id": row.entity_id}
+                              for row in db.scalars(select(IrrigationSensorGroup).where(IrrigationSensorGroup.farm_id == FARM_ID).order_by(IrrigationSensorGroup.group_number))]}
+
+
+@router.put("/sensor-groups/{group_number}")
+def save_sensor_group(group_number: int, payload: SensorGroupInput, db: Session = Depends(get_db)):
+    if not 1 <= group_number <= 16:
+        raise HTTPException(422, "WH51 skupina mora biti med 1 in 16.")
+    row = db.scalar(select(IrrigationSensorGroup).where(IrrigationSensorGroup.farm_id == FARM_ID,
+                                                         IrrigationSensorGroup.group_number == group_number))
+    if row is None:
+        row = IrrigationSensorGroup(farm_id=FARM_ID, group_number=group_number)
+        db.add(row)
+    row.name, row.entity_id = payload.name, payload.entity_id
+    db.commit()
+    return {"group_number": group_number, **payload.model_dump()}
 
 
 def save_profile(db, model, key, identifier, payload):
@@ -192,14 +240,73 @@ def report_for(db, payload):
     return result
 
 
+def apply_wh51_reading(db, payload: DayInput, report: dict):
+    """Use the configured group sensor as the soil reading for this bed."""
+    bed_profile_row = profile_row(db, IrrigationBedProfile, "bed_id", payload.bed_id)
+    if not bed_profile_row:
+        return report
+    bed_profile = BedProfile.model_validate_json(bed_profile_row.parameters)
+    if bed_profile.mode != "soil_sensor":
+        return report
+    if not bed_profile.wh51_group:
+        report.update(status="review", confidence="low")
+        report["warnings"].append("Gredici ni dodeljena WH51 skupina.")
+        return report
+    group = db.scalar(select(IrrigationSensorGroup).where(
+        IrrigationSensorGroup.farm_id == FARM_ID, IrrigationSensorGroup.group_number == bed_profile.wh51_group))
+    if not group or not group.entity_id:
+        report.update(status="review", confidence="low")
+        report["warnings"].append("Izbrani WH51 skupini manjka entity ID.")
+        return report
+    base_url, token = home_assistant_config()
+    if not base_url:
+        report.update(status="review", confidence="low")
+        report["warnings"].append("Home Assistant ni nastavljen; meritve WH51 ni mogoče prebrati.")
+        return report
+    try:
+        with httpx.Client(timeout=5.0, follow_redirects=False) as client:
+            response = client.get(f"{base_url}/api/states/{group.entity_id}", headers=ha_headers(token))
+        if response.status_code != 200:
+            raise ValueError("WH51 entity ni dosegljiv.")
+        data = response.json()
+        value = float(data["state"])
+        if not math.isfinite(value) or not 0 <= value <= 100:
+            raise ValueError("WH51 vrednost ni v območju 0–100 %.")
+        if data.get("attributes", {}).get("unit_of_measurement") != "%":
+            raise ValueError("WH51 entity nima enote %.")
+        observed_at = datetime.fromisoformat(data["last_updated"])
+        age = (datetime.now(timezone.utc) - observed_at.astimezone(timezone.utc)).total_seconds()
+        if not 0 <= age <= 6 * 3600:
+            raise ValueError("WH51 meritev ni sveža (največ 6 ur).")
+        report.setdefault("inputs", {})["soil_moisture_pct"] = value
+        report["inputs"]["sensor_observed_at"] = observed_at.isoformat()
+        report["wh51"] = {"group_number": group.group_number, "group_name": group.name,
+                          "entity_id": group.entity_id, "value_pct": value,
+                          "observed_at": observed_at.isoformat(), "age_seconds": round(age)}
+        if bed_profile.sensor_dry_pct is None or bed_profile.sensor_wet_pct is None:
+            report.update(status="review", confidence="low")
+            report["warnings"].append("WH51 pragova suho/mokro še nisi umeril za to gredico.")
+        else:
+            should_irrigate = report.get("status") == "irrigate"
+            if (should_irrigate and value >= bed_profile.sensor_wet_pct) or (not should_irrigate and value <= bed_profile.sensor_dry_pct):
+                report.update(status="review", confidence="low")
+                report["warnings"].append("WH51 in vodna bilanca se ne ujemata; preveri stanje grede.")
+            else:
+                report["warnings"].append("Bilanca preverjena s skupno meritvijo WH51; senzor predstavlja več gredic v skupini.")
+    except (httpx.RequestError, ValueError, KeyError, TypeError) as exc:
+        report.update(status="review", confidence="low")
+        report["warnings"].append(f"Meritve WH51 ni mogoče varno uporabiti: {exc}")
+    return report
+
+
 @router.post("/calculate")
 def preview(payload: DayInput, db: Session = Depends(get_db)):
-    return report_for(db, payload)
+    return apply_wh51_reading(db, payload, report_for(db, payload))
 
 
 @router.put("/daily")
 def save_daily(payload: DayInput, db: Session = Depends(get_db)):
-    report = report_for(db, payload)
+    report = apply_wh51_reading(db, payload, report_for(db, payload))
     row = db.scalar(select(IrrigationDailyReport).where(IrrigationDailyReport.farm_id == FARM_ID,
                     IrrigationDailyReport.bed_id == payload.bed_id, IrrigationDailyReport.day == payload.day))
     if row is None:
@@ -216,6 +323,234 @@ def daily(day: date, db: Session = Depends(get_db)):
     return {"day": str(day), "automatic_execution": False, "rows": [json.loads(r.report) for r in
             db.scalars(select(IrrigationDailyReport).where(IrrigationDailyReport.farm_id == FARM_ID,
                         IrrigationDailyReport.day == day).order_by(IrrigationDailyReport.bed_id))]}
+
+
+@router.get("/water-ledger")
+def water_ledger(bed_id: int, through: date, db: Session = Depends(get_db)):
+    entity(db, Bed, bed_id)
+    entries = db.scalars(select(IrrigationWaterLedger).where(
+        IrrigationWaterLedger.farm_id == FARM_ID, IrrigationWaterLedger.bed_id == bed_id,
+        IrrigationWaterLedger.day <= through).order_by(IrrigationWaterLedger.day.desc()).limit(30))
+    rows = [{"day": str(row.day), "opening_depletion_mm": row.opening_depletion_mm,
+             "etc_mm": row.etc_mm, "effective_rain_mm": row.effective_rain_mm,
+             "applied_irrigation_mm": row.applied_irrigation_mm,
+             "closing_depletion_mm": row.closing_depletion_mm, "source": row.source}
+            for row in entries]
+    return {"bed_id": bed_id, "through": str(through), "rows": list(reversed(rows))}
+
+
+@router.put("/water-ledger")
+def save_water_ledger(payload: WaterLedgerInput, db: Session = Depends(get_db)):
+    entity(db, Bed, payload.bed_id)
+    previous = db.scalar(select(IrrigationWaterLedger).where(
+        IrrigationWaterLedger.farm_id == FARM_ID, IrrigationWaterLedger.bed_id == payload.bed_id,
+        IrrigationWaterLedger.day < payload.day).order_by(IrrigationWaterLedger.day.desc()).limit(1))
+    existing = db.scalar(select(IrrigationWaterLedger).where(
+        IrrigationWaterLedger.farm_id == FARM_ID, IrrigationWaterLedger.bed_id == payload.bed_id,
+        IrrigationWaterLedger.day == payload.day))
+    if previous and payload.opening_depletion_mm != previous.closing_depletion_mm:
+        raise HTTPException(409, "Začetni primanjkljaj se ne ujema s končnim stanjem zadnjega shranjenega dne.")
+    if existing and db.scalar(select(IrrigationWaterLedger.id).where(
+        IrrigationWaterLedger.farm_id == FARM_ID, IrrigationWaterLedger.bed_id == payload.bed_id,
+        IrrigationWaterLedger.day > payload.day).limit(1)):
+        raise HTTPException(409, "Popravek starejšega dne bi spremenil poznejšo bilanco; najprej popravi naslednje dni po vrsti.")
+    current_report = db.scalar(select(IrrigationDailyReport).where(
+        IrrigationDailyReport.farm_id == FARM_ID, IrrigationDailyReport.bed_id == payload.bed_id,
+        IrrigationDailyReport.day == payload.day))
+    if not current_report:
+        raise HTTPException(409, "Najprej izračunaj in shrani dnevno bilanco za to gredico.")
+    report = json.loads(current_report.report)
+    if report.get("etc_mm") is None:
+        raise HTTPException(409, "Dnevni izračun nima ETc.")
+    if not math.isclose(payload.etc_mm, float(report["etc_mm"]), rel_tol=0, abs_tol=0.001):
+        raise HTTPException(409, "ETc se ne ujema s shranjenim dnevnim izračunom; ponovno izračunaj dan.")
+    profile = profile_row(db, IrrigationBedProfile, "bed_id", payload.bed_id)
+    if not profile:
+        raise HTTPException(409, "Manjka profil grede.")
+    bed_profile = BedProfile.model_validate_json(profile.parameters)
+    raw_closing = payload.opening_depletion_mm + float(report["etc_mm"]) - payload.effective_rain_mm - payload.applied_irrigation_mm * bed_profile.efficiency_pct / 100
+    capacity = report.get("taw_mm")
+    if capacity is None:
+        raise HTTPException(409, "Dnevni izračun nima veljavne kapacitete korenin.")
+    closing = round(min(capacity, max(0, raw_closing)), 3)
+    row = existing or IrrigationWaterLedger(farm_id=FARM_ID, bed_id=payload.bed_id, day=payload.day)
+    row.opening_depletion_mm = payload.opening_depletion_mm
+    row.etc_mm = payload.etc_mm
+    row.effective_rain_mm = payload.effective_rain_mm
+    row.applied_irrigation_mm = payload.applied_irrigation_mm
+    row.closing_depletion_mm = closing
+    row.source = payload.source
+    db.add(row)
+    db.commit()
+    return {"bed_id": payload.bed_id, "day": str(payload.day),
+            "opening_depletion_mm": payload.opening_depletion_mm, "closing_depletion_mm": closing,
+            "capacity_mm": capacity, "saved": True,
+            "warning": "To potrdiš samo po preverbi dejanskega dežja in izvedenega zalivanja."}
+
+
+@router.get("/daily-readiness")
+def daily_readiness(day: date, db: Session = Depends(get_db)):
+    """Summarize every active bed and identify missing data before any HA write."""
+    beds = list(db.scalars(select(Bed).where(Bed.farm_id == FARM_ID).order_by(Bed.name)))
+    crop_profiles = {row.crop_id for row in db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))}
+    bed_profiles = {row.bed_id: BedProfile.model_validate_json(row.parameters) for row in
+                    db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))}
+    station_beds = {}
+    for bed_profile in bed_profiles.values():
+        if bed_profile.opensprinkler_station_entity:
+            station_beds.setdefault(bed_profile.opensprinkler_station_entity, 0)
+            station_beds[bed_profile.opensprinkler_station_entity] += 1
+    sensor_groups = {row.group_number: row for row in db.scalars(select(IrrigationSensorGroup).where(IrrigationSensorGroup.farm_id == FARM_ID))}
+    used_groups = {profile.wh51_group for profile in bed_profiles.values()
+                   if profile.mode == "soil_sensor" and profile.wh51_group is not None}
+    reports = {row.bed_id: json.loads(row.report) for row in db.scalars(
+        select(IrrigationDailyReport).where(IrrigationDailyReport.farm_id == FARM_ID, IrrigationDailyReport.day == day))}
+    rows = []
+    active = db.scalars(select(Planting).where(Planting.farm_id == FARM_ID, Planting.status == "active")
+                        .order_by(Planting.created_at.desc())).all()
+    latest_by_bed = {}
+    for planting in active:
+        latest_by_bed.setdefault(planting.bed_id, planting)
+    ha_state_cache = {}
+    for bed in beds:
+        planting = latest_by_bed.get(bed.id)
+        if planting is None:
+            continue
+        profile = bed_profiles.get(bed.id)
+        report = reports.get(bed.id)
+        reasons = []
+        if planting.crop_id not in crop_profiles:
+            reasons.append("Manjka profil trenutne kulture.")
+        if profile is None:
+            reasons.append("Manjka profil grede.")
+        if profile and profile.mode == "smart_irrigation" and not profile.smart_irrigation_entity:
+            reasons.append("Manjka Smart Irrigation cona.")
+        if profile and profile.mode == "soil_sensor" and not profile.irrigation_zone:
+            reasons.append("Izbran je način s senzorjem vlage, vendar namakalna cona ni nastavljena.")
+        sensor_group = sensor_groups.get(profile.wh51_group) if profile and profile.wh51_group else None
+        if profile and profile.mode == "soil_sensor" and not profile.wh51_group:
+            reasons.append("Gredici še ni ročno dodeljena WH51 skupina.")
+        if profile and profile.mode == "soil_sensor" and profile.wh51_group and (not sensor_group or not sensor_group.entity_id):
+            reasons.append("Izbrani WH51 skupini manjka Home Assistant entity ID.")
+        if profile and profile.mode == "soil_sensor" and not profile.smart_irrigation_entity:
+            reasons.append("Za način s senzorjem vlage še vedno manjka Smart Irrigation cona za upravljanje urnika.")
+        if report is None:
+            if profile is None or profile.mode != "smart_irrigation" or not profile.smart_irrigation_entity:
+                reasons.append("Za izbrani dan še ni shranjenega izračuna.")
+            report_status = "missing_data"
+            calculated_at = None
+        else:
+            report_status = report.get("status", "missing_data")
+            calculated_at = report.get("calculated_at")
+            if report_status in {"review", "missing_data"}:
+                reasons.append("Dnevni izračun zahteva podatke ali pregled.")
+            try:
+                stamp = datetime.fromisoformat(calculated_at)
+                if day != date.today() or stamp.utcoffset() is None or not timedelta(0) <= datetime.now(timezone.utc) - stamp <= timedelta(hours=6):
+                    reasons.append("Dnevni izračun ni današnji ali je starejši od šestih ur.")
+            except (TypeError, ValueError):
+                reasons.append("Čas dnevnega izračuna manjka ali ni veljaven.")
+            if report.get("crop_id") != planting.crop_id:
+                reasons.append("Izračun ne ustreza trenutni aktivni kulturi na gredici.")
+        if profile and profile.mode == "soil_sensor" and sensor_group and sensor_group.entity_id:
+            sensor_state = None
+            base_url, token = home_assistant_config()
+            if not base_url:
+                reasons.append("Povezava Home Assistant ni nastavljena za preverjanje senzorja vlage.")
+            else:
+                try:
+                    if sensor_group.entity_id not in ha_state_cache:
+                        with httpx.Client(timeout=5.0, follow_redirects=False) as client:
+                            sensor_response = client.get(f"{base_url}/api/states/{sensor_group.entity_id}", headers=ha_headers(token))
+                        ha_state_cache[sensor_group.entity_id] = (sensor_response.status_code, sensor_response.json() if sensor_response.status_code == 200 else None)
+                    sensor_status, sensor_data = ha_state_cache[sensor_group.entity_id]
+                    if sensor_status == 200:
+                        sensor_state = sensor_data.get("state")
+                        sensor_time = datetime.fromisoformat(sensor_data["last_updated"])
+                        if sensor_state in {None, "unknown", "unavailable"} or not 0 <= (datetime.now(timezone.utc) - sensor_time.astimezone(timezone.utc)).total_seconds() <= 6 * 3600:
+                            reasons.append("Senzor vlage je nedosegljiv ali starejši od šestih ur.")
+                        elif sensor_data.get("attributes", {}).get("unit_of_measurement") != "%":
+                            reasons.append("WH51 entity nima pričakovane enote %.")
+                        elif profile.sensor_dry_pct is None or profile.sensor_wet_pct is None:
+                            reasons.append("Za to gredico nista umerjena suhi in mokri prag WH51.")
+                        elif report:
+                            try:
+                                moisture = float(sensor_state)
+                                expected_irrigation = report.get("status") == "irrigate"
+                                disagreement = ((expected_irrigation and moisture >= profile.sensor_wet_pct) or
+                                                (not expected_irrigation and moisture <= profile.sensor_dry_pct))
+                                if disagreement:
+                                    reasons.append("Sveži WH51 in shranjena vodna bilanca se ne ujemata.")
+                            except (TypeError, ValueError):
+                                reasons.append("WH51 stanje ni številski odstotek vlage.")
+                    else:
+                        reasons.append("Senzor vlage ni bil najden ali HA ni vrnil meritve.")
+                except (httpx.RequestError, ValueError, KeyError, TypeError):
+                    reasons.append("Senzor vlage trenutno ni preverljiv prek Home Assistanta.")
+            if report and report.get("inputs", {}).get("soil_moisture_pct") is None:
+                reasons.append("Dnevni izračun v načinu s senzorjem nima shranjene meritve vlage.")
+        smart_irrigation_seconds = None
+        smart_action = None
+        if profile and profile.mode == "smart_irrigation" and profile.smart_irrigation_entity:
+            base_url, token = home_assistant_config()
+            if not base_url:
+                reasons.append("Home Assistant ni nastavljen za branje trajanja Smart Irrigation cone.")
+            else:
+                try:
+                    if profile.smart_irrigation_entity not in ha_state_cache:
+                        with httpx.Client(timeout=5.0, follow_redirects=False) as client:
+                            si_response = client.get(f"{base_url}/api/states/{profile.smart_irrigation_entity}", headers=ha_headers(token))
+                        ha_state_cache[profile.smart_irrigation_entity] = (si_response.status_code, si_response.json() if si_response.status_code == 200 else None)
+                    si_status, si_data = ha_state_cache[profile.smart_irrigation_entity]
+                    if si_status != 200:
+                        reasons.append("Smart Irrigation entity ni dosegljiv v Home Assistantu.")
+                    else:
+                        smart_irrigation_seconds = float(si_data.get("state"))
+                        si_updated = datetime.fromisoformat(si_data.get("attributes", {}).get("last_calculated") or si_data["last_updated"])
+                        si_age = (datetime.now(timezone.utc) - si_updated.astimezone(timezone.utc)).total_seconds()
+                        if not math.isfinite(smart_irrigation_seconds) or smart_irrigation_seconds < 0:
+                            raise ValueError("Trajanje ni veljavno nenegativno število.")
+                        if si_data.get("attributes", {}).get("unit_of_measurement") != "seconds":
+                            raise ValueError("Smart Irrigation trajanje nima enote seconds.")
+                        if not 0 <= si_age <= 6 * 3600:
+                            reasons.append("Smart Irrigation izračun je starejši od šestih ur.")
+                except (httpx.RequestError, ValueError, KeyError, TypeError):
+                    smart_irrigation_seconds = None
+                    reasons.append("Trajanja Smart Irrigation ni mogoče varno prebrati.")
+            if smart_irrigation_seconds is not None and smart_irrigation_seconds > 0:
+                station = profile.opensprinkler_station_entity
+                if not station:
+                    reasons.append("Smart Irrigation priporoča zalivanje, vendar OpenSprinkler postaja ni povezana.")
+                elif station_beds.get(station, 0) > 1:
+                    reasons.append("OpenSprinkler postajo uporablja več gredic; skupno krmiljenje še ni podprto.")
+                elif smart_irrigation_seconds > profile.max_run_seconds:
+                    reasons.append("Smart Irrigation trajanje presega omejitev postaje.")
+                else:
+                    smart_action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
+                                    "data": {"run_seconds": math.ceil(smart_irrigation_seconds), "queue_option": "append"}}
+        days_after_sowing = (day - planting.sowing_date).days
+        suggested_stage = "initial" if days_after_sowing < 20 else "mid"
+        rows.append({"bed_id": bed.id, "bed": bed.name, "area_m2": bed.area_m2,
+                     "crop_id": planting.crop_id, "crop": planting.crop.name,
+                     "variety": planting.variety.name if planting.variety else None,
+                     "sowing_date": str(planting.sowing_date), "days_after_sowing": days_after_sowing,
+                     "suggested_stage": suggested_stage, "stage_requires_confirmation": True,
+                     "planting_id": planting.id, "zone_entity": profile.smart_irrigation_entity if profile else None,
+                     "mode": profile.mode if profile else None,
+                     "wh51_group": profile.wh51_group if profile else None,
+                     "wh51_group_name": sensor_group.name if sensor_group else None,
+                     "sensor_group_beds": sum(1 for other in bed_profiles.values() if other.mode == "soil_sensor" and other.wh51_group == (profile.wh51_group if profile else None)) if profile and profile.wh51_group else 0,
+                     "smart_irrigation_seconds": smart_irrigation_seconds,
+                     "action": smart_action,
+                     "decision": ("irrigate" if smart_irrigation_seconds and smart_irrigation_seconds > 0 else
+                                  "hold" if smart_irrigation_seconds == 0 else "review"),
+                     "irrigation_zone": profile.irrigation_zone if profile else None,
+                     "report_status": report_status, "calculated_at": calculated_at,
+                     "ready": not reasons, "reasons": reasons})
+    return {"day": str(day), "active_beds": len(rows), "ready_beds": sum(row["ready"] for row in rows),
+            "needs_attention": sum(not row["ready"] for row in rows), "automatic_execution": False,
+            "rows": rows,
+            "note": "Pregled vseh aktivnih gredic. Ne izračuna ET₀, ne pošlje podatkov v Home Assistant in ne zažene ventilov."}
 
 
 @router.get("/opensprinkler")
@@ -278,3 +613,256 @@ def opensprinkler_preview(day: date, db: Session = Depends(get_db)):
             "GrowMaster ne preverja obstoja ali stanja HA postaj in ne pošilja ukazov. "
             "Pred zagonom preveri dež, tla, izbrano postajo in že izvedeno zalivanje. "
             "Akcije ne ponavljaj samodejno: ni evidence izvedbe ali zaščite pred ponovnim zagonom."}
+
+
+@router.get("/smart-irrigation")
+def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
+    """Draft crop Kc updates for current beds; never calculate or start a run."""
+    now = datetime.now(timezone.utc)
+    mapped_zones = {}
+    for row in db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID)):
+        profile = BedProfile.model_validate_json(row.parameters)
+        if profile.smart_irrigation_entity:
+            mapped_zones.setdefault(profile.smart_irrigation_entity, []).append(row.bed_id)
+
+    rows = []
+    saved_reports = db.scalars(
+        select(IrrigationDailyReport)
+        .where(IrrigationDailyReport.farm_id == FARM_ID, IrrigationDailyReport.day == day)
+        .order_by(IrrigationDailyReport.bed_id)
+    )
+    for stored in saved_reports:
+        snapshot = json.loads(stored.report)
+        item = {"bed_id": stored.bed_id, "bed": snapshot.get("bed"), "status": "blocked",
+                "reasons": [], "action": None, "yaml": None}
+        reasons = item["reasons"]
+        try:
+            stamp = datetime.fromisoformat(snapshot["calculated_at"])
+            if day != date.today():
+                reasons.append("Smart Irrigation-posodobitev je dovoljena samo za današnji izračun.")
+            if stamp.utcoffset() is None or not timedelta(0) <= now - stamp <= timedelta(hours=6):
+                reasons.append("Dnevni izračun ni svež (največ 6 ur) ali ima neveljaven čas.")
+
+            payload = DayInput.model_validate(snapshot["inputs"])
+            if payload.bed_id != stored.bed_id or payload.day != stored.day:
+                raise ValueError("Dnevni posnetek se ne ujema z gredico.")
+            current = report_for(db, payload)
+            if "crop_profile" not in current or "bed_profile" not in current:
+                reasons.append("Manjka shranjen profil kulture ali grede.")
+                current_crop_profile = None
+                current_bed_profile = None
+            else:
+                current_crop_profile = CropProfile.model_validate(current["crop_profile"])
+                current_bed_profile = BedProfile.model_validate(current["bed_profile"])
+                saved_crop_profile = CropProfile.model_validate(snapshot.get("crop_profile", {}))
+                saved_bed_profile = BedProfile.model_validate(snapshot.get("bed_profile", {}))
+                if current_crop_profile != saved_crop_profile or current_bed_profile != saved_bed_profile:
+                    reasons.append("Profil se je spremenil; ponovno izračunaj in shrani današnji dan.")
+                if current["area_m2"] != snapshot.get("area_m2"):
+                    reasons.append("Površina grede se je spremenila; ponovno izračunaj in shrani današnji dan.")
+                if current["status"] not in {"irrigate", "hold"}:
+                    reasons.append("Vodna bilanca zahteva pregled ali nima dovolj podatkov.")
+
+            active_planting = db.scalar(
+                select(Planting)
+                .where(Planting.farm_id == FARM_ID, Planting.bed_id == stored.bed_id, Planting.status == "active")
+                .order_by(Planting.created_at.desc())
+                .limit(1)
+            )
+            if active_planting is None or active_planting.crop_id != payload.crop_id:
+                reasons.append("Zabeležena kultura ni več trenutna aktivna zasaditev te gredice.")
+
+            zone_entity = current_bed_profile.smart_irrigation_entity if current_bed_profile else None
+            if not zone_entity:
+                reasons.append("Gredica nima povezane Smart Irrigation cone.")
+            elif len(mapped_zones.get(zone_entity, [])) > 1:
+                reasons.append("Ista Smart Irrigation cona je povezana z več gredicami; skupne cone še niso podprte.")
+
+            multiplier = current.get("kc")
+            if multiplier is None or not math.isfinite(multiplier) or not 0 <= multiplier <= 2:
+                reasons.append("Koeficient Kc ni veljaven.")
+            if not reasons:
+                action = {
+                    "action": "smart_irrigation.set_multiplier",
+                    "target": {"entity_id": zone_entity},
+                    "data": {"new_multiplier_value": multiplier},
+                }
+                item.update(
+                    status="draft", action=action, multiplier=multiplier,
+                    calculated_at=snapshot["calculated_at"],
+                    yaml=("action: smart_irrigation.set_multiplier\n"
+                          f"target:\n  entity_id: {zone_entity}\n"
+                          f"data:\n  new_multiplier_value: {multiplier}\n"),
+                )
+        except (ValueError, KeyError, TypeError, HTTPException):
+            reasons.append("Dnevni izračun ali profil ni več veljaven; preveri podatke in shrani izračun znova.")
+        rows.append(item)
+
+    return {
+        "day": str(day), "automatic_execution": False, "requires_manual_review": True,
+        "rows": rows,
+        "note": "Osnutki posodobijo samo Kc (multiplikator) Smart Irrigation cone. Ne izračunajo časa, ne sprožijo namakanja in ne pošljejo ničesar v Home Assistant. Pred uporabo preveri kulturo, fazo, cono in Kc.",
+    }
+
+
+def home_assistant_config():
+    """Read credentials only from the GrowMaster backend environment."""
+    base_url = os.environ.get("HOME_ASSISTANT_URL", "").strip().rstrip("/")
+    token = os.environ.get("HOME_ASSISTANT_TOKEN", "").strip()
+    parsed = urlparse(base_url)
+    if not base_url or not token:
+        return None, None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        raise HTTPException(503, "HOME_ASSISTANT_URL mora biti veljaven http(s) naslov brez uporabniškega imena ali gesla.")
+    if parsed.hostname and parsed.hostname.lower().endswith(".local"):
+        try:
+            socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        except socket.gaierror as exc:
+            raise HTTPException(503, "Ime Home Assistanta .local ni razrešljivo iz GrowMaster backend vsebnika; uporabi LAN IP naslov.") from exc
+    return base_url, token
+
+
+def ha_headers(token):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+@router.get("/home-assistant/status")
+def home_assistant_status():
+    """Expose only whether backend credentials are configured, never their values."""
+    base_url, _ = home_assistant_config()
+    return {"configured": bool(base_url), "automatic_execution": False,
+            "note": "Povezava je nastavljena samo v okolju strežnika GrowMaster."}
+
+
+@router.post("/home-assistant/test")
+def home_assistant_test():
+    """Check the HA API without changing entities or starting irrigation."""
+    base_url, token = home_assistant_config()
+    if not base_url:
+        raise HTTPException(503, "Nastavi HOME_ASSISTANT_URL in HOME_ASSISTANT_TOKEN na strežniku GrowMaster.")
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=False) as client:
+            response = client.get(f"{base_url}/api/", headers=ha_headers(token))
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "Home Assistant ni dosegljiv iz strežnika GrowMaster.") from exc
+    if response.status_code == 401:
+        raise HTTPException(502, "Home Assistant je dosegljiv, vendar žeton ni veljaven.")
+    if response.status_code != 200:
+        raise HTTPException(502, f"Home Assistant API je vrnil HTTP {response.status_code}.")
+    try:
+        info = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, "Home Assistant API ni vrnil veljavnega odgovora.") from exc
+    return {"connected": True, "message": info.get("message", "API dosegljiv"), "automatic_execution": False}
+
+
+@router.get("/home-assistant/states")
+def home_assistant_states(db: Session = Depends(get_db)):
+    """Read configured weather and soil sensor states without triggering actions."""
+    base_url, token = home_assistant_config()
+    if not base_url:
+        raise HTTPException(503, "Nastavi HOME_ASSISTANT_URL in HOME_ASSISTANT_TOKEN na strežniku GrowMaster.")
+    entities = set()
+    groups = list(db.scalars(select(IrrigationSensorGroup).where(IrrigationSensorGroup.farm_id == FARM_ID)))
+    for group in groups:
+        if group.entity_id:
+            entities.add(group.entity_id)
+    # Weather sensor entities are provided explicitly through the environment so no
+    # assumptions are made about Ecowitt naming or sensor models.
+    weather_entities = [item.strip() for item in os.environ.get("HOME_ASSISTANT_WEATHER_ENTITIES", "").split(",") if item.strip()]
+    for entity_id in weather_entities:
+        if not re.fullmatch(r"sensor\.[a-z0-9_]+", entity_id):
+            raise HTTPException(503, "HOME_ASSISTANT_WEATHER_ENTITIES vsebuje neveljaven sensor entity ID.")
+        entities.add(entity_id)
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=False) as client:
+            result = []
+            for entity_id in sorted(entities):
+                response = client.get(f"{base_url}/api/states/{entity_id}", headers=ha_headers(token))
+                if response.status_code == 401:
+                    raise HTTPException(502, "Home Assistant je zavrnil žeton.")
+                if response.status_code == 404:
+                    result.append({"entity_id": entity_id, "available": False, "error": "Entity ni najden."})
+                    continue
+                if response.status_code != 200:
+                    raise HTTPException(502, f"Home Assistant je vrnil HTTP {response.status_code} pri branju entity-ja.")
+                data = response.json()
+                state = data.get("state")
+                attributes = data.get("attributes", {})
+                try:
+                    numeric_state = float(state)
+                    numeric_valid = math.isfinite(numeric_state)
+                except (ValueError, TypeError):
+                    numeric_state, numeric_valid = None, False
+                updated = data.get("last_updated")
+                try:
+                    updated_at = datetime.fromisoformat(updated)
+                    age_seconds = (datetime.now(timezone.utc) - updated_at.astimezone(timezone.utc)).total_seconds()
+                    fresh = 0 <= age_seconds <= 6 * 3600
+                except (ValueError, TypeError, AttributeError):
+                    age_seconds, fresh = None, False
+                issue = None
+                if state in {None, "unknown", "unavailable"}:
+                    issue = "Entity nima dosegljive vrednosti."
+                elif not numeric_valid:
+                    issue = "Vrednost ni končno število."
+                elif not fresh:
+                    issue = "Vrednost ni sveža (največ 6 ur) ali nima veljavnega časa."
+                result.append({"entity_id": entity_id, "available": issue is None,
+                               "numeric_value": numeric_state, "state": state,
+                               "unit": attributes.get("unit_of_measurement"), "attributes": attributes,
+                               "last_changed": data.get("last_changed"), "last_updated": updated,
+                               "age_seconds": round(age_seconds) if age_seconds is not None else None,
+                               "fresh": fresh, "issue": issue})
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "Home Assistant ni dosegljiv iz GrowMaster backend vsebnika.") from exc
+    summary = {}
+    for unit in {item.get("unit") for item in result if item.get("numeric_value") is not None}:
+        group = [item["numeric_value"] for item in result if item.get("unit") == unit and item.get("numeric_value") is not None]
+        summary[str(unit or "brez enote")] = {"count": len(group), "mean": round(sum(group) / len(group), 3),
+                                             "minimum": min(group), "maximum": max(group)}
+    group_rows = []
+    for group in groups:
+        assigned = sum(1 for row in db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))
+                       if (profile := BedProfile.model_validate_json(row.parameters)).mode == "soil_sensor" and profile.wh51_group == group.group_number)
+        group_rows.append({"group_number": group.group_number, "name": group.name, "entity_id": group.entity_id,
+                           "assigned_beds": assigned})
+    return {"entities": result, "sensor_groups": group_rows, "numeric_summary_by_unit": summary,
+            "configured_wh51_count": sum(1 for group in groups if group.entity_id),
+            "maximum_wh51_count": 16, "automatic_execution": False,
+            "note": "Prebrane so samo vrednosti entity-jev. GrowMaster jih še ne uporablja za izračun in ne odpira ventilov."}
+
+
+@router.post("/home-assistant/smart-irrigation")
+def send_smart_irrigation(day: date, db: Session = Depends(get_db)):
+    """Send only validated Kc multipliers; never call an irrigation controller."""
+    base_url, token = home_assistant_config()
+    if not base_url:
+        raise HTTPException(503, "Najprej nastavi HOME_ASSISTANT_URL in HOME_ASSISTANT_TOKEN na strežniku GrowMaster.")
+    preview = smart_irrigation_preview(day, db)
+    ready = [row for row in preview["rows"] if row["status"] == "draft"]
+    if not ready:
+        raise HTTPException(409, "Ni veljavnih Kc posodobitev. Preveri in shrani današnje izračune ter povezave con.")
+    sent = []
+    blocked = [row for row in preview["rows"] if row["status"] != "draft"]
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=False) as client:
+            for row in ready:
+                action = row["action"]
+                response = client.post(
+                    f"{base_url}/api/services/smart_irrigation/set_multiplier",
+                    headers=ha_headers(token),
+                    json={**action["target"], **action["data"]},
+                )
+                if response.status_code == 401:
+                    raise HTTPException(502, "Home Assistant je zavrnil žeton; posodobitev ni potrjena.")
+                if response.status_code not in {200, 201}:
+                    raise HTTPException(502, f"Home Assistant je zavrnil posodobitev cone (HTTP {response.status_code}).")
+                sent.append({"bed_id": row["bed_id"], "bed": row["bed"], **action["target"],
+                             "multiplier": row["multiplier"], "status": "sent"})
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "Prekinjena je bila povezava s Home Assistantom; preveri stanje con pred ponovitvijo.") from exc
+    return {"day": preview["day"], "sent": sent,
+            "blocked": [{"bed_id": row["bed_id"], "bed": row["bed"], "reasons": row["reasons"]} for row in blocked],
+            "automatic_execution": False,
+            "note": "Posodobljeni so samo Kc multiplikatorji Smart Irrigation. Ventili niso bili zagnani."}

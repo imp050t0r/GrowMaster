@@ -24,6 +24,9 @@ services:
       GROWMASTER_WINDOWS_INSTALL: ${GROWMASTER_WINDOWS_INSTALL:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost,https://localhost,capacitor://localhost}
+      HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-}
+      HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
+      HOME_ASSISTANT_WEATHER_ENTITIES: ${HOME_ASSISTANT_WEATHER_ENTITIES:-}
     volumes:
       - "${GROWMASTER_DATA_SOURCE:-growmaster_app_data}:/data"
       - "${BACKUP_DATA_SOURCE:-growmaster_backups}:/data/backups"

@@ -137,7 +137,7 @@ jobs:
 
   publish-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [windows-installer, android-app, ios-app]
+    needs: [windows-installer, android-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write

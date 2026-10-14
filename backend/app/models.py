@@ -83,6 +83,32 @@ class IrrigationDailyReport(Base):
     report: Mapped[str] = mapped_column(Text)
 
 
+class IrrigationWaterLedger(Base):
+    __tablename__ = "irrigation_water_ledger"
+    __table_args__ = (UniqueConstraint("farm_id", "bed_id", "day", name="uq_irrigation_water_ledger_day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="CASCADE"))
+    day: Mapped[date] = mapped_column(Date)
+    opening_depletion_mm: Mapped[float] = mapped_column(Float)
+    etc_mm: Mapped[float] = mapped_column(Float)
+    effective_rain_mm: Mapped[float] = mapped_column(Float)
+    applied_irrigation_mm: Mapped[float] = mapped_column(Float)
+    closing_depletion_mm: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class IrrigationSensorGroup(Base):
+    __tablename__ = "irrigation_sensor_groups"
+    __table_args__ = (UniqueConstraint("farm_id", "group_number", name="uq_irrigation_sensor_group"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
+    group_number: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(80))
+    entity_id: Mapped[str | None] = mapped_column(String(150), nullable=True)
+
+
 class Crop(Base):
     __tablename__ = "crops"
 

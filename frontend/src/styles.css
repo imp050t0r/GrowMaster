@@ -680,6 +680,15 @@ label.review-suggestion:has(input:checked) { border-color: #75ad8d; box-shadow: 
 .profile-readiness.ready { color: #17603f; background: #dff3e7; }
 .profile-readiness.incomplete { color: #8a5b0b; background: #fff1c9; }
 
+.irrigation-bed-review { display: grid; gap: 10px; margin: 18px 0; }
+.irrigation-bed-review .section-heading { margin-bottom: 2px; }
+.irrigation-bed-review article { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 13px 15px; background: #f8fbf9; border: 1px solid #dce7df; border-radius: 13px; }
+.irrigation-bed-review article.selected { border-color: #318f63; background: #eef8f1; }
+.irrigation-bed-review article > div:first-child { display: grid; gap: 4px; }
+.irrigation-bed-review article span, .irrigation-bed-review article small { color: #597267; }
+.irrigation-bed-status { display: grid; justify-items: end; gap: 3px; font-size: .84rem; }
+.irrigation-current-crop { padding: 11px 13px; background: #eef8f1; border-radius: 10px; }
+
 @media (max-width: 900px) {
   .auth-shell { grid-template-columns: 1fr; gap: 8px; }
   .auth-intro { padding-bottom: 8px; }
@@ -751,6 +760,8 @@ label.review-suggestion:has(input:checked) { border-color: #75ad8d; box-shadow: 
   .planting-actions { flex-direction: column; }
   .planting-actions .secondary-button { width: 100%; }
   .bed-size-form .secondary-button { width: 100%; }
+  .irrigation-bed-review article { grid-template-columns: 1fr auto; }
+  .irrigation-bed-review article .secondary-button { grid-column: 1 / -1; }
   .farm-profile-fields .wide { grid-column: 1; }
   .farm-expense-fields .wide { grid-column: 1; }
   .farm-expense-list article { align-items: flex-start; }

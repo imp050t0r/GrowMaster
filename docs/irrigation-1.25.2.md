@@ -1,6 +1,8 @@
 # GrowMaster 1.25.2 — Namakanje (začetna ročna različica)
 
-V **Plan → Namakanje** izberi kulturo in gredico. Najprej shrani profil kulture (Kc za začetno, polno in pozno fazo, trenutna učinkovita globina korenin, dovoljeni delež izsušitve in vir) ter profil grede (poljska kapaciteta in točka venenja kot volumenska odstotka, učinkovitost, največji enkratni odmerek, po želji pretok grede in umerjena praga WH52).
+V **Plan → Namakanje** pregled prikaže gredice z aktivno zasaditvijo in stanje dnevnega izračuna za izbrani datum. Z izbiro gredice GrowMaster predizbere njeno trenutno aktivno kulturo; če je zasaditev v aplikaciji zastarela, jo najprej posodobi v evidenci setev. Za prazno gredico ali ročni scenarij kulturo izberi sam. Fazo rasti še vedno določi uporabnik.
+
+Najprej shrani profil kulture (Kc za začetno, polno in pozno fazo, trenutna učinkovita globina korenin, dovoljeni delež izsušitve in vir) ter profil grede (poljska kapaciteta in točka venenja kot volumenska odstotka, učinkovitost, največji enkratni odmerek, po želji pretok grede in umerjena praga WH52).
 
 Profili niso samodejno napolnjeni z univerzalnimi vrednostmi. Preveri jih za svojo kulturo, fazo, zemljo in način pridelave. Izbira kulture ne preverja dejanske zasaditve; modul je uporaben tudi za ročni pregled scenarijev.
 
