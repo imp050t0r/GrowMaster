@@ -37,6 +37,7 @@ class CropProfile(Input):
 
 class BedProfile(Input):
     mode: Literal["soil_sensor", "smart_irrigation"] = "smart_irrigation"
+    valve_mode: Literal["individual", "shared"] = "individual"
     irrigation_zone: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{1,40}$")
     wh51_group: int | None = Field(default=None, ge=1, le=16)
     # Parse profiles saved by older GrowMaster versions; new assignments use wh51_group.
@@ -414,10 +415,9 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
     bed_profiles = {row.bed_id: BedProfile.model_validate_json(row.parameters) for row in
                     db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))}
     station_beds = {}
-    for bed_profile in bed_profiles.values():
+    for bed_id, bed_profile in bed_profiles.items():
         if bed_profile.opensprinkler_station_entity:
-            station_beds.setdefault(bed_profile.opensprinkler_station_entity, 0)
-            station_beds[bed_profile.opensprinkler_station_entity] += 1
+            station_beds.setdefault(bed_profile.opensprinkler_station_entity, []).append((bed_id, bed_profile))
     sensor_groups = {row.group_number: row for row in db.scalars(select(IrrigationSensorGroup).where(IrrigationSensorGroup.farm_id == FARM_ID))}
     used_groups = {profile.wh51_group for profile in bed_profiles.values()
                    if profile.mode == "soil_sensor" and profile.wh51_group is not None}
@@ -541,8 +541,8 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             station = profile.opensprinkler_station_entity
             if not station:
                 reasons.append("Zalivanje je priporočeno, vendar gredica nima povezane OpenSprinkler postaje.")
-            elif station_beds.get(station, 0) > 1:
-                reasons.append("OpenSprinkler postajo uporablja več gredic; vsaka gredica mora imeti svoj ventil.")
+            elif len(station_beds.get(station, [])) > 1 and (profile.valve_mode != "shared" or any(peer.valve_mode != "shared" for _, peer in station_beds[station])):
+                reasons.append("Isti ventil je na več gredicah označen kot individualen; izberi skupni ventil za vse te gredice.")
             elif smart_irrigation_seconds > profile.max_run_seconds:
                 reasons.append("Smart Irrigation trajanje presega omejitev postaje.")
             else:
@@ -552,8 +552,8 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             station = profile.opensprinkler_station_entity
             if not station:
                 reasons.append("Zalivanje je priporočeno, vendar gredica nima povezane OpenSprinkler postaje.")
-            elif station_beds.get(station, 0) > 1:
-                reasons.append("OpenSprinkler postajo uporablja več gredic; vsaka gredica mora imeti svoj ventil.")
+            elif len(station_beds.get(station, [])) > 1 and (profile.valve_mode != "shared" or any(peer.valve_mode != "shared" for _, peer in station_beds[station])):
+                reasons.append("Isti ventil je na več gredicah označen kot individualen; izberi skupni ventil za vse te gredice.")
             elif profile.flow_l_min is None:
                 reasons.append("Manjka izmerjeni pretok te gredice za izračun trajanja ventila.")
             else:
@@ -571,7 +571,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             smart_action = None
         days_after_sowing = (day - planting.sowing_date).days
         suggested_stage = "initial" if days_after_sowing < 20 else "mid"
-        rows.append({"bed_id": bed.id, "bed": bed.name, "area_m2": bed.area_m2,
+        row_data = {"bed_id": bed.id, "bed": bed.name, "area_m2": bed.area_m2,
                      "crop_id": planting.crop_id, "crop": planting.crop.name,
                      "variety": planting.variety.name if planting.variety else None,
                      "sowing_date": str(planting.sowing_date), "days_after_sowing": days_after_sowing,
@@ -583,14 +583,63 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                      "sensor_group_beds": sum(1 for other in bed_profiles.values() if other.mode == "soil_sensor" and other.wh51_group == (profile.wh51_group if profile else None)) if profile and profile.wh51_group else 0,
                      "smart_irrigation_seconds": smart_irrigation_seconds,
                      "action": smart_action,
-                     "decision": ("irrigate" if smart_irrigation_seconds and smart_irrigation_seconds > 0 else
+                     "decision": (("irrigate" if report_status == "irrigate" else "hold" if report_status == "hold" else "review")
+                                  if profile and profile.mode == "soil_sensor" else
+                                  "irrigate" if smart_irrigation_seconds and smart_irrigation_seconds > 0 else
                                   "hold" if smart_irrigation_seconds == 0 else "review"),
                      "irrigation_zone": profile.irrigation_zone if profile else None,
                      "report_status": report_status, "calculated_at": calculated_at,
-                     "ready": not reasons, "reasons": reasons})
+                     "ready": not reasons, "reasons": reasons}
+        if profile and profile.opensprinkler_station_entity and profile.valve_mode == "shared" and len(station_beds.get(profile.opensprinkler_station_entity, [])) > 1:
+            row_data["_shared_candidate"] = smart_action
+        rows.append(row_data)
+    valve_groups = []
+    for station, members in station_beds.items():
+        if len(members) < 2 or not all(member.valve_mode == "shared" for _, member in members):
+            continue
+        bed_ids = sorted(member_id for member_id, _ in members)
+        group_rows = [row for row in rows if row["bed_id"] in bed_ids]
+        reasons = []
+        if len(group_rows) != len(bed_ids):
+            reasons.append("Vse gredice, priključene na skupni ventil, morajo imeti aktivno zasaditev.")
+        if any(not row["ready"] or row["decision"] != "irrigate" or not row.get("_shared_candidate") for row in group_rows):
+            reasons.append("Vsaka gredica na skupnem ventilu mora imeti svež izračun, ki priporoča zalivanje.")
+        safe_limits = []
+        for member_id, member in members:
+            report = reports.get(member_id)
+            bed = next((item for item in beds if item.id == member_id), None)
+            if report is None or bed is None or member.flow_l_min is None:
+                reasons.append("Za vsako gredico skupine sta potrebna današnji izračun in izmerjeni pretok.")
+                continue
+            depletion = report.get("depletion_mm")
+            if depletion is None or not math.isfinite(float(depletion)):
+                reasons.append("Vodna bilanca skupne gredice nima veljavnega primanjkljaja.")
+                continue
+            # Bound the shared run by the least water any member can safely accept.
+            safe_depth = min(member.max_application_mm, float(depletion) / (member.efficiency_pct / 100))
+            safe_limits.append(min(member.max_run_seconds, math.floor(safe_depth * bed.area_m2 / member.flow_l_min * 60)))
+        requested = [row["_shared_candidate"]["data"]["run_seconds"] for row in group_rows if row.get("_shared_candidate")]
+        run_seconds = max(requested) if requested else 0
+        if safe_limits and run_seconds > min(safe_limits):
+            reasons.append("Skupni čas bi presegel varen odmerek vsaj za eno gredico.")
+        action = None
+        if not reasons and run_seconds > 0:
+            action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
+                      "data": {"run_seconds": run_seconds, "queue_option": "append"}}
+        for row in group_rows:
+            row.pop("_shared_candidate", None)
+            row["action"] = None
+            if reasons:
+                row["ready"] = False
+                row["reasons"].extend(reason for reason in reasons if reason not in row["reasons"])
+        valve_groups.append({"station": station, "bed_ids": bed_ids, "status": "draft" if action else "blocked",
+                             "action": action, "run_seconds": run_seconds if action else None,
+                             "reasons": reasons})
+    for row in rows:
+        row.pop("_shared_candidate", None)
     return {"day": str(day), "active_beds": len(rows), "ready_beds": sum(row["ready"] for row in rows),
             "needs_attention": sum(not row["ready"] for row in rows), "automatic_execution": False,
-            "rows": rows,
+            "rows": rows, "valve_groups": valve_groups,
             "note": "Pregled vseh aktivnih gredic. Ne izračuna ET₀, ne pošlje podatkov v Home Assistant in ne zažene ventilov."}
 
 

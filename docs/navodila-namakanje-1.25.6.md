@@ -78,6 +78,12 @@ GrowMaster v tej različici pošilja samo Kc. Ne sproži Smart Irrigation izrač
 
 Za vsako gredico posebej izberi način. Do 16 skupin WH51 lahko ročno razporediš med poljubno število gredic; gredice brez senzorja pustijo skupino na **Brez WH51**. Ne dodeljuj senzorja gredici samo zato, da bi izpolnil nastavitev.
 
+## Individualni ali skupni ventil
+
+V profilu grede izberi **Razporeditev ventila**. Pri individualnem načinu ima gredica svoj OpenSprinkler entity ID. Pri skupnem načinu izberi skupno možnost na vseh gredicah, ki jih napaja isti fizični ventil, in vsem vpiši isti entity ID. GrowMaster za skupino pripravi en osnutek samo, če so vse priključene gredice aktivne, imajo današnji veljaven izračun in vse priporočajo zalivanje. Skupni čas omeji z najnižjo varno mejo članic skupine.
+
+Pretok v profilu mora biti izmerjen za posamezno vejo oziroma gredico. Če ne poznaš porazdelitve pretoka ali ista količina vode ne doseže gredic primerljivo, skupinskega osnutka ne uporabi; skupni ventil lahko zalije tudi gredico, ki tega ne potrebuje. GrowMaster ne izvede skupinskega osnutka samodejno.
+
 ## OpenSprinkler: priprava ročnega osnutka
 
 Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMaster iz današnjega shranjenega izračuna pripravi osnutek akcije. Klikni **PRIPRAVI AKCIJE OPENSPRINKLER**, preveri gredico, postajo, trajanje in opozorila. Osnutek ni samodejno izveden; če ga uporabiš v Home Assistantu, bo tamkajšnja ročna izvedba dejansko zagnala postajo. Pred tem preveri tlak, pretok, ventil in varno največje trajanje.

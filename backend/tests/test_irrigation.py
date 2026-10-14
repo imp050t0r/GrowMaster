@@ -139,6 +139,39 @@ def test_wh51_daily_readiness_prepares_action_for_the_bed_valve(irrigation,monke
                             "data":{"run_seconds":5625,"queue_option":"append"}}
     assert row["planting_id"] and row["crop"]=="Solata"
 
+@pytest.mark.parametrize("seconds,expected",[(300,"draft"),(0,"blocked")])
+def test_shared_valve_requires_every_active_bed_to_request_water(irrigation,monkeypatch,seconds,expected):
+    db,c,_=irrigation
+    db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,days_summer=35,days_autumn=45,days_winter=55))
+    db.add_all([Bed(id=3,farm_id=1,name="A2",width_m=1,length_m=10,status="empty"),
+                Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),expected_harvest_date=date.today()+timedelta(days=30),status="active"),
+                Planting(farm_id=1,bed_id=3,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),expected_harvest_date=date.today()+timedelta(days=30),status="active")])
+    db.commit()
+    for bed_id in (1,3):
+        c.put(f"/api/irrigation/beds/{bed_id}",json={**BP,"mode":"smart_irrigation","valve_mode":"shared",
+            "smart_irrigation_entity":f"sensor.smart_irrigation_bed_{bed_id}","opensprinkler_station_entity":"switch.shared_valve"})
+        assert c.put("/api/irrigation/daily",json=payload(bed_id=bed_id)).status_code==200
+    monkeypatch.setenv("HOME_ASSISTANT_URL","http://ha.local:8123");monkeypatch.setenv("HOME_ASSISTANT_TOKEN","token")
+    monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs:[(None,None,None,None,("192.168.1.10",8123))])
+    class Response:
+        status_code=200
+        def __init__(self,value):self.value=value
+        def json(self):return {"state":str(self.value),"attributes":{"unit_of_measurement":"seconds","last_calculated":datetime.now(timezone.utc).isoformat()},"last_updated":datetime.now(timezone.utc).isoformat()}
+    class Client:
+        def __init__(self,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def get(self,url,headers):return Response(seconds if url.endswith("bed_1") else (240 if seconds else 0))
+    monkeypatch.setattr(irrigation_routes.httpx,"Client",Client)
+    result=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()
+    group=result["valve_groups"][0]
+    assert group["status"]==expected
+    if expected=="draft":
+        assert group["run_seconds"]==300 and group["bed_ids"]==[1,3]
+        assert group["action"]["target"]["entity_id"]=="switch.shared_valve"
+    else:
+        assert group["action"] is None and any(not row["ready"] for row in result["rows"])
+
 def test_wh51_groups_limit_to_16_sensor_entities(irrigation):
     _,c,_=irrigation
     for group in range(1,17):
