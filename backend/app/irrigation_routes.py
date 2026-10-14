@@ -10,11 +10,12 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.ha_credentials import delete_config as delete_home_assistant_config, read_config as read_stored_home_assistant_config, write_config as write_home_assistant_config
 from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, Planting, Variety
 
 router = APIRouter(prefix="/api/irrigation")
@@ -106,6 +107,23 @@ class WaterLedgerInput(Input):
 class SensorGroupInput(Input):
     name: str = Field(min_length=1, max_length=80)
     entity_id: str | None = Field(default=None, pattern=r"^sensor\.[a-z0-9_]+$", max_length=150)
+
+
+class HomeAssistantConfigInput(Input):
+    url: str = Field(min_length=8, max_length=2048)
+    token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def valid_url(self):
+        parsed = urlparse(self.url)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise ValueError("Vnesi veljaven http(s) URL Home Assistanta brez prijavnih podatkov, poizvedbe ali fragmenta.")
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("URL Home Assistanta vsebuje neveljavna vrata.") from exc
+        return self
 
 
 def entity(db, model, identifier):
@@ -706,9 +724,13 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
 
 
 def home_assistant_config():
-    """Read credentials only from the GrowMaster backend environment."""
-    base_url = os.environ.get("HOME_ASSISTANT_URL", "").strip().rstrip("/")
-    token = os.environ.get("HOME_ASSISTANT_TOKEN", "").strip()
+    """Read the encrypted per-installation setting, with environment fallback."""
+    try:
+        stored = read_stored_home_assistant_config()
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    base_url = (stored["url"] if stored else os.environ.get("HOME_ASSISTANT_URL", "")).strip().rstrip("/")
+    token = (stored["token"] if stored else os.environ.get("HOME_ASSISTANT_TOKEN", "")).strip()
     parsed = urlparse(base_url)
     if not base_url or not token:
         return None, None
@@ -728,10 +750,54 @@ def ha_headers(token):
 
 @router.get("/home-assistant/status")
 def home_assistant_status():
-    """Expose only whether backend credentials are configured, never their values."""
-    base_url, _ = home_assistant_config()
-    return {"configured": bool(base_url), "automatic_execution": False,
-            "note": "Povezava je nastavljena samo v okolju strežnika GrowMaster."}
+    """Expose the non-secret URL and credential state, never the token."""
+    try:
+        stored = read_stored_home_assistant_config()
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    base_url = (stored["url"] if stored else os.environ.get("HOME_ASSISTANT_URL", "")).strip().rstrip("/")
+    token = (stored["token"] if stored else os.environ.get("HOME_ASSISTANT_TOKEN", "")).strip()
+    return {"configured": bool(base_url and token), "url": base_url or "", "token_configured": bool(token),
+            "source": "application" if stored else "environment", "automatic_execution": False,
+            "note": "Žeton je shranjen šifrirano na strežniku GrowMaster; API ga nikoli ne vrne."}
+
+
+@router.put("/home-assistant/config")
+def save_home_assistant_config(payload: HomeAssistantConfigInput):
+    """Save Home Assistant credentials encrypted in the persistent data volume."""
+    try:
+        current = read_stored_home_assistant_config()
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    submitted_token = payload.token.get_secret_value().strip() if payload.token else ""
+    if len(submitted_token) > 8192:
+        raise HTTPException(422, "Dolgoročni žeton je predolg.")
+    token = submitted_token or (
+        current["token"] if current else os.environ.get("HOME_ASSISTANT_TOKEN", "").strip()
+    )
+    if not token:
+        raise HTTPException(422, "Vnesi dolgoročni dostopni žeton Home Assistanta.")
+    url = payload.url.strip().rstrip("/")
+    try:
+        write_home_assistant_config(url, token)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(503, "Nastavitve Home Assistanta ni mogoče varno shraniti na podatkovni disk GrowMasterja.") from exc
+    return {"configured": True, "url": url, "token_configured": True, "source": "application",
+            "message": "Povezava Home Assistanta je shranjena. Žeton ni prikazan."}
+
+
+@router.delete("/home-assistant/config")
+def clear_home_assistant_config():
+    """Remove the app-managed credential file; never return a secret."""
+    try:
+        deleted = delete_home_assistant_config()
+    except OSError as exc:
+        raise HTTPException(503, "Nastavitve Home Assistanta ni mogoče izbrisati.") from exc
+    status = home_assistant_status()
+    base_url = status["url"] if status["configured"] else ""
+    return {"deleted": deleted, "configured": bool(base_url), "url": base_url or "",
+            "token_configured": bool(base_url), "source": "environment" if base_url else None,
+            "message": "Nastavitev iz aplikacije je izbrisana."}
 
 
 @router.post("/home-assistant/test")

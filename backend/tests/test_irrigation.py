@@ -342,6 +342,53 @@ def test_home_assistant_status_does_not_expose_credentials(irrigation,monkeypatc
     result=c.get("/api/irrigation/home-assistant/status").json()
     assert result["configured"] and "secret-value" not in json.dumps(result)
 
+def test_home_assistant_app_config_is_encrypted_and_never_returned(irrigation,monkeypatch,tmp_path):
+    _,c,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    monkeypatch.delenv("HOME_ASSISTANT_URL",raising=False)
+    monkeypatch.delenv("HOME_ASSISTANT_TOKEN",raising=False)
+    monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs: [(None,None,None,None,("192.168.1.10",8123))])
+    response=c.put("/api/irrigation/home-assistant/config",json={"url":"http://ha.local:8123/","token":"very-secret-ha-token"})
+    assert response.status_code==200
+    assert response.json()["configured"] and "very-secret-ha-token" not in response.text
+    status=c.get("/api/irrigation/home-assistant/status")
+    assert status.status_code==200
+    assert status.json()=={"configured":True,"url":"http://ha.local:8123","token_configured":True,
+                           "source":"application","automatic_execution":False,
+                           "note":"Žeton je shranjen šifrirano na strežniku GrowMaster; API ga nikoli ne vrne."}
+    config_file=tmp_path/"secrets"/"home-assistant.json"
+    key_file=tmp_path/"secrets"/"home-assistant.key"
+    assert config_file.exists() and key_file.exists()
+    assert "very-secret-ha-token" not in config_file.read_text()
+    assert irrigation_routes.read_stored_home_assistant_config()["token"]=="very-secret-ha-token"
+    cleared=c.delete("/api/irrigation/home-assistant/config")
+    assert cleared.status_code==200 and not cleared.json()["configured"]
+    assert not config_file.exists()
+
+def test_home_assistant_config_requires_token_on_first_save(irrigation,monkeypatch,tmp_path):
+    _,c,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    monkeypatch.delenv("HOME_ASSISTANT_URL",raising=False)
+    monkeypatch.delenv("HOME_ASSISTANT_TOKEN",raising=False)
+    response=c.put("/api/irrigation/home-assistant/config",json={"url":"http://192.168.1.10:8123","token":""})
+    assert response.status_code==422 and not (tmp_path/"secrets"/"home-assistant.json").exists()
+
+def test_home_assistant_config_does_not_echo_oversized_token(irrigation,monkeypatch,tmp_path):
+    _,c,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    monkeypatch.delenv("HOME_ASSISTANT_URL",raising=False)
+    monkeypatch.delenv("HOME_ASSISTANT_TOKEN",raising=False)
+    secret="x"*8193
+    response=c.put("/api/irrigation/home-assistant/config",json={"url":"http://192.168.1.10:8123","token":secret})
+    assert response.status_code==422 and secret not in response.text
+
+def test_home_assistant_config_rejects_embedded_credentials_and_query(irrigation,monkeypatch,tmp_path):
+    _,c,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    for url in ("http://user:pass@ha.local:8123","http://ha.local:8123/?token=secret","ftp://ha.local"):
+        response=c.put("/api/irrigation/home-assistant/config",json={"url":url,"token":"secret-value"})
+        assert response.status_code==422
+
 def test_home_assistant_not_configured_is_reported_without_network(irrigation,monkeypatch):
     _,c,_=irrigation
     monkeypatch.delenv("HOME_ASSISTANT_URL",raising=False)
@@ -354,7 +401,8 @@ def test_home_assistant_local_name_requires_resolution_from_backend(irrigation,m
     monkeypatch.setenv("HOME_ASSISTANT_URL","http://homeassistant.local:8123")
     monkeypatch.setenv("HOME_ASSISTANT_TOKEN","secret-value")
     monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs: (_ for _ in ()).throw(irrigation_routes.socket.gaierror()))
-    response=c.get("/api/irrigation/home-assistant/status")
+    assert c.get("/api/irrigation/home-assistant/status").json()["configured"]
+    response=c.post("/api/irrigation/home-assistant/test")
     assert response.status_code==503 and "LAN IP" in response.json()["detail"]
 
 def test_home_assistant_test_checks_api_only(irrigation,monkeypatch):

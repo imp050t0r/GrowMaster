@@ -21,6 +21,7 @@ export function IrrigationPlanner({crops,beds}) {
   const [siPreview,setSiPreview]=useState(null),[siBusy,setSiBusy]=useState(false);
   const siGeneration=useRef(0);
   const [haStatus,setHaStatus]=useState(null),[haBusy,setHaBusy]=useState(false);
+  const [haConfig,setHaConfig]=useState({url:"",token:""});
   const [haStates,setHaStates]=useState(null);
   function chooseBed(value) {
     setBedId(value);
@@ -28,7 +29,7 @@ export function IrrigationPlanner({crops,beds}) {
     setCropId(cropIdForBed(bed,crops));
   }
   useEffect(()=>{let closed=false; apiRequest("/api/irrigation/profiles").then(p=>{if(!closed){setProfiles(p);setSensorGroups(Array.from({length:16},(_,i)=>p.sensor_groups?.find(item=>item.group_number===i+1)||{group_number:i+1,name:`WH51 ${i+1}`,entity_id:""}));}}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;generation.current++;};},[]);
-  useEffect(()=>{let closed=false;apiRequest("/api/irrigation/home-assistant/status").then(r=>{if(!closed)setHaStatus(r);}).catch(()=>{if(!closed)setHaStatus({configured:false});});return()=>{closed=true;};},[]);
+  useEffect(()=>{let closed=false;apiRequest("/api/irrigation/home-assistant/status").then(r=>{if(!closed){setHaStatus(r);setHaConfig(value=>({...value,url:r.url||""}));}}).catch(()=>{if(!closed)setHaStatus({configured:false,token_configured:false});});return()=>{closed=true;};},[]);
   useEffect(()=>{setCp(profiles.crops.find(p=>String(p.crop_id)===cropId)||cropEmpty);},[cropId,profiles]);
   useEffect(()=>{setBp({...bedEmpty,...profiles.beds.find(p=>String(p.bed_id)===bedId)});},[bedId,profiles]);
   useEffect(()=>{generation.current++;setReport(null);setMessage("");setBusy(false);},[cropId,bedId,cp,bp,day]);
@@ -49,8 +50,25 @@ export function IrrigationPlanner({crops,beds}) {
   }
   async function testHomeAssistant() {
     setHaBusy(true);setError("");setMessage("");
-    try {const r=await apiRequest("/api/irrigation/home-assistant/test",{method:"POST"});setHaStatus({configured:true,connected:true});setMessage(`Povezava s Home Assistantom deluje (${r.message}).`);}
+    try {const r=await apiRequest("/api/irrigation/home-assistant/test",{method:"POST"});setHaStatus(previous=>({...previous,configured:true,connected:true}));setMessage(`Povezava s Home Assistantom deluje (${r.message}).`);}
     catch(e){setError(e.message);}finally{setHaBusy(false);}
+  }
+  async function saveHomeAssistantConfig(event) {
+    event.preventDefault();setHaBusy(true);setError("");setMessage("");
+    try {
+      const r=await apiRequest("/api/irrigation/home-assistant/config",{method:"PUT",body:JSON.stringify(haConfig)});
+      setHaStatus({...r,connected:false});setHaConfig({url:r.url,token:""});
+      setMessage("Povezava je varno shranjena. Zdaj izberi PREVERI POVEZAVO.");
+    } catch(e){setError(e.message);} finally {setHaBusy(false);}
+  }
+  async function clearHomeAssistantConfig() {
+    if(!window.confirm("Izbrišem povezavo Home Assistanta, shranjeno v GrowMasterju?"))return;
+    setHaBusy(true);setError("");setMessage("");setHaStates(null);
+    try {
+      const r=await apiRequest("/api/irrigation/home-assistant/config",{method:"DELETE"});
+      setHaStatus({...r,connected:false});setHaConfig({url:r.url||"",token:""});
+      setMessage(r.configured?"Nastavitev iz aplikacije je izbrisana; še vedno je nastavljena povezava iz okolja strežnika.":"Povezava Home Assistanta je izbrisana.");
+    } catch(e){setError(e.message);} finally {setHaBusy(false);}
   }
   async function readHomeAssistantStates() {
     setHaBusy(true);setError("");setHaStates(null);
@@ -182,7 +200,14 @@ export function IrrigationPlanner({crops,beds}) {
         {r.status==="draft"?<><p>{r.litres} l · {r.run_seconds} sekund · {r.action.target.entity_id}</p><ul>{r.warnings.map((w,i)=><li key={i}>{w}</li>)}</ul><p>Spodnji zapis lahko po preverjanju uporabiš v Home Assistantu, Orodja za razvijalce → Akcije → YAML. Izvedba tam dejansko odpre ventil.</p><textarea aria-label={`Akcija OpenSprinkler za gredico ${r.bed||r.bed_id}`} readOnly rows={8} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
       </article>)}</div>}
     <h3>Smart Irrigation prek Home Assistanta</h3>
-    <p>Stanje povezave: <strong>{haStatus?.connected?"povezano":haStatus?.configured?"nastavljeno, še nepreverjeno":"strežniška povezava ni nastavljena"}</strong>. URL Home Assistanta in žeton nastavi v okolju backend strežnika GrowMaster. Pri naslovu `.local` mora Docker vsebnik razrešiti mDNS; če ne, uporabi lokalni IP Home Assistanta.</p>
+    <p>Stanje povezave: <strong>{haStatus?.connected?"povezano":haStatus?.configured?"nastavljeno, še nepreverjeno":"ni nastavljena"}</strong>. Vnesi URL Home Assistanta, ki je dosegljiv iz računalnika GrowMaster, in njegov dolgoročni dostopni žeton. Žeton se shrani šifrirano na podatkovni disk strežnika in ga GrowMaster ne prikaže nazaj. Za naslov `.local` mora biti ime dosegljivo iz Docker vsebnika; sicer uporabi lokalni IP.</p>
+    {haStatus?.source==="environment"&&haStatus?.configured&&<p>Trenutno je uporabljena starejša strežniška nastavitev. Če shraniš obrazec, bo nastavitev iz aplikacije prevzela prednost.</p>}
+    <form className="planning-form" onSubmit={saveHomeAssistantConfig}>
+      <label>URL Home Assistanta<input type="url" required maxLength={2048} placeholder="http://192.168.1.50:8123" value={haConfig.url} onChange={e=>setHaConfig({...haConfig,url:e.target.value})}/></label>
+      <label>Dolgoročni dostopni žeton<input type="password" autoComplete="new-password" maxLength={8192} required={!haStatus?.token_configured} placeholder={haStatus?.token_configured?"Shranjeni žeton ostane, če polje pustiš prazno":"Prilepi žeton iz Home Assistanta"} value={haConfig.token} onChange={e=>setHaConfig({...haConfig,token:e.target.value})}/></label>
+      <button className="secondary-button" disabled={haBusy}>SHRANI POVEZAVO</button>
+    </form>
+    {haStatus?.source==="application"&&<button type="button" className="danger-button" disabled={haBusy} onClick={clearHomeAssistantConfig}>IZBRIŠI POVEZAVO</button>}
     <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={testHomeAssistant}>PREVERI POVEZAVO</button>
     <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={readHomeAssistantStates}>PREBERI NASTAVLJENE SENZORJE</button>
     {haStates&&<article aria-label="Stanja Home Assistant senzorjev"><h4>Prebrane vrednosti senzorjev</h4><p>{haStates.note} WH51: {haStates.configured_wh51_count}/{haStates.maximum_wh51_count} skupin.</p><ul>{haStates.sensor_groups.map(group=><li key={`${group.group_number}-${group.entity_id}`}><strong>{group.name}</strong>{group.group_number?` (${group.group_number})`:""} · {group.entity_id} · {group.assigned_beds} gredic {group.needs_migration?" · premakni v novo skupino":""}</li>)}</ul><ul>{haStates.entities.map(item=><li key={item.entity_id}><strong>{item.entity_id}</strong>: {item.available?`${item.state}${item.unit?` ${item.unit}`:""}`:item.issue||item.error||"nedosegljiv"}{item.last_updated?` · posodobljeno ${new Date(item.last_updated).toLocaleString()}`:""}</li>)}</ul>{Object.entries(haStates.numeric_summary_by_unit||{}).map(([unit,summary])=><p key={unit}>Povzetek {unit}: {summary.count} senzorjev · povprečje {summary.mean} · min {summary.minimum} · max {summary.maximum}</p>)}</article>}
