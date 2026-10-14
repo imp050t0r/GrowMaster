@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cropIdForBed, dailyBedStates } from "./irrigationPlanner.js";
+import { cropIdForBed, dailyBedStates } from "./irrigationHelpers.js";
 
 test("selecting a bed resolves its currently active crop", () => {
   const bed = { current_planting: { crop: "Solata" } };

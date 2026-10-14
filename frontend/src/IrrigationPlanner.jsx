@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from "react";
 import {apiRequest} from "./platform";
-import {cropIdForBed,dailyBedStates} from "./irrigationPlanner";
+import {cropIdForBed,dailyBedStates} from "./irrigationHelpers";
 
 const cropEmpty={kc_initial:"",kc_mid:"",kc_late:"",root_depth_m:"",depletion_fraction:"",source:""};
 const bedEmpty={mode:"smart_irrigation",irrigation_zone:"",wh51_group:null,field_capacity_pct:"",wilting_point_pct:"",efficiency_pct:"",flow_l_min:"",max_application_mm:"",sensor_dry_pct:"",sensor_wet_pct:"",source:"",opensprinkler_station_entity:null,smart_irrigation_entity:null,max_run_seconds:3600};
