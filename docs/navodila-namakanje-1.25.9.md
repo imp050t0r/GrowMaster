@@ -1,4 +1,4 @@
-# Navodila za namakanje v GrowMasterju 1.25.8
+# Navodila za namakanje v GrowMasterju 1.25.9
 
 Ta navodila pokrivajo obe možnosti profila grede. Uporabiš ju lahko tudi skupaj: nekatere grede imajo WH51, druge ostanejo brez talnega senzorja.
 
@@ -99,4 +99,4 @@ Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMas
 - Ali se kultura in profili od shranjenega izračuna niso spremenili? Po spremembi ponovno izračunaj in shrani dan.
 - Ali je OpenSprinkler postaja pravilno povezana z eno gredico in je trajanje znotraj nastavljene omejitve?
 
-**Varnostno pravilo:** GrowMaster 1.25.8 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.
+**Varnostno pravilo:** GrowMaster 1.25.9 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.

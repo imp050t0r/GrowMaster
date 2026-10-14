@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 15407)
-Total output lines: 1012
-
 """Manual, advisory water balance. No weather polling or valve commands."""
 import json
 import math
@@ -524,7 +521,26 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                         ha_state_cache[profile.smart_irrigation_entity] = (si_response.status_code, si_response.json() if si_response.status_code == 200 else None)
                     si_status, si_data = ha_state_cache[profile.smart_irrigation_entity]
                     if si_status != 200:
-                        reasons.append("Smart Irrigation ent…407 tokens truncated…taje.")
+                        reasons.append("Smart Irrigation entity ni dosegljiv v Home Assistantu.")
+                    else:
+                        smart_irrigation_seconds = float(si_data.get("state"))
+                        si_updated = datetime.fromisoformat(si_data.get("attributes", {}).get("last_calculated") or si_data["last_updated"])
+                        si_age = (datetime.now(timezone.utc) - si_updated.astimezone(timezone.utc)).total_seconds()
+                        if not math.isfinite(smart_irrigation_seconds) or smart_irrigation_seconds < 0:
+                            raise ValueError("Trajanje ni veljavno nenegativno število.")
+                        if si_data.get("attributes", {}).get("unit_of_measurement") != "seconds":
+                            raise ValueError("Smart Irrigation trajanje nima enote seconds.")
+                        if not 0 <= si_age <= 6 * 3600:
+                            reasons.append("Smart Irrigation izračun je starejši od šestih ur.")
+                except (httpx.RequestError, ValueError, KeyError, TypeError):
+                    smart_irrigation_seconds = None
+                    reasons.append("Trajanja Smart Irrigation ni mogoče varno prebrati.")
+        # The valve belongs permanently to the bed. A crop change affects its
+        # water calculation, never the bed-to-valve mapping.
+        if profile and profile.mode == "smart_irrigation" and smart_irrigation_seconds is not None and smart_irrigation_seconds > 0:
+            station = profile.opensprinkler_station_entity
+            if not station:
+                reasons.append("Zalivanje je priporočeno, vendar gredica nima povezane OpenSprinkler postaje.")
             elif len(station_beds.get(station, [])) > 1 and (profile.valve_mode != "shared" or any(peer.valve_mode != "shared" for _, peer in station_beds[station])):
                 reasons.append("Isti ventil je na več gredicah označen kot individualen; izberi skupni ventil za vse te gredice.")
             elif smart_irrigation_seconds > profile.max_run_seconds:
