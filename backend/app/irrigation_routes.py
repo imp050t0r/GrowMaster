@@ -617,6 +617,12 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             reasons.append("Manjka profil grede.")
         if profile and profile.mode == "smart_irrigation" and not profile.smart_irrigation_entity:
             reasons.append("Manjka Smart Irrigation cona.")
+        if profile and profile.mode == "smart_irrigation" and profile.smart_irrigation_entity:
+            other_beds = [other_id for other_id, other in bed_profiles.items()
+                          if other_id != bed.id and other.mode == "smart_irrigation"
+                          and other.smart_irrigation_entity == profile.smart_irrigation_entity]
+            if other_beds:
+                reasons.append("Ista Smart Irrigation cona je dodeljena več gredicam; Kc posamezne kulture ni mogoče varno uskladiti.")
         if profile and profile.mode == "soil_sensor" and not profile.irrigation_zone:
             reasons.append("Izbran je način s senzorjem vlage, vendar namakalna cona ni nastavljena.")
         sensor_group = sensor_groups.get(profile.wh51_group) if profile and profile.wh51_group else None
