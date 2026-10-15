@@ -40,3 +40,5 @@ Pri skupnem ventilu morajo biti vse nanj vezane aktivne gredice nastavljene kot 
 Avtomatika je privzeto izključena. V razdelku **Več → Namakanje** jo je mogoče izrecno vključiti in določiti lokalno uro prvega dnevnega preverjanja. GrowMaster nato vsakih pet minut preveri današnji sveži Smart Irrigation izračun. Če se je Kc spremenil zaradi nove kulture ali rastne faze, GrowMaster najprej pošlje posodobitev Kc in počaka na nov izračun cone.
 
 Ventil se sproži le, ko je gredica pripravljena, Smart Irrigation priporoča zalivanje, Kc ustreza aktivni kulturi in fazi ter so ventil in omejitve trajanja pravilno nastavljeni. Za skupni ventil morajo biti pripravljene vse gredice v skupini. Po vsakem ukazu GrowMaster shrani stanje za ta ventil in dan; negotovega odziva Home Assistanta ne ponovi samodejno. Stanje **oddano** pomeni, da je Home Assistant sprejel ukaz, ne pa potrditve fizičnega pretoka vode. GrowMaster ne meri pretoka.
+
+Ob vklopu avtomatike GrowMaster zabeleži čas vklopa in čaka na Smart Irrigation izračun z novejšim časom. Če je bil zadnji izračun narejen pred vklopom ali pred samodejno spremembo Kc, ventil ostane zaprt do naslednjega izračuna.
