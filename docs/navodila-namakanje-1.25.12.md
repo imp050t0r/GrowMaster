@@ -114,3 +114,15 @@ Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMas
 - Ali je OpenSprinkler postaja pravilno povezana z eno gredico in je trajanje znotraj nastavljene omejitve?
 
 **Varnostno pravilo:** GrowMaster 1.25.12 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.
+
+
+## Vklop samodejnega zalivanja
+
+1. Najprej shrani in preveri povezavo Home Assistanta.
+2. Pri vsaki gredici nastavi aktivno kulturo prek zasaditve, Smart Irrigation entiteto, OpenSprinkler postajo, pretok in največji čas delovanja.
+3. Preveri, da so Kc profili kultur pravilni ter da časovni senzor Smart Irrigation izračunava sveže vrednosti v sekundah.
+4. V **Več → Namakanje → Samodejno zalivanje** nastavi lokalno uro začetka preverjanja.
+5. Izberi **VKLOPI SAMODEJNO ZALIVANJE** in potrdi opozorilo. Privzeto je funkcija izključena; kadar koli jo lahko izključiš.
+6. Preglej prikazane zadnje zagone. Stanje »oddano« potrjuje le sprejem ukaza v HA, ne pretoka skozi kapljične cevi.
+
+Ob spremembi faze ali kulture GrowMaster najprej uskladi Kc in ne zaliva v istem prehodu. Počaka na nov izračun Smart Irrigation. Če je izračun star, Kc ni usklajen, manjka pretok/postaja ali skupni ventil ni v celoti pripravljen, gredica ostane brez samodejnega ukaza.
