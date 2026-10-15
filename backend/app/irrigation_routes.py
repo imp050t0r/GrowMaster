@@ -205,7 +205,18 @@ def automatic_irrigation_tick(db: Session):
         if zone and row.get("mode") == "smart_irrigation":
             zone_counts[zone] = zone_counts.get(zone, 0) + 1
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "matched" and zone:
-            state.setdefault("kc_pending", {}).pop(zone, None)
+            pending = state.setdefault("kc_pending", {}).get(zone)
+            if pending:
+                try:
+                    sent_at = datetime.fromisoformat(pending["sent_at"])
+                    calculated_at = datetime.fromisoformat(row.get("smart_irrigation_calculated_at") or "")
+                    if calculated_at <= sent_at:
+                        waiting_for_kc = True
+                        continue
+                except (KeyError, TypeError, ValueError):
+                    waiting_for_kc = True
+                    continue
+                state["kc_pending"].pop(zone, None)
     waiting_for_kc = False
     for row in readiness["rows"]:
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "needs_update":
@@ -709,6 +720,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                 reasons.append("Dnevni izračun v načinu s senzorjem nima shranjene meritve vlage.")
         smart_irrigation_seconds = None
         smart_irrigation_multiplier_current = None
+        smart_irrigation_calculated_at = None
         smart_action = None
         if profile and profile.mode == "smart_irrigation" and profile.smart_irrigation_entity:
             base_url, token = home_assistant_config()
@@ -731,6 +743,9 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                             if not math.isfinite(smart_irrigation_multiplier_current) or not 0 <= smart_irrigation_multiplier_current <= 2:
                                 raise ValueError("Smart Irrigation Kc ni veljaven.")
                         si_updated = datetime.fromisoformat(si_data.get("attributes", {}).get("last_calculated") or si_data["last_updated"])
+                        if si_updated.utcoffset() is None:
+                            raise ValueError("Smart Irrigation čas izračuna nima časovnega pasu.")
+                        smart_irrigation_calculated_at = si_updated.astimezone(timezone.utc).isoformat()
                         si_age = (datetime.now(timezone.utc) - si_updated.astimezone(timezone.utc)).total_seconds()
                         if not math.isfinite(smart_irrigation_seconds) or smart_irrigation_seconds < 0:
                             raise ValueError("Trajanje ni veljavno nenegativno število.")
@@ -810,6 +825,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                      "sensor_group_beds": sum(1 for other in bed_profiles.values() if other.mode == "soil_sensor" and other.wh51_group == (profile.wh51_group if profile else None)) if profile and profile.wh51_group else 0,
                      "smart_irrigation_seconds": smart_irrigation_seconds,
                      "smart_irrigation_multiplier": smart_irrigation_multiplier_current,
+                     "smart_irrigation_calculated_at": smart_irrigation_calculated_at,
                      "kc_expected": kc_expected, "kc_sync_status": kc_sync_status,
                      "estimated_litres": smart_irrigation_litres,
                      "action": smart_action,
