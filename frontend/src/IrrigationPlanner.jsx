@@ -18,7 +18,7 @@ export function IrrigationPlanner({crops,beds}) {
   const generation=useRef(0);
   const [osPreview,setOsPreview]=useState(null),[osBusy,setOsBusy]=useState(false);
   const osGeneration=useRef(0);
-  const [siPreview,setSiPreview]=useState(null),[siBusy,setSiBusy]=useState(false);
+  const [siPreview,setSiPreview]=useState(null),[siBusy,setSiBusy]=useState(false),[siConfirmed,setSiConfirmed]=useState(false);
   const siGeneration=useRef(0);
   const [haStatus,setHaStatus]=useState(null),[haBusy,setHaBusy]=useState(false);
   const [haConfig,setHaConfig]=useState({url:"",token:""});
@@ -55,7 +55,7 @@ export function IrrigationPlanner({crops,beds}) {
     catch(e){if(n===osGeneration.current)setError(e.message);}finally{if(n===osGeneration.current)setOsBusy(false);}
   }
   async function prepareSmartIrrigation() {
-    const n=++siGeneration.current;setSiBusy(true);setSiPreview(null);setError("");
+    const n=++siGeneration.current;setSiBusy(true);setSiPreview(null);setSiConfirmed(false);setError("");
     try {const r=await apiRequest(`/api/irrigation/smart-irrigation?day=${day.day}`);if(n===siGeneration.current)setSiPreview(r);}
     catch(e){if(n===siGeneration.current)setError(e.message);}finally{if(n===siGeneration.current)setSiBusy(false);}
   }
@@ -241,7 +241,7 @@ export function IrrigationPlanner({crops,beds}) {
       {siPreview.rows.map(r=><article key={r.bed_id}><strong>Gredica {r.bed||r.bed_id} · {r.status==="draft"?"Osnutek za pregled":"Posodobitev ni pripravljena"}</strong>
         {r.status==="draft"?<><p>{r.crop} · faza predloga: {r.stage==="initial"?"začetna":r.stage==="mid"?"polna rast":"pozna"} · Kc {r.multiplier} · {r.action.target.entity_id}</p><p><strong>Pred pošiljanjem ročno potrdi fazo rasti in Kc.</strong></p><textarea aria-label={`Smart Irrigation Kc za gredico ${r.bed||r.bed_id}`} readOnly rows={6} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
       </article>)}</div>}
-    {siPreview?.rows?.some(r=>r.status==="draft")&&<button type="button" className="primary-button" disabled={!haStatus?.configured||haBusy||dirty} onClick={sendSmartIrrigation}>POŠLJI Kc V HOME ASSISTANT</button>}
+    {siPreview?.rows?.some(r=>r.status==="draft")&&<><label><input type="checkbox" checked={siConfirmed} onChange={e=>setSiConfirmed(e.target.checked)}/> Potrjujem, da sem preveril aktivno kulturo, fazo rasti, Kc in HA cono za vse prikazane gredice.</label><button type="button" className="primary-button" disabled={!siConfirmed||!haStatus?.configured||haBusy||dirty} onClick={sendSmartIrrigation}>POŠLJI Kc V HOME ASSISTANT</button></>}
     <small>ETc = ET₀ × Kc. Voda v koreninah je ocenjena iz poljske kapacitete, točke venenja in globine korenin. Izračun ne modelira kapilarnega dotoka, odtoka ali rasti korenin. GrowMaster pošlje samo posodobitve Kc; ventilov ne odpira.</small>
   </section>;
 }
