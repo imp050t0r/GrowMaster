@@ -420,6 +420,18 @@ def save_water_ledger(payload: WaterLedgerInput, db: Session = Depends(get_db)):
             "warning": "To potrdiš samo po preverbi dejanskega dežja in izvedenega zalivanja."}
 
 
+def planting_growth_stage(planting, day: date):
+    """Estimate crop coefficient stage from this planting’s recorded growth cycle."""
+    harvest_target = planting.predicted_harvest_start or planting.expected_harvest_date
+    cycle_days = (harvest_target - planting.sowing_date).days
+    if cycle_days <= 0:
+        return None, None, None
+    elapsed_days = (day - planting.sowing_date).days
+    progress = max(0.0, min(1.0, elapsed_days / cycle_days))
+    stage = "initial" if progress < 0.2 else "mid" if progress < 0.8 else "late"
+    source = "predicted_harvest_start" if planting.predicted_harvest_start else "expected_harvest_date"
+    return stage, round(progress * 100, 1), source
+
 @router.get("/daily-readiness")
 def daily_readiness(day: date, db: Session = Depends(get_db)):
     """Summarize every active bed and identify missing data before any HA write."""
@@ -588,12 +600,15 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             else None
         )
         days_after_sowing = (day - planting.sowing_date).days
-        suggested_stage = "initial" if days_after_sowing < 20 else "mid"
+        suggested_stage, stage_progress_pct, stage_source = planting_growth_stage(planting, day)
+        if suggested_stage is None:
+            reasons.append("Datum setve in napoved pobiranja ne določata veljavnega rastnega cikla.")
         row_data = {"bed_id": bed.id, "bed": bed.name, "area_m2": bed.area_m2,
                      "crop_id": planting.crop_id, "crop": planting.crop.name,
                      "variety": planting.variety.name if planting.variety else None,
                      "sowing_date": str(planting.sowing_date), "days_after_sowing": days_after_sowing,
-                     "suggested_stage": suggested_stage, "stage_requires_confirmation": True,
+                     "suggested_stage": suggested_stage, "stage_progress_pct": stage_progress_pct,
+                     "stage_source": stage_source, "stage_requires_confirmation": False,
                      "planting_id": planting.id, "zone_entity": profile.smart_irrigation_entity if profile else None,
                      "mode": profile.mode if profile else None,
                      "wh51_group": profile.wh51_group if profile else None,
@@ -768,19 +783,11 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
         reasons = item["reasons"]
         days_after_sowing = (day - planting.sowing_date).days
         item["days_after_sowing"] = days_after_sowing
-        harvest_target = planting.predicted_harvest_start or planting.expected_harvest_date
-        cycle_days = (harvest_target - planting.sowing_date).days
-        if cycle_days <= 0:
+        stage, stage_progress_pct, stage_source = planting_growth_stage(planting, day)
+        item["stage_progress_pct"] = stage_progress_pct
+        item["stage_source"] = stage_source
+        if stage is None:
             reasons.append("Datum setve in napoved pobiranja ne določata veljavnega rastnega cikla.")
-            stage = None
-        else:
-            progress = max(0.0, min(1.0, days_after_sowing / cycle_days))
-            item["stage_progress_pct"] = round(progress * 100, 1)
-            item["stage_source"] = ("predicted_harvest_start" if planting.predicted_harvest_start
-                                    else "expected_harvest_date")
-            # Estimate the FAO-style three Kc periods from the recorded planting
-            # cycle: initial 0–20%, mid 20–80%, late 80% until harvest.
-            stage = "initial" if progress < 0.2 else "mid" if progress < 0.8 else "late"
         item["stage"] = stage
         if day != date.today():
             reasons.append("Kc lahko pripraviš samo za današnji pregled.")
