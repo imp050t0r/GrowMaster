@@ -1,7 +1,9 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.25.11";
+export const APP_VERSION = "1.25.12";
+
+// Release 1.25.12 adds live daily Smart Irrigation review with an estimated water volume.
 
 // Release 1.25.3 adds weekly workload forecasts and partial historical task-hour estimates.
 // Release 1.24.37 adds explicitly confirmed per-plan historical DTM suggestions.
