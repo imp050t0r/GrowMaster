@@ -436,7 +436,8 @@ def planting_growth_stage(planting, day: date):
 def daily_readiness(day: date, db: Session = Depends(get_db)):
     """Summarize every active bed and identify missing data before any HA write."""
     beds = list(db.scalars(select(Bed).where(Bed.farm_id == FARM_ID).order_by(Bed.name)))
-    crop_profiles = {row.crop_id for row in db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))}
+    crop_profiles = {row.crop_id: CropProfile.model_validate_json(row.parameters) for row in
+                     db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))}
     bed_profiles = {row.bed_id: BedProfile.model_validate_json(row.parameters) for row in
                     db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))}
     station_beds = {}
@@ -533,6 +534,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             if report and report.get("inputs", {}).get("soil_moisture_pct") is None:
                 reasons.append("Dnevni izračun v načinu s senzorjem nima shranjene meritve vlage.")
         smart_irrigation_seconds = None
+        smart_irrigation_multiplier_current = None
         smart_action = None
         if profile and profile.mode == "smart_irrigation" and profile.smart_irrigation_entity:
             base_url, token = home_assistant_config()
@@ -549,6 +551,11 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                         reasons.append("Smart Irrigation entity ni dosegljiv v Home Assistantu.")
                     else:
                         smart_irrigation_seconds = float(si_data.get("state"))
+                        raw_multiplier = si_data.get("attributes", {}).get("multiplier")
+                        if raw_multiplier is not None:
+                            smart_irrigation_multiplier_current = float(raw_multiplier)
+                            if not math.isfinite(smart_irrigation_multiplier_current) or not 0 <= smart_irrigation_multiplier_current <= 2:
+                                raise ValueError("Smart Irrigation Kc ni veljaven.")
                         si_updated = datetime.fromisoformat(si_data.get("attributes", {}).get("last_calculated") or si_data["last_updated"])
                         si_age = (datetime.now(timezone.utc) - si_updated.astimezone(timezone.utc)).total_seconds()
                         if not math.isfinite(smart_irrigation_seconds) or smart_irrigation_seconds < 0:
@@ -603,6 +610,19 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
         suggested_stage, stage_progress_pct, stage_source = planting_growth_stage(planting, day)
         if suggested_stage is None:
             reasons.append("Datum setve in napoved pobiranja ne določata veljavnega rastnega cikla.")
+        crop_profile = crop_profiles.get(planting.crop_id)
+        kc_expected = getattr(crop_profile, "kc_" + suggested_stage) if crop_profile and suggested_stage else None
+        kc_sync_status = "not_applicable"
+        if profile and profile.mode == "smart_irrigation":
+            if kc_expected is None or smart_irrigation_multiplier_current is None:
+                kc_sync_status = "unknown"
+                reasons.append("Usklajenosti Kc ni mogoče preveriti; manjka profil Kc ali atribut multiplier v Smart Irrigation.")
+            elif math.isclose(smart_irrigation_multiplier_current, kc_expected, rel_tol=0, abs_tol=0.001):
+                kc_sync_status = "matched"
+            else:
+                kc_sync_status = "needs_update"
+                reasons.append(f"Kc v Smart Irrigation je {smart_irrigation_multiplier_current:g}, za aktivno kulturo in fazo pa GrowMaster izračuna {kc_expected:g}; posodobi Kc in počakaj na nov izračun cone.")
+                smart_action = None
         row_data = {"bed_id": bed.id, "bed": bed.name, "area_m2": bed.area_m2,
                      "crop_id": planting.crop_id, "crop": planting.crop.name,
                      "variety": planting.variety.name if planting.variety else None,
@@ -615,10 +635,13 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                      "wh51_group_name": sensor_group.name if sensor_group else None,
                      "sensor_group_beds": sum(1 for other in bed_profiles.values() if other.mode == "soil_sensor" and other.wh51_group == (profile.wh51_group if profile else None)) if profile and profile.wh51_group else 0,
                      "smart_irrigation_seconds": smart_irrigation_seconds,
+                     "smart_irrigation_multiplier": smart_irrigation_multiplier_current,
+                     "kc_expected": kc_expected, "kc_sync_status": kc_sync_status,
                      "estimated_litres": smart_irrigation_litres,
                      "action": smart_action,
                      "decision": (("irrigate" if report_status == "irrigate" else "hold" if report_status == "hold" else "review")
                                   if profile and profile.mode == "soil_sensor" else
+                                  "review" if kc_sync_status in {"needs_update", "unknown"} else
                                   "irrigate" if smart_irrigation_seconds and smart_irrigation_seconds > 0 else
                                   "hold" if smart_irrigation_seconds == 0 else "review"),
                      "irrigation_zone": profile.irrigation_zone if profile else None,
