@@ -740,3 +740,36 @@ def test_automatic_tick_never_runs_when_disabled(irrigation,monkeypatch,tmp_path
     monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args: pytest.fail("disabled automation must not inspect or execute a plan"))
     result=irrigation_routes.automatic_irrigation_tick(db)
     assert result["status"]=="disabled_or_not_due" and result["started"]==0
+
+
+def test_automatic_irrigation_runs_ready_station_once_per_day(irrigation,monkeypatch,tmp_path):
+    db,client,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    client.put("/api/irrigation/automatic-irrigation",
+               json={"enabled":True,"run_after_local_time":"00:00"})
+    monkeypatch.setattr(irrigation_routes,"home_assistant_config",lambda:("http://ha.local:8123","test-token"))
+    monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args:{
+        "rows":[{"mode":"smart_irrigation","ready":True,"decision":"irrigate",
+                 "kc_sync_status":"matched","zone_entity":"sensor.smart_irrigation_a1",
+                 "action":{"target":{"entity_id":"switch.opensprinkler_station_1"},
+                           "data":{"run_seconds":123,"queue_option":"append"}}}],
+        "valve_groups":[]})
+    calls=[]
+    class Response:
+        status_code=200
+    class Client:
+        def __init__(self,**kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def post(self,url,headers,json):
+            calls.append((url,headers,json))
+            return Response()
+    monkeypatch.setattr(irrigation_routes.httpx,"Client",Client)
+    first=irrigation_routes.automatic_irrigation_tick(db)
+    second=irrigation_routes.automatic_irrigation_tick(db)
+    assert first["started"]==1 and second["started"]==0
+    assert len(calls)==1
+    assert calls[0][0]=="http://ha.local:8123/api/services/opensprinkler/run_station"
+    assert calls[0][1]["Authorization"]=="Bearer test-token"
+    assert calls[0][2]=={"entity_id":"switch.opensprinkler_station_1",
+                         "run_seconds":123,"queue_option":"append"}
