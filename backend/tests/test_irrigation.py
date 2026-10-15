@@ -333,12 +333,30 @@ def test_smart_irrigation_kc_draft_uses_active_crop_without_saved_daily_report(i
     assert len(result["rows"])==1
     row=result["rows"][0]
     assert row["crop"]=="Solata" and row["stage"]=="mid"
-    assert row["stage_requires_confirmation"] is True
+    assert row["stage_requires_confirmation"] is False
+    assert row["stage_progress_pct"]==62.5
+    assert row["stage_source"]=="expected_harvest_date"
     assert row["status"]=="draft" and row["multiplier"]==1
     assert row["action"]["target"]["entity_id"]=="sensor.smart_irrigation_a1"
     assert "new_multiplier_value: 1" in row["yaml"]
     assert "shrani" not in row["yaml"]
     assert not db.scalar(select(IrrigationDailyReport))
+
+@pytest.mark.parametrize("elapsed,expected_stage,expected_kc",[(4,"initial",0.5),(20,"mid",1),(34,"late",0.8)])
+def test_smart_irrigation_growth_stage_uses_planting_cycle(irrigation,elapsed,expected_stage,expected_kc):
+    db,client,_=irrigation
+    db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,
+                   days_summer=35,days_autumn=45,days_winter=55))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,
+                    sowing_date=date.today()-timedelta(days=elapsed),
+                    expected_harvest_date=date.today()+timedelta(days=40-elapsed),status="active"))
+    db.commit()
+    client.put("/api/irrigation/beds/1",json={**BP,"mode":"smart_irrigation",
+        "smart_irrigation_entity":"sensor.smart_irrigation_a1"})
+    row=client.get(f"/api/irrigation/smart-irrigation?day={date.today()}").json()["rows"][0]
+    assert row["stage"]==expected_stage
+    assert row["multiplier"]==expected_kc
+    assert row["stage_progress_pct"]==pytest.approx(elapsed/40*100)
 
 def test_water_ledger_carries_depletion_between_days_and_validates_sequence(irrigation):
     _,c,_=irrigation
@@ -395,8 +413,8 @@ def test_smart_irrigation_draft_uses_current_crop_and_does_not_run_valves(irriga
     db,c,_=irrigation
     db.add(Variety(id=1,crop_id=1,name="Testna sorta",days_to_harvest=40,days_spring=40,
                    days_summer=35,days_autumn=45,days_winter=55))
-    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
-                    expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=5),
+                    expected_harvest_date=date.today()+timedelta(days=35),status="active"))
     db.commit()
     assert c.put("/api/irrigation/beds/1",json={**BP,"smart_irrigation_entity":"sensor.smart_irrigation_a1"}).status_code==200
     c.put("/api/irrigation/daily",json=payload(stage="initial"))
@@ -591,8 +609,8 @@ def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypat
     db,c,_=irrigation
     db.add(Variety(id=1,crop_id=1,name="Testna sorta",days_to_harvest=40,days_spring=40,
                    days_summer=35,days_autumn=45,days_winter=55))
-    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
-                    expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=5),
+                    expected_harvest_date=date.today()+timedelta(days=35),status="active"))
     db.commit()
     monkeypatch.setenv("HOME_ASSISTANT_URL","http://ha.local:8123")
     monkeypatch.setenv("HOME_ASSISTANT_TOKEN","secret-value")
