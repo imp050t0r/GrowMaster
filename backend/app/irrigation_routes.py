@@ -732,93 +732,83 @@ def opensprinkler_preview(day: date, db: Session = Depends(get_db)):
 
 @router.get("/smart-irrigation")
 def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
-    """Draft crop Kc updates for current beds; never calculate or start a run."""
+    """Draft current-crop Kc updates; never calculate or start a run."""
     now = datetime.now(timezone.utc)
+    beds = {bed.id: bed for bed in db.scalars(select(Bed).where(Bed.farm_id == FARM_ID))}
+    crop_profiles = {row.crop_id: CropProfile.model_validate_json(row.parameters) for row in
+                     db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))}
+    bed_profiles = {row.bed_id: BedProfile.model_validate_json(row.parameters) for row in
+                    db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))}
     mapped_zones = {}
-    for row in db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID)):
-        profile = BedProfile.model_validate_json(row.parameters)
+    for bed_id, profile in bed_profiles.items():
         if profile.smart_irrigation_entity:
-            mapped_zones.setdefault(profile.smart_irrigation_entity, []).append(row.bed_id)
+            mapped_zones.setdefault(profile.smart_irrigation_entity, []).append(bed_id)
+
+    active_plantings = db.scalars(
+        select(Planting).where(Planting.farm_id == FARM_ID, Planting.status == "active")
+        .order_by(Planting.created_at.desc())
+    ).all()
+    latest_by_bed = {}
+    for planting in active_plantings:
+        latest_by_bed.setdefault(planting.bed_id, planting)
 
     rows = []
-    saved_reports = db.scalars(
-        select(IrrigationDailyReport)
-        .where(IrrigationDailyReport.farm_id == FARM_ID, IrrigationDailyReport.day == day)
-        .order_by(IrrigationDailyReport.bed_id)
-    )
-    for stored in saved_reports:
-        snapshot = json.loads(stored.report)
-        item = {"bed_id": stored.bed_id, "bed": snapshot.get("bed"), "status": "blocked",
-                "reasons": [], "action": None, "yaml": None}
+    for bed_id, planting in latest_by_bed.items():
+        bed = beds.get(bed_id)
+        profile = bed_profiles.get(bed_id)
+        crop_profile = crop_profiles.get(planting.crop_id)
+        item = {
+            "bed_id": bed_id, "bed": bed.name if bed else None,
+            "crop_id": planting.crop_id, "crop": planting.crop.name,
+            "variety": planting.variety.name if planting.variety else None,
+            "sowing_date": str(planting.sowing_date), "status": "blocked",
+            "stage": None, "stage_requires_confirmation": True,
+            "multiplier": None, "action": None, "yaml": None, "reasons": [],
+        }
         reasons = item["reasons"]
-        try:
-            stamp = datetime.fromisoformat(snapshot["calculated_at"])
-            if day != date.today():
-                reasons.append("Smart Irrigation-posodobitev je dovoljena samo za današnji izračun.")
-            if stamp.utcoffset() is None or not timedelta(0) <= now - stamp <= timedelta(hours=6):
-                reasons.append("Dnevni izračun ni svež (največ 6 ur) ali ima neveljaven čas.")
-
-            payload = DayInput.model_validate(snapshot["inputs"])
-            if payload.bed_id != stored.bed_id or payload.day != stored.day:
-                raise ValueError("Dnevni posnetek se ne ujema z gredico.")
-            current = report_for(db, payload)
-            if "crop_profile" not in current or "bed_profile" not in current:
-                reasons.append("Manjka shranjen profil kulture ali grede.")
-                current_crop_profile = None
-                current_bed_profile = None
-            else:
-                current_crop_profile = CropProfile.model_validate(current["crop_profile"])
-                current_bed_profile = BedProfile.model_validate(current["bed_profile"])
-                saved_crop_profile = CropProfile.model_validate(snapshot.get("crop_profile", {}))
-                saved_bed_profile = BedProfile.model_validate(snapshot.get("bed_profile", {}))
-                if current_crop_profile != saved_crop_profile or current_bed_profile != saved_bed_profile:
-                    reasons.append("Profil se je spremenil; ponovno izračunaj in shrani današnji dan.")
-                if current["area_m2"] != snapshot.get("area_m2"):
-                    reasons.append("Površina grede se je spremenila; ponovno izračunaj in shrani današnji dan.")
-                if current["status"] not in {"irrigate", "hold"}:
-                    reasons.append("Vodna bilanca zahteva pregled ali nima dovolj podatkov.")
-
-            active_planting = db.scalar(
-                select(Planting)
-                .where(Planting.farm_id == FARM_ID, Planting.bed_id == stored.bed_id, Planting.status == "active")
-                .order_by(Planting.created_at.desc())
-                .limit(1)
+        days_after_sowing = (day - planting.sowing_date).days
+        item["days_after_sowing"] = days_after_sowing
+        # This is only a starting suggestion. Crop-specific growth stages must be
+        # checked by the user before sending the Kc update to Home Assistant.
+        stage = "initial" if days_after_sowing < 20 else "mid"
+        item["stage"] = stage
+        if day != date.today():
+            reasons.append("Kc lahko pripraviš samo za današnji pregled.")
+        if days_after_sowing < 0:
+            reasons.append("Datum setve je po izbranem dnevu; preveri zasaditev.")
+        if bed is None or profile is None or crop_profile is None:
+            reasons.append("Manjka gredica, profil grede ali profil aktivne kulture.")
+        zone_entity = profile.smart_irrigation_entity if profile else None
+        if profile and profile.mode != "smart_irrigation":
+            reasons.append("Gredica je nastavljena na način s talnim senzorjem.")
+        if not zone_entity:
+            reasons.append("Gredica nima povezane Smart Irrigation cone.")
+        elif len(mapped_zones.get(zone_entity, [])) > 1:
+            reasons.append("Ista Smart Irrigation cona je povezana z več gredicami; Kc mora biti določen enkrat na cono.")
+        multiplier = getattr(crop_profile, "kc_" + stage) if crop_profile else None
+        if multiplier is None or not math.isfinite(multiplier) or not 0 <= multiplier <= 2:
+            reasons.append("Koeficient Kc ni veljaven.")
+        if not reasons:
+            action = {
+                "action": "smart_irrigation.set_multiplier",
+                "target": {"entity_id": zone_entity},
+                "data": {"new_multiplier_value": multiplier},
+            }
+            item.update(
+                status="draft", action=action, multiplier=multiplier,
+                yaml=("action: smart_irrigation.set_multiplier\\n"
+                      f"target:\\n  entity_id: {zone_entity}\\n"
+                      f"data:\\n  new_multiplier_value: {multiplier}\\n"),
             )
-            if active_planting is None or active_planting.crop_id != payload.crop_id:
-                reasons.append("Zabeležena kultura ni več trenutna aktivna zasaditev te gredice.")
-
-            zone_entity = current_bed_profile.smart_irrigation_entity if current_bed_profile else None
-            if not zone_entity:
-                reasons.append("Gredica nima povezane Smart Irrigation cone.")
-            elif len(mapped_zones.get(zone_entity, [])) > 1:
-                reasons.append("Ista Smart Irrigation cona je povezana z več gredicami; skupne cone še niso podprte.")
-
-            multiplier = current.get("kc")
-            if multiplier is None or not math.isfinite(multiplier) or not 0 <= multiplier <= 2:
-                reasons.append("Koeficient Kc ni veljaven.")
-            if not reasons:
-                action = {
-                    "action": "smart_irrigation.set_multiplier",
-                    "target": {"entity_id": zone_entity},
-                    "data": {"new_multiplier_value": multiplier},
-                }
-                item.update(
-                    status="draft", action=action, multiplier=multiplier,
-                    calculated_at=snapshot["calculated_at"],
-                    yaml=("action: smart_irrigation.set_multiplier\n"
-                          f"target:\n  entity_id: {zone_entity}\n"
-                          f"data:\n  new_multiplier_value: {multiplier}\n"),
-                )
-        except (ValueError, KeyError, TypeError, HTTPException):
-            reasons.append("Dnevni izračun ali profil ni več veljaven; preveri podatke in shrani izračun znova.")
         rows.append(item)
 
     return {
         "day": str(day), "automatic_execution": False, "requires_manual_review": True,
         "rows": rows,
-        "note": "Osnutki posodobijo samo Kc (multiplikator) Smart Irrigation cone. Ne izračunajo časa, ne sprožijo namakanja in ne pošljejo ničesar v Home Assistant. Pred uporabo preveri kulturo, fazo, cono in Kc.",
+        "note": "Osnutki Kc izhajajo iz trenutno aktivne kulture in profila kulture, ne iz shranjenega dnevnega izračuna. "
+                "Faza je samo predlog po dnevih od setve; pred pošiljanjem preveri dejansko fazo in Kc. "
+                "Pošlje se samo Kc. GrowMaster ne izračuna časa in ne sproži namakanja.",
     }
-
 
 def home_assistant_config():
     """Read the encrypted per-installation setting, with environment fallback."""
