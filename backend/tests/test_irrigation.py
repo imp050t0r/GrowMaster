@@ -747,10 +747,13 @@ def test_automatic_irrigation_runs_ready_station_once_per_day(irrigation,monkeyp
     monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
     client.put("/api/irrigation/automatic-irrigation",
                json={"enabled":True,"run_after_local_time":"00:00"})
+    enabled_at=datetime.fromisoformat(irrigation_routes._read_automatic_state()["enabled_at"])
+    fresh_calculation=(enabled_at+timedelta(seconds=1)).isoformat()
     monkeypatch.setattr(irrigation_routes,"home_assistant_config",lambda:("http://ha.local:8123","test-token"))
     monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args:{
         "rows":[{"mode":"smart_irrigation","ready":True,"decision":"irrigate",
                  "kc_sync_status":"matched","zone_entity":"sensor.smart_irrigation_a1",
+                 "smart_irrigation_calculated_at":fresh_calculation,
                  "action":{"target":{"entity_id":"switch.opensprinkler_station_1"},
                            "data":{"run_seconds":123,"queue_option":"append"}}}],
         "valve_groups":[]})
