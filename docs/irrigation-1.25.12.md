@@ -14,7 +14,7 @@ GrowMaster v pregledu prikaže priporočilo Smart Irrigation:
 
 Za oceno litrov mora biti nastavljen skupni pretok vseh kapljičnih cevi na gredici. Pretok lahko vneseš neposredno ali ga oceniš iz skupne dolžine cevi, razmika med kapljači in pretoka enega kapljača. Ocena velja le toliko, kolikor so pravilni ti podatki in tlak med delovanjem.
 
-Smart Irrigation še naprej vodi svojo vremensko bilanco in izračun trajanja. GrowMaster prikaže trenutno aktivno kulturo na gredici, vendar to samo po sebi ne spremeni Kc v Home Assistantu. Če želiš, da Smart Irrigation uporabi Kc za trenutno kulturo in fazo, uporabi ločeno pripravo in pošiljanje Kc ter pred pošiljanjem preglej osnutek.
+Smart Irrigation še naprej vodi svojo vremensko bilanco in izračun trajanja. GrowMaster pripravi Kc-osnutek za trenutno aktivno kulturo na vsaki gredici, tudi če dnevnega izračuna nisi shranil. Faza je samo grob predlog glede na dneve od setve (začetna do 19. dne, nato polna rast); pred pošiljanjem jo ročno preveri in primerjaj Kc s stanjem rastline. Po potrditvi lahko GrowMaster pošlje Kc v Smart Irrigation. To ne sproži izračuna ali zalivanja.
 
 ## Gredice z WH51
 
