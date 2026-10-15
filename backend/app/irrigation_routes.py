@@ -206,6 +206,7 @@ def automatic_irrigation_tick(db: Session):
             zone_counts[zone] = zone_counts.get(zone, 0) + 1
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "matched" and zone:
             state.setdefault("kc_pending", {}).pop(zone, None)
+    waiting_for_kc = False
     for row in readiness["rows"]:
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "needs_update":
             zone = row.get("zone_entity")
@@ -217,8 +218,9 @@ def automatic_irrigation_tick(db: Session):
                 except (KeyError, TypeError, ValueError):
                     pending_age = None
                 if pending and pending.get("value") == expected and pending_age is not None and 0 <= pending_age < 6 * 3600:
-                    return {"status": "kc_updated_waiting_for_recalculation", "updated_zones": 0, "started": 0}
-                kc_updates[zone] = expected
+                    waiting_for_kc = True
+                else:
+                    kc_updates[zone] = expected
     if kc_updates:
         with httpx.Client(timeout=10.0, follow_redirects=False) as client:
             for zone, multiplier in kc_updates.items():
@@ -229,6 +231,8 @@ def automatic_irrigation_tick(db: Session):
                 state.setdefault("kc_pending", {})[zone] = {"value": multiplier, "sent_at": local_now.isoformat()}
                 _write_automatic_state(state)
         return {"status": "kc_updated_waiting_for_recalculation", "updated_zones": len(kc_updates), "started": 0}
+    if waiting_for_kc:
+        return {"status": "kc_updated_waiting_for_recalculation", "updated_zones": 0, "started": 0}
 
     actions = {}
     for row in readiness["rows"]:
