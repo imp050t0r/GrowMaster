@@ -732,3 +732,11 @@ def test_automatic_irrigation_time_must_be_valid(irrigation):
     _,client,_=irrigation
     assert client.put("/api/irrigation/automatic-irrigation",
                       json={"enabled":True,"run_after_local_time":"25:70"}).status_code==422
+
+
+def test_automatic_tick_never_runs_when_disabled(irrigation,monkeypatch,tmp_path):
+    db,_,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args: pytest.fail("disabled automation must not inspect or execute a plan"))
+    result=irrigation_routes.automatic_irrigation_tick(db)
+    assert result["status"]=="disabled_or_not_due" and result["started"]==0
