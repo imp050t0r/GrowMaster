@@ -1,0 +1,35 @@
+# GrowMaster 1.25.12 — dnevni pregled Smart Irrigation
+
+V razdelku **Več → Namakanje** se dnevni pregled za aktivne gredice samodejno osveži ob odprtju, ob vrnitvi v aplikacijo in vsakih 15 minut.
+
+## Gredice brez WH51
+
+Za profil grede izberi **Brez talnega senzorja — Smart Irrigation** in vnesi entity ID trajanja cone iz Home Assistanta, na primer `sensor.smart_irrigation_greda_1`. Home Assistant mora vrniti številsko stanje v sekundah; GrowMaster preveri, da je izračun star največ šest ur.
+
+GrowMaster v pregledu prikaže priporočilo Smart Irrigation:
+
+- trajanje 0 sekund pomeni, da zalivanje ni priporočeno;
+- trajanje nad 0 sekund pomeni, da Smart Irrigation priporoča zalivanje;
+- količina vode je ocenjena kot `pretok grede (l/min) × trajanje (s) ÷ 60`.
+
+Za oceno litrov mora biti nastavljen skupni pretok vseh kapljičnih cevi na gredici. Pretok lahko vneseš neposredno ali ga oceniš iz skupne dolžine cevi, razmika med kapljači in pretoka enega kapljača. Ocena velja le toliko, kolikor so pravilni ti podatki in tlak med delovanjem.
+
+Smart Irrigation še naprej vodi svojo vremensko bilanco in izračun trajanja. GrowMaster prikaže trenutno aktivno kulturo na gredici, vendar to samo po sebi ne spremeni Kc v Home Assistantu. Če želiš, da Smart Irrigation uporabi Kc za trenutno kulturo in fazo, uporabi ločeno pripravo in pošiljanje Kc ter pred pošiljanjem preglej osnutek.
+
+## Gredice z WH51
+
+WH51 način ostaja ločen. Gredico ročno dodeli eni od največ 16 skupin senzorjev; isti senzor lahko predstavlja več gredic. Gredice brez senzorja pustijo skupino WH51 prazno in uporabljajo Smart Irrigation.
+
+## Ventili in skupne cone
+
+Dnevni pregled lahko pripravi OpenSprinkler osnutek. GrowMaster ne pošlje ukaza za zagon ventila in ne označi zalivanja kot izvedenega. Osnutek pred uporabo preveri in zaženi ročno v Home Assistantu.
+
+Pri skupnem ventilu morajo biti vse nanj vezane aktivne gredice nastavljene kot skupinske. Predlog je blokiran, če katera gredica ni pripravljena ali če bi skupni čas presegel varno omejitev ene od njih. Ocena litrov za vsako gredico uporablja njen vpisani pretok.
+
+## Omejitve
+
+- GrowMaster ne meri dejanskega pretoka vode.
+- Smart Irrigation mora imeti pravilno konfigurirano vremensko bilanco, urnik, Kc in cono.
+- Če senzor trajanja ni svež, nima enote `seconds` ali ga Home Assistant ne doseže, pregled zahteva preverjanje.
+- Ročni izračun vodne bilance GrowMasterja z ET₀, dežjem in začetnim primanjkljajem je ločena funkcija.
+- Ventili se ne odpirajo samodejno.
