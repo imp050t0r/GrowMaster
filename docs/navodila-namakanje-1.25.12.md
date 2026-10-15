@@ -66,6 +66,7 @@ Ta pregled ne zahteva WH51 ali ročno shranjenega GrowMaster dnevnega izračuna.
 - Trajanje nad **0 sekund** pomeni, da Smart Irrigation predlaga zalivanje.
 - Za oceno vode v litrih GrowMaster pomnoži trajanje v sekundah s pretokom grede v l/min in deli s 60.
 - Če pretok ni nastavljen, GrowMaster prikaže trajanje, količine v litrih pa ne more oceniti.
+- Dnevni pregled primerja Kc aktivne kulture/faze s trenutnim atributom `multiplier` cone. Če se ne ujemata, označi gredico za posodobitev Kc in ne pripravi osnutka OpenSprinkler za to gredico.
 
 Smart Irrigation še naprej računa svojo vremensko bilanco in trajanje. GrowMaster lahko pripravi Kc-osnutek iz trenutne aktivne kulture brez WH51 in brez shranjenega dnevnega izračuna. GrowMaster določi fazo samodejno iz datuma setve in pričakovanega datuma pobiranja: začetna faza do 20 % cikla, polna rast od 20 do 80 %, pozna faza od 80 % do pobiranja. Če je dinamična napoved začetka pobiranja na voljo, jo uporabi namesto pričakovanega datuma. V pregledu prikaže fazo in napredek cikla.
 
