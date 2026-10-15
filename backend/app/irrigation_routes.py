@@ -200,6 +200,7 @@ def automatic_irrigation_tick(db: Session):
     # Synchronize changed crop Kc first. Never water in the same pass as a Kc change.
     kc_updates = {}
     zone_counts = {}
+    waiting_for_kc = False
     for row in readiness["rows"]:
         zone = row.get("zone_entity")
         if zone and row.get("mode") == "smart_irrigation":
@@ -217,7 +218,6 @@ def automatic_irrigation_tick(db: Session):
                     waiting_for_kc = True
                     continue
                 state["kc_pending"].pop(zone, None)
-    waiting_for_kc = False
     for row in readiness["rows"]:
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "needs_update":
             zone = row.get("zone_entity")
