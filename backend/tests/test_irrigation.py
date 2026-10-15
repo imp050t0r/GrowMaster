@@ -773,3 +773,26 @@ def test_automatic_irrigation_runs_ready_station_once_per_day(irrigation,monkeyp
     assert calls[0][1]["Authorization"]=="Bearer test-token"
     assert calls[0][2]=={"entity_id":"switch.opensprinkler_station_1",
                          "run_seconds":123,"queue_option":"append"}
+
+
+def test_automatic_irrigation_waits_for_post_kc_recalculation(irrigation,monkeypatch,tmp_path):
+    db,client,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    client.put("/api/irrigation/automatic-irrigation",
+               json={"enabled":True,"run_after_local_time":"00:00"})
+    zone="sensor.smart_irrigation_a1"
+    sent_at=datetime.now(timezone.utc)-timedelta(minutes=2)
+    irrigation_routes._write_automatic_state({
+        "enabled":True,"run_after_local_time":"00:00","runs":{},
+        "kc_pending":{zone:{"value":1.0,"sent_at":sent_at.isoformat()}}})
+    monkeypatch.setattr(irrigation_routes,"home_assistant_config",lambda:("http://ha.local:8123","test-token"))
+    monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args:{
+        "rows":[{"mode":"smart_irrigation","ready":True,"decision":"irrigate",
+                 "kc_sync_status":"matched","zone_entity":zone,
+                 "smart_irrigation_calculated_at":(sent_at-timedelta(minutes=1)).isoformat(),
+                 "action":{"target":{"entity_id":"switch.opensprinkler_station_1"},
+                           "data":{"run_seconds":123,"queue_option":"append"}}}],
+        "valve_groups":[]})
+    result=irrigation_routes.automatic_irrigation_tick(db)
+    assert result["status"]=="kc_updated_waiting_for_recalculation"
+    assert result["started"]==0
