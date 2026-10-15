@@ -82,7 +82,7 @@ Dnevni pregled lahko pripravi OpenSprinkler osnutek, vendar ventila ne odpre. Os
 
 1. Klikni **PRIPRAVI Kc ZA SMART IRRIGATION**. GrowMaster uporabi trenutno aktivno kulturo in njen shranjeni profil; dnevni izračun ni potreben.
 2. Preglej vsako pripravljeno vrstico, kulturo, predlagano fazo, Kc in entity ID cone. Pred pošiljanjem ročno potrdi fazo rastline. Če se karkoli ne ujema, ne pošiljaj; popravi aktivno zasaditev ali profil kulture in pripravi osnutek znova.
-3. Ko si pregledal osnutke, klikni **POŠLJI Kc V HOME ASSISTANT**.
+3. Označi potrditev, da si pregledal kulturo, fazo, Kc in cono za vse prikazane gredice. Šele nato klikni **POŠLJI Kc V HOME ASSISTANT**.
 4. Aplikacija potrdi število poslanih posodobitev Kc. Smart Irrigation še naprej izvaja svoje preračune in urnik.
 
 GrowMaster v tej različici pošilja samo Kc. Ne sproži Smart Irrigation izračuna, urnika ali OpenSprinkler ventila. Pošiljanje Kc samo po sebi ne potrjuje, da se je čas zalivanja spremenil; preveri stanje cone in urnik v Home Assistantu.
