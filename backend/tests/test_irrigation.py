@@ -638,8 +638,9 @@ def test_home_assistant_sensor_read_blocks_invalid_weather_entity(irrigation,mon
     monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs: [(None,None,None,None,("192.168.1.10",8123))])
     assert c.get("/api/irrigation/home-assistant/states").status_code==503
 
-def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypatch):
+def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypatch,tmp_path):
     db,c,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
     db.add(Variety(id=1,crop_id=1,name="Testna sorta",days_to_harvest=40,days_spring=40,
                    days_summer=35,days_autumn=45,days_winter=55))
     db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=5),
@@ -649,6 +650,7 @@ def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypat
     monkeypatch.setenv("HOME_ASSISTANT_TOKEN","secret-value")
     monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs: [(None,None,None,None,("192.168.1.10",8123))])
     c.put("/api/irrigation/beds/1",json={**BP,"smart_irrigation_entity":"sensor.smart_irrigation_a1"})
+    c.put("/api/irrigation/automatic-irrigation",json={"enabled":True,"run_after_local_time":"00:00"})
     c.put("/api/irrigation/daily",json=payload(stage="initial"))
     calls=[]
     class Response:
@@ -666,6 +668,8 @@ def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypat
     assert calls==[("http://ha.local:8123/api/services/smart_irrigation/set_multiplier",
                     {"entity_id":"sensor.smart_irrigation_a1","new_multiplier_value":0.5})]
     assert len(result["sent"])==1 and not result["automatic_execution"]
+    pending=irrigation_routes._read_automatic_state()["kc_pending"]["sensor.smart_irrigation_a1"]
+    assert pending["value"]==0.5 and pending["sent_at"]
     assert "Ventili niso bili zagnani" in result["note"]
 
 def test_farm_scope_and_unknown_crop(irrigation):
