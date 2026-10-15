@@ -284,11 +284,13 @@ async def lifespan(_: FastAPI):
     create_daily_backup_safely()
     stop_event = asyncio.Event()
     backup_task = asyncio.create_task(daily_backup_worker(stop_event))
+    from app.irrigation_routes import automatic_irrigation_worker
+    irrigation_task = asyncio.create_task(automatic_irrigation_worker(stop_event))
     try:
         yield
     finally:
         stop_event.set()
-        await backup_task
+        await asyncio.gather(backup_task, irrigation_task)
 
 
 app = FastAPI(title="GrowMaster API", version=APP_VERSION, lifespan=lifespan)

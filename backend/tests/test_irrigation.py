@@ -92,8 +92,9 @@ def test_daily_readiness_lists_active_beds_and_missing_inputs(irrigation):
     result=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()
     assert result["active_beds"]==1 and result["ready_beds"]==0 and result["needs_attention"]==1
     assert result["rows"][0]["crop"]=="Solata" and not result["rows"][0]["ready"]
-    assert result["rows"][0]["days_after_sowing"]==10 and result["rows"][0]["suggested_stage"]=="initial"
-    assert result["rows"][0]["stage_requires_confirmation"]
+    assert result["rows"][0]["days_after_sowing"]==10 and result["rows"][0]["suggested_stage"]=="mid"
+    assert result["rows"][0]["stage_progress_pct"]==25
+    assert result["rows"][0]["stage_requires_confirmation"] is False
     assert any("ni shranjenega izračuna" in reason for reason in result["rows"][0]["reasons"])
     assert not result["automatic_execution"]
 
@@ -170,7 +171,7 @@ def test_shared_valve_requires_every_active_bed_to_request_water(irrigation,monk
     class Response:
         status_code=200
         def __init__(self,value):self.value=value
-        def json(self):return {"state":str(self.value),"attributes":{"unit_of_measurement":"seconds","last_calculated":datetime.now(timezone.utc).isoformat()},"last_updated":datetime.now(timezone.utc).isoformat()}
+        def json(self):return {"state":str(self.value),"attributes":{"unit_of_measurement":"seconds","last_calculated":datetime.now(timezone.utc).isoformat(),"multiplier":1.0},"last_updated":datetime.now(timezone.utc).isoformat()}
     class Client:
         def __init__(self,**kwargs):pass
         def __enter__(self):return self
@@ -265,8 +266,8 @@ def test_smart_irrigation_mode_calculates_without_wh51_or_ha(irrigation,monkeypa
     assert result["status"]=="irrigate"
     assert "wh51" not in result and result["inputs"]["soil_moisture_pct"] is None
 
-@pytest.mark.parametrize("seconds,decision,run_seconds",[(0,"hold",None),(125.2,"irrigate",126)])
-def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_draft(irrigation,monkeypatch,seconds,decision,run_seconds):
+@pytest.mark.parametrize("seconds,decision,run_seconds,estimated_litres",[(0,"hold",None,0),(125.2,"irrigate",126,4.17)])
+def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_draft(irrigation,monkeypatch,seconds,decision,run_seconds,estimated_litres):
     db,c,_=irrigation
     db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,days_summer=35,days_autumn=45,days_winter=55))
     db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
@@ -278,7 +279,7 @@ def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_d
     monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs:[(None,None,None,None,("192.168.1.10",8123))])
     class Response:
         status_code=200
-        def json(self):return {"state":str(seconds),"attributes":{"unit_of_measurement":"seconds","last_calculated":datetime.now(timezone.utc).isoformat()},"last_updated":datetime.now(timezone.utc).isoformat()}
+        def json(self):return {"state":str(seconds),"attributes":{"unit_of_measurement":"seconds","last_calculated":datetime.now(timezone.utc).isoformat(),"multiplier":1.0},"last_updated":datetime.now(timezone.utc).isoformat()}
     class Client:
         def __init__(self,**kwargs):pass
         def __enter__(self):return self
@@ -287,11 +288,44 @@ def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_d
     monkeypatch.setattr(irrigation_routes.httpx,"Client",Client)
     result=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()["rows"][0]
     assert result["decision"]==decision and result["smart_irrigation_seconds"]==seconds
+    assert result["estimated_litres"]==estimated_litres
     if run_seconds is None:
         assert result["action"] is None
     else:
         assert result["action"]["data"]["run_seconds"]==run_seconds
         assert result["action"]["action"]=="opensprinkler.run_station"
+
+def test_daily_readiness_blocks_when_smart_irrigation_kc_is_stale(irrigation,monkeypatch):
+    db,c,_=irrigation
+    db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,
+                   days_summer=35,days_autumn=45,days_winter=55))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,
+                    sowing_date=date.today()-timedelta(days=10),
+                    expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.commit()
+    c.put("/api/irrigation/beds/1",json={**BP,"mode":"smart_irrigation",
+        "smart_irrigation_entity":"sensor.smart_irrigation_a1","opensprinkler_station_entity":"switch.station_a1"})
+    monkeypatch.setenv("HOME_ASSISTANT_URL","http://ha.local:8123")
+    monkeypatch.setenv("HOME_ASSISTANT_TOKEN","token")
+    monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs:[(None,None,None,None,("192.168.1.10",8123))])
+    class Response:
+        status_code=200
+        def json(self):return {"state":"125.2","attributes":{"unit_of_measurement":"seconds",
+            "last_calculated":datetime.now(timezone.utc).isoformat(),"multiplier":0.5},
+            "last_updated":datetime.now(timezone.utc).isoformat()}
+    class Client:
+        def __init__(self,**kwargs):pass
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def get(self,url,headers):return Response()
+    monkeypatch.setattr(irrigation_routes.httpx,"Client",Client)
+
+    row=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()["rows"][0]
+
+    assert row["kc_sync_status"]=="needs_update"
+    assert row["smart_irrigation_multiplier"]==0.5 and row["kc_expected"]==1
+    assert row["decision"]=="review" and not row["ready"] and row["action"] is None
+    assert any("posodobi Kc" in reason for reason in row["reasons"])
 
 def test_daily_readiness_blocks_if_saved_crop_differs_from_active_crop(irrigation):
     db,c,_=irrigation
@@ -313,6 +347,49 @@ def test_daily_readiness_blocks_if_saved_crop_differs_from_active_crop(irrigatio
     result=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()
     assert not result["rows"][0]["ready"]
     assert any("ne ustreza" in reason for reason in result["rows"][0]["reasons"])
+
+def test_smart_irrigation_kc_draft_uses_active_crop_without_saved_daily_report(irrigation):
+    db,client,_=irrigation
+    db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,
+                   days_summer=35,days_autumn=45,days_winter=55))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,
+                    sowing_date=date.today()-timedelta(days=25),
+                    expected_harvest_date=date.today()+timedelta(days=15),status="active"))
+    db.commit()
+    client.put("/api/irrigation/beds/1",json={**BP,"mode":"smart_irrigation",
+        "smart_irrigation_entity":"sensor.smart_irrigation_a1"})
+
+    response=client.get(f"/api/irrigation/smart-irrigation?day={date.today()}")
+
+    result=response.json()
+    assert result["automatic_execution"] is False
+    assert len(result["rows"])==1
+    row=result["rows"][0]
+    assert row["crop"]=="Solata" and row["stage"]=="mid"
+    assert row["stage_requires_confirmation"] is False
+    assert row["stage_progress_pct"]==62.5
+    assert row["stage_source"]=="expected_harvest_date"
+    assert row["status"]=="draft" and row["multiplier"]==1
+    assert row["action"]["target"]["entity_id"]=="sensor.smart_irrigation_a1"
+    assert "new_multiplier_value: 1" in row["yaml"]
+    assert "shrani" not in row["yaml"]
+    assert not db.scalar(select(IrrigationDailyReport))
+
+@pytest.mark.parametrize("elapsed,expected_stage,expected_kc",[(4,"initial",0.5),(20,"mid",1),(34,"late",0.8)])
+def test_smart_irrigation_growth_stage_uses_planting_cycle(irrigation,elapsed,expected_stage,expected_kc):
+    db,client,_=irrigation
+    db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,
+                   days_summer=35,days_autumn=45,days_winter=55))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,
+                    sowing_date=date.today()-timedelta(days=elapsed),
+                    expected_harvest_date=date.today()+timedelta(days=40-elapsed),status="active"))
+    db.commit()
+    client.put("/api/irrigation/beds/1",json={**BP,"mode":"smart_irrigation",
+        "smart_irrigation_entity":"sensor.smart_irrigation_a1"})
+    row=client.get(f"/api/irrigation/smart-irrigation?day={date.today()}").json()["rows"][0]
+    assert row["stage"]==expected_stage
+    assert row["multiplier"]==expected_kc
+    assert row["stage_progress_pct"]==pytest.approx(elapsed/40*100)
 
 def test_water_ledger_carries_depletion_between_days_and_validates_sequence(irrigation):
     _,c,_=irrigation
@@ -369,8 +446,8 @@ def test_smart_irrigation_draft_uses_current_crop_and_does_not_run_valves(irriga
     db,c,_=irrigation
     db.add(Variety(id=1,crop_id=1,name="Testna sorta",days_to_harvest=40,days_spring=40,
                    days_summer=35,days_autumn=45,days_winter=55))
-    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
-                    expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=5),
+                    expected_harvest_date=date.today()+timedelta(days=35),status="active"))
     db.commit()
     assert c.put("/api/irrigation/beds/1",json={**BP,"smart_irrigation_entity":"sensor.smart_irrigation_a1"}).status_code==200
     c.put("/api/irrigation/daily",json=payload(stage="initial"))
@@ -383,13 +460,12 @@ def test_smart_irrigation_draft_uses_current_crop_and_does_not_run_valves(irriga
     assert not result["automatic_execution"] and result["requires_manual_review"]
     assert "opensprinkler.run_station" not in row["yaml"]
 
-def test_smart_irrigation_draft_blocks_if_crop_is_not_active(irrigation):
+def test_smart_irrigation_kc_preview_ignores_beds_without_active_crop(irrigation):
     _,c,_=irrigation
     c.put("/api/irrigation/beds/1",json={**BP,"smart_irrigation_entity":"sensor.smart_irrigation_a1"})
     c.put("/api/irrigation/daily",json=payload())
-    row=c.get(f"/api/irrigation/smart-irrigation?day={date.today()}").json()["rows"][0]
-    assert row["status"]=="blocked"
-    assert any("ni več trenutna aktivna zasaditev" in reason for reason in row["reasons"])
+    result=c.get(f"/api/irrigation/smart-irrigation?day={date.today()}").json()
+    assert result["rows"]==[] and result["requires_manual_review"]
 
 def test_smart_irrigation_draft_blocks_a_zone_shared_by_multiple_beds(irrigation):
     db,c,_=irrigation
@@ -562,17 +638,19 @@ def test_home_assistant_sensor_read_blocks_invalid_weather_entity(irrigation,mon
     monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs: [(None,None,None,None,("192.168.1.10",8123))])
     assert c.get("/api/irrigation/home-assistant/states").status_code==503
 
-def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypatch):
+def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypatch,tmp_path):
     db,c,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
     db.add(Variety(id=1,crop_id=1,name="Testna sorta",days_to_harvest=40,days_spring=40,
                    days_summer=35,days_autumn=45,days_winter=55))
-    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
-                    expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=5),
+                    expected_harvest_date=date.today()+timedelta(days=35),status="active"))
     db.commit()
     monkeypatch.setenv("HOME_ASSISTANT_URL","http://ha.local:8123")
     monkeypatch.setenv("HOME_ASSISTANT_TOKEN","secret-value")
     monkeypatch.setattr(irrigation_routes.socket,"getaddrinfo",lambda *args,**kwargs: [(None,None,None,None,("192.168.1.10",8123))])
     c.put("/api/irrigation/beds/1",json={**BP,"smart_irrigation_entity":"sensor.smart_irrigation_a1"})
+    c.put("/api/irrigation/automatic-irrigation",json={"enabled":True,"run_after_local_time":"00:00"})
     c.put("/api/irrigation/daily",json=payload(stage="initial"))
     calls=[]
     class Response:
@@ -590,6 +668,8 @@ def test_home_assistant_sends_only_safe_smart_irrigation_kc(irrigation,monkeypat
     assert calls==[("http://ha.local:8123/api/services/smart_irrigation/set_multiplier",
                     {"entity_id":"sensor.smart_irrigation_a1","new_multiplier_value":0.5})]
     assert len(result["sent"])==1 and not result["automatic_execution"]
+    pending=irrigation_routes._read_automatic_state()["kc_pending"]["sensor.smart_irrigation_a1"]
+    assert pending["value"]==0.5 and pending["sent_at"]
     assert "Ventili niso bili zagnani" in result["note"]
 
 def test_farm_scope_and_unknown_crop(irrigation):
@@ -636,3 +716,90 @@ def test_water_ledger_migration_is_repeatable(irrigation):
         from app.migrations import add_irrigation_water_ledger
         add_irrigation_water_ledger(conn);add_irrigation_water_ledger(conn)
         assert "closing_depletion_mm" in {col["name"] for col in __import__("sqlalchemy").inspect(conn).get_columns("irrigation_water_ledger")}
+
+
+def test_automatic_irrigation_is_off_by_default_and_persisted(irrigation,monkeypatch,tmp_path):
+    _,client,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    initial=client.get("/api/irrigation/automatic-irrigation").json()
+    assert initial["enabled"] is False and initial["run_after_local_time"]=="07:00"
+    saved=client.put("/api/irrigation/automatic-irrigation",
+                     json={"enabled":True,"run_after_local_time":"06:45"})
+    assert saved.status_code==200 and saved.json()["enabled"] is True
+    assert client.get("/api/irrigation/automatic-irrigation").json()["run_after_local_time"]=="06:45"
+    disabled=client.put("/api/irrigation/automatic-irrigation",
+                        json={"enabled":False,"run_after_local_time":"06:45"})
+    assert disabled.status_code==200 and disabled.json()["enabled"] is False
+
+
+def test_automatic_irrigation_time_must_be_valid(irrigation):
+    _,client,_=irrigation
+    assert client.put("/api/irrigation/automatic-irrigation",
+                      json={"enabled":True,"run_after_local_time":"25:70"}).status_code==422
+
+
+def test_automatic_tick_never_runs_when_disabled(irrigation,monkeypatch,tmp_path):
+    db,_,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args: pytest.fail("disabled automation must not inspect or execute a plan"))
+    result=irrigation_routes.automatic_irrigation_tick(db)
+    assert result["status"]=="disabled_or_not_due" and result["started"]==0
+
+
+def test_automatic_irrigation_runs_ready_station_once_per_day(irrigation,monkeypatch,tmp_path):
+    db,client,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    client.put("/api/irrigation/automatic-irrigation",
+               json={"enabled":True,"run_after_local_time":"00:00"})
+    enabled_at=datetime.fromisoformat(irrigation_routes._read_automatic_state()["enabled_at"])
+    fresh_calculation=(enabled_at+timedelta(seconds=1)).isoformat()
+    monkeypatch.setattr(irrigation_routes,"home_assistant_config",lambda:("http://ha.local:8123","test-token"))
+    monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args:{
+        "rows":[{"mode":"smart_irrigation","ready":True,"decision":"irrigate",
+                 "kc_sync_status":"matched","zone_entity":"sensor.smart_irrigation_a1",
+                 "smart_irrigation_calculated_at":fresh_calculation,
+                 "action":{"target":{"entity_id":"switch.opensprinkler_station_1"},
+                           "data":{"run_seconds":123,"queue_option":"append"}}}],
+        "valve_groups":[]})
+    calls=[]
+    class Response:
+        status_code=200
+    class Client:
+        def __init__(self,**kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def post(self,url,headers,json):
+            calls.append((url,headers,json))
+            return Response()
+    monkeypatch.setattr(irrigation_routes.httpx,"Client",Client)
+    first=irrigation_routes.automatic_irrigation_tick(db)
+    second=irrigation_routes.automatic_irrigation_tick(db)
+    assert first["started"]==1 and second["started"]==0
+    assert len(calls)==1
+    assert calls[0][0]=="http://ha.local:8123/api/services/opensprinkler/run_station"
+    assert calls[0][1]["Authorization"]=="Bearer test-token"
+    assert calls[0][2]=={"entity_id":"switch.opensprinkler_station_1",
+                         "run_seconds":123,"queue_option":"append"}
+
+
+def test_automatic_irrigation_waits_for_post_kc_recalculation(irrigation,monkeypatch,tmp_path):
+    db,client,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    client.put("/api/irrigation/automatic-irrigation",
+               json={"enabled":True,"run_after_local_time":"00:00"})
+    zone="sensor.smart_irrigation_a1"
+    sent_at=datetime.now(timezone.utc)-timedelta(minutes=2)
+    irrigation_routes._write_automatic_state({
+        "enabled":True,"run_after_local_time":"00:00","runs":{},
+        "kc_pending":{zone:{"value":1.0,"sent_at":sent_at.isoformat()}}})
+    monkeypatch.setattr(irrigation_routes,"home_assistant_config",lambda:("http://ha.local:8123","test-token"))
+    monkeypatch.setattr(irrigation_routes,"daily_readiness",lambda *args:{
+        "rows":[{"mode":"smart_irrigation","ready":True,"decision":"irrigate",
+                 "kc_sync_status":"matched","zone_entity":zone,
+                 "smart_irrigation_calculated_at":(sent_at-timedelta(minutes=1)).isoformat(),
+                 "action":{"target":{"entity_id":"switch.opensprinkler_station_1"},
+                           "data":{"run_seconds":123,"queue_option":"append"}}}],
+        "valve_groups":[]})
+    result=irrigation_routes.automatic_irrigation_tick(db)
+    assert result["status"]=="kc_updated_waiting_for_recalculation"
+    assert result["started"]==0

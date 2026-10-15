@@ -18,10 +18,11 @@ export function IrrigationPlanner({crops,beds}) {
   const generation=useRef(0);
   const [osPreview,setOsPreview]=useState(null),[osBusy,setOsBusy]=useState(false);
   const osGeneration=useRef(0);
-  const [siPreview,setSiPreview]=useState(null),[siBusy,setSiBusy]=useState(false);
+  const [siPreview,setSiPreview]=useState(null),[siBusy,setSiBusy]=useState(false),[siConfirmed,setSiConfirmed]=useState(false);
   const siGeneration=useRef(0);
   const [haStatus,setHaStatus]=useState(null),[haBusy,setHaBusy]=useState(false);
   const [haConfig,setHaConfig]=useState({url:"",token:""});
+  const [autoConfig,setAutoConfig]=useState({enabled:false,run_after_local_time:"07:00",last_runs:[]});
   const [haStates,setHaStates]=useState(null);
   function chooseBed(value) {
     setBedId(value);
@@ -30,13 +31,25 @@ export function IrrigationPlanner({crops,beds}) {
   }
   useEffect(()=>{let closed=false; apiRequest("/api/irrigation/profiles").then(p=>{if(!closed){setProfiles(p);setSensorGroups(Array.from({length:16},(_,i)=>p.sensor_groups?.find(item=>item.group_number===i+1)||{group_number:i+1,name:`WH51 ${i+1}`,entity_id:""}));}}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;generation.current++;};},[]);
   useEffect(()=>{let closed=false;apiRequest("/api/irrigation/home-assistant/status").then(r=>{if(!closed){setHaStatus(r);setHaConfig(value=>({...value,url:r.url||""}));}}).catch(()=>{if(!closed)setHaStatus({configured:false,token_configured:false});});return()=>{closed=true;};},[]);
+  useEffect(()=>{let closed=false;apiRequest("/api/irrigation/automatic-irrigation").then(r=>{if(!closed)setAutoConfig(r);}).catch(()=>{});return()=>{closed=true;};},[]);
   useEffect(()=>{setCp(profiles.crops.find(p=>String(p.crop_id)===cropId)||cropEmpty);},[cropId,profiles]);
   useEffect(()=>{setBp({...bedEmpty,...profiles.beds.find(p=>String(p.bed_id)===bedId)});},[bedId,profiles]);
   useEffect(()=>{generation.current++;setReport(null);setMessage("");setBusy(false);},[cropId,bedId,cp,bp,day]);
   useEffect(()=>{let closed=false;setSaved([]);apiRequest(`/api/irrigation/daily?day=${day.day}`).then(r=>{if(!closed)setSaved(r.rows);}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;};},[day.day]);
-  useEffect(()=>{let closed=false;setReadiness(null);apiRequest(`/api/irrigation/daily-readiness?day=${day.day}`).then(r=>{if(!closed)setReadiness(r);}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;};},[day.day,saved,beds,profiles]);
+  useEffect(()=>{
+    let closed=false;
+    const refresh=()=>apiRequest(`/api/irrigation/daily-readiness?day=${day.day}`)
+      .then(r=>{if(!closed)setReadiness(r);})
+      .catch(e=>{if(!closed)setError(e.message);});
+    setReadiness(null);
+    refresh();
+    const timer=window.setInterval(refresh,15*60*1000);
+    const onVisibilityChange=()=>{if(document.visibilityState==="visible")refresh();};
+    document.addEventListener("visibilitychange",onVisibilityChange);
+    return()=>{closed=true;window.clearInterval(timer);document.removeEventListener("visibilitychange",onVisibilityChange);};
+  },[day.day,saved,beds,profiles]);
   useEffect(()=>{let closed=false;setLedger([]);setLedgerOpening("");setLedgerRain("0");setLedgerApplied("0");if(!bedId)return()=>{closed=true;};apiRequest(`/api/irrigation/water-ledger?bed_id=${bedId}&through=${day.day}`).then(r=>{if(!closed){const rows=r.rows||[];setLedger(rows);const current=rows.find(item=>item.day===day.day);const previous=rows.at(-1);const opening=current?.opening_depletion_mm??previous?.closing_depletion_mm;if(opening!=null){setLedgerOpening(String(opening));setDay(value=>({...value,initial_depletion_mm:String(opening)}));}if(current){setLedgerRain(String(current.effective_rain_mm));setLedgerApplied(String(current.applied_irrigation_mm));}}}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;};},[bedId,day.day]);
-  useEffect(()=>{osGeneration.current++;setOsPreview(null);setOsBusy(false);siGeneration.current++;setSiPreview(null);setSiBusy(false);return()=>{osGeneration.current++;siGeneration.current++;};},[profiles,saved,day,cp,bp,cropId,bedId]);
+  useEffect(()=>{osGeneration.current++;setOsPreview(null);setOsBusy(false);siGeneration.current++;setSiPreview(null);setSiBusy(false);setSiConfirmed(false);return()=>{osGeneration.current++;siGeneration.current++;};},[profiles,saved,day,cp,bp,cropId,bedId]);
   function numeric(form) {return Object.fromEntries(Object.entries(form).filter(([k])=>!["crop_id","bed_id"].includes(k)).map(([k,v])=>[k,["mode","valve_mode","source","irrigation_zone"].includes(k)?v||null:["opensprinkler_station_entity","smart_irrigation_entity"].includes(k)?v||null:v===""||v==null?null:Number(v)]));}
   async function prepareOpenSprinkler() {
     const n=++osGeneration.current;setOsBusy(true);setOsPreview(null);setError("");
@@ -44,9 +57,20 @@ export function IrrigationPlanner({crops,beds}) {
     catch(e){if(n===osGeneration.current)setError(e.message);}finally{if(n===osGeneration.current)setOsBusy(false);}
   }
   async function prepareSmartIrrigation() {
-    const n=++siGeneration.current;setSiBusy(true);setSiPreview(null);setError("");
+    const n=++siGeneration.current;setSiBusy(true);setSiPreview(null);setSiConfirmed(false);setError("");
     try {const r=await apiRequest(`/api/irrigation/smart-irrigation?day=${day.day}`);if(n===siGeneration.current)setSiPreview(r);}
     catch(e){if(n===siGeneration.current)setError(e.message);}finally{if(n===siGeneration.current)setSiBusy(false);}
+  }
+  async function saveAutomaticIrrigationSettings(enabled=autoConfig.enabled) {
+    setHaBusy(true);setError("");setMessage("");
+    try {
+      const r=await apiRequest("/api/irrigation/automatic-irrigation",{method:"PUT",body:JSON.stringify({...autoConfig,enabled})});
+      setAutoConfig(value=>({...value,...r}));setMessage(r.message||"Nastavitve samodejnega zalivanja so shranjene.");
+    } catch(e){setError(e.message);} finally {setHaBusy(false);}
+  }
+  async function setAutomaticIrrigation(enabled) {
+    if(enabled&&!window.confirm("Vklopim samodejno zalivanje? GrowMaster bo po izbrani lokalni uri uporabil svež Smart Irrigation izračun in lahko odpre povezane OpenSprinkler ventile."))return;
+    await saveAutomaticIrrigationSettings(enabled);
   }
   async function testHomeAssistant() {
     setHaBusy(true);setError("");setMessage("");
@@ -121,7 +145,7 @@ export function IrrigationPlanner({crops,beds}) {
   const dirty=JSON.stringify(numeric(cp))!==JSON.stringify(numeric(storedCrop||cropEmpty))||JSON.stringify(numeric(bp))!==JSON.stringify(numeric({...bedEmpty,...storedBed}));
   return <section className="panel" aria-label="Namakanje">
     <p className="eyebrow">Dnevna vodna bilanca</p><h2>Namakanje</h2>
-    <p>Dnevni pregled uporablja trenutno aktivno zasaditev na gredici. Kultura se ob izbiri gredice predizbere iz GrowMasterja; fazo rasti, začetni primanjkljaj in dnevne meritve še potrdiš ročno. Home Assistant senzorje lahko prebere in preveri njihovo svežino, vendar jih še ne pretvori samodejno v ET₀, dež ali odločitev za zalivanje.</p>
+    <p>Dnevni pregled uporablja trenutno aktivno kulturo. Za gredice brez WH51 GrowMaster prebere sveže trajanje Smart Irrigation in iz nastavljenega pretoka oceni količino vode. Pregled se osveži ob odprtju, ob vrnitvi v aplikacijo in vsakih 15 minut. Ročni vodni izračun ET₀, dežja in začetnega primanjkljaja je ločen. Ročni OpenSprinkler osnutek je namenjen pregledu in sam ne zažene ventila. Ločena avtomatika deluje samo, če jo izrecno vklopiš.</p>
     <div className="irrigation-bed-review" aria-label={`Pregled gredic za ${day.day}`}>
       <div className="section-heading"><div><p className="eyebrow">Pregled za {day.day}</p><h3>Gredice z aktivnim posevkom</h3></div><span>{beds.filter(item=>item.current_planting).length} aktivnih</span></div>
       {dailyStates.length===0?<p className="empty-state">Ni zabeleženih aktivnih zasaditev na gredicah.</p>:dailyStates.map(({bed:b,report,hasCropProfile,hasBedProfile,needsCalculation})=>{
@@ -137,7 +161,7 @@ export function IrrigationPlanner({crops,beds}) {
       })}
     </div>
     {readiness&&<article aria-label="Dnevna pripravljenost namakanja"><h3>Dnevno preverjanje: {readiness.ready_beds}/{readiness.active_beds} gredic pripravljenih</h3>
-      <p>{readiness.note}</p><ul>{readiness.rows.map(row=><li key={row.bed_id}><strong>{row.bed} · {row.crop}{row.variety?` (${row.variety})`:""}</strong> · {row.mode==="smart_irrigation"?`Smart Irrigation: ${row.smart_irrigation_seconds==null?"ni izračuna":`${row.smart_irrigation_seconds} sekund`} · ${row.decision==="irrigate"?"zalivanje priporočeno":row.decision==="hold"?"zalivanje ni potrebno":"pregled potreben"}`:`WH51 skupina ${row.wh51_group_name||row.wh51_group||"ni dodeljena"} · ${row.sensor_group_beds} gredic`} {!row.ready?` · ${row.reasons.join(" ")}`:" · pripravljeno"}{row.action&&<><p>Osnutek za ročni pregled: {row.action.target.entity_id} · {row.action.data.run_seconds} sekund</p><textarea aria-label={`Osnutek OpenSprinkler za gredico ${row.bed}`} readOnly rows={6} value={`action: opensprinkler.run_station\ntarget:\n  entity_id: ${row.action.target.entity_id}\ndata:\n  run_seconds: ${row.action.data.run_seconds}\n  queue_option: append`}/></>}</li>)}</ul>
+      <p>{readiness.note}</p><ul>{readiness.rows.map(row=><li key={row.bed_id}><strong>{row.bed} · {row.crop}{row.variety?` (${row.variety})`:""}</strong>{row.suggested_stage?` · faza ${row.suggested_stage==="initial"?"začetna":row.suggested_stage==="mid"?"polna rast":"pozna"} (${row.stage_progress_pct}% cikla)`:" · faza ni določena"} · {row.mode==="smart_irrigation"?`Smart Irrigation: ${row.smart_irrigation_seconds==null?"ni izračuna":`${row.smart_irrigation_seconds} sekund`} · ${row.estimated_litres==null?"pretok ni vpisan":`≈ ${row.estimated_litres} l`} · ${row.kc_sync_status==="matched"?`Kc ${row.kc_expected} usklajen`:row.kc_sync_status==="needs_update"?`Kc ${row.smart_irrigation_multiplier} → ${row.kc_expected}, posodobi`:row.kc_sync_status==="unknown"?"Kc ni preverjen":"Kc ni uporabljen"} · ${row.decision==="irrigate"?"zalivanje priporočeno":row.decision==="hold"?"zalivanje ni potrebno":"pregled potreben"}`:`WH51 skupina ${row.wh51_group_name||row.wh51_group||"ni dodeljena"} · ${row.sensor_group_beds} gredic`} {!row.ready?` · ${row.reasons.join(" ")}`:" · pripravljeno"}{row.action&&<><p>Osnutek za ročni pregled: {row.action.target.entity_id} · {row.action.data.run_seconds} sekund</p><textarea aria-label={`Osnutek OpenSprinkler za gredico ${row.bed}`} readOnly rows={6} value={`action: opensprinkler.run_station\ntarget:\n  entity_id: ${row.action.target.entity_id}\ndata:\n  run_seconds: ${row.action.data.run_seconds}\n  queue_option: append`}/></>}</li>)}</ul>
       {readiness.valve_groups?.map(group=><article key={group.station} aria-label={`Skupni ventil ${group.station}`}><strong>Skupni ventil · gredice {group.bed_ids.join(", ")} · {group.status==="draft"?`${group.run_seconds} sekund · približno ${group.estimated_litres} l`:"blokirano"}</strong>{group.status==="draft"&&<p>Ocena vode po gredici: {group.bed_water_estimates.map(item=>`${readiness.rows.find(row=>row.bed_id===item.bed_id)?.bed||`gredica ${item.bed_id}`}: ${item.litres} l`).join(" · ")}. Dejanska količina je odvisna od izmerjenega pretoka posamezne veje.</p>}{group.reasons.map((reason,index)=><p key={index}>{reason}</p>)}{group.action&&<textarea aria-label={`Akcija za skupni ventil ${group.station}`} readOnly rows={6} value={`action: opensprinkler.run_station\ntarget:\n  entity_id: ${group.station}\ndata:\n  run_seconds: ${group.run_seconds}\n  queue_option: append`}/>}</article>)}
     </article>}
     <div className="range-form"><label>Kultura<select value={cropId} onChange={e=>setCropId(e.target.value)}><option value="">Izberi kulturo</option>{crops.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
@@ -156,7 +180,7 @@ export function IrrigationPlanner({crops,beds}) {
       <p>Poljska kapaciteta in točka venenja sta volumenska deleža vode v tleh, ne odstotka WH51. Pretok pomeni skupni pretok vseh kapljičnih cevi na izbrani gredici.</p>
       <form className="planning-form" onSubmit={e=>{e.preventDefault();saveProfile("beds");}}>
         <label>Način namakanja<select value={bp.mode||"smart_irrigation"} onChange={e=>setBp({...bp,mode:e.target.value})}><option value="soil_sensor">S senzorjem vlage v tleh</option><option value="smart_irrigation">Brez talnega senzorja — Smart Irrigation</option></select></label>
-        {bp.mode==="soil_sensor"?<p>Način z merjenjem: za pripravljeno dnevno bilanco zahteva svež, povezan senzor tal. Njegova meritev preverja vodno bilanco.</p>:<p>Način brez talnega senzorja: Smart Irrigation vodi dnevno vremensko bilanco. GrowMaster potrebuje ET₀, dež in potrjeno začetno vodno stanje.</p>}
+        {bp.mode==="soil_sensor"?<p>Način z merjenjem: za pripravljeno dnevno bilanco zahteva svež, povezan senzor tal. Njegova meritev preverja vodno bilanco.</p>:<p>Način brez talnega senzorja: Smart Irrigation vodi vremensko bilanco. Dnevni pregled GrowMasterja prebere njegovo izračunano trajanje; za oceno litrov moraš nastaviti pretok grede.</p>}
         <label>Namakalna cona (1–16)<select value={bp.irrigation_zone||""} onChange={e=>setBp({...bp,irrigation_zone:e.target.value})}><option value="">Izberi cono</option>{Array.from({length:16},(_,i)=><option key={i+1} value={`zone_${i+1}`}>Cona {i+1}</option>)}</select></label>
         {field(bp,setBp,"field_capacity_pct","Poljska kapaciteta (% vol.)",0.001,70)}{field(bp,setBp,"wilting_point_pct","Točka venenja (% vol.)",0,69.999)}
         {field(bp,setBp,"efficiency_pct","Učinkovitost namakanja (%)",0.001,100)}
@@ -206,12 +230,23 @@ export function IrrigationPlanner({crops,beds}) {
     </details>}
     <details><summary>Shranjeni izračuni za {day.day} ({saved.length})</summary><p>To so posnetki izračuna s takratnimi profili, ne dokazi izvedenega zalivanja. Sprememba profila jih ne preračuna.</p><ul>{saved.map(r=><li key={r.bed_id}>{r.crop} · gredica {r.bed}: {statusNames[r.status]} · {r.litres==null?"količina ni določena":`${r.litres} l`} · {r.day}</li>)}</ul></details>
     <h3>OpenSprinkler prek Home Assistanta</h3>
-    <p>Pripravi osnutke iz shranjenih današnjih izračunov, največ šest ur starih. Pred tem shrani povezavo postaje in ponovno izračunaj dan. To ni samodejni zagon ventilov.</p>
+    <p>Pripravi osnutke iz shranjenih današnjih izračunov, največ šest ur starih. Pred tem shrani povezavo postaje in ponovno izračunaj dan. Ta gumb pripravi le ročni osnutek; za samodejni zagon uporabi ločen izbirni nadzor spodaj.</p>
     <button type="button" className="secondary-button" disabled={dirty||busy||osBusy} onClick={prepareOpenSprinkler}>PRIPRAVI AKCIJE OPENSPRINKLER</button>
     {osPreview&&<div aria-label="Osnutki OpenSprinkler"><p>{osPreview.note}</p>{!osPreview.rows.length&&<p>Za izbrani dan ni shranjenih izračunov.</p>}
       {osPreview.rows.map(r=><article key={r.bed_id}><strong>Gredica {r.bed||r.bed_id} · {r.status==="draft"?"Osnutek za ročni pregled":"Akcija ni pripravljena"}</strong>
         {r.status==="draft"?<><p>{r.litres} l · {r.run_seconds} sekund · {r.action.target.entity_id}</p><ul>{r.warnings.map((w,i)=><li key={i}>{w}</li>)}</ul><p>Spodnji zapis lahko po preverjanju uporabiš v Home Assistantu, Orodja za razvijalce → Akcije → YAML. Izvedba tam dejansko odpre ventil.</p><textarea aria-label={`Akcija OpenSprinkler za gredico ${r.bed||r.bed_id}`} readOnly rows={8} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
       </article>)}</div>}
+    <section className="irrigation-automation">
+      <h3>Samodejno zalivanje</h3>
+      <p>Ko je vključeno, GrowMaster po lokalni uri preverja sveže Smart Irrigation izračune. Pred odpiranjem ventila preveri aktivno kulturo, Kc, povezavo ventila, čas in omejitev zalivanja. Po vklopu in ob spremembi Kc počaka na nov Smart Irrigation izračun cone. Negotovega HA odgovora ne ponovi samodejno.</p>
+      <label>Začni preverjanje po lokalni uri <input type="time" value={autoConfig.run_after_local_time||"07:00"} onChange={e=>setAutoConfig({...autoConfig,run_after_local_time:e.target.value})}/></label>
+      <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={()=>saveAutomaticIrrigationSettings()}>SHRANI URNIK</button>
+      <p>Stanje avtomatike: <strong>{autoConfig.enabled?"VKLOPLJENA":"IZKLOPLJENA"}</strong></p>
+      <button type="button" className={autoConfig.enabled?"secondary-button":"primary-button"} disabled={haBusy||!haStatus?.configured} onClick={()=>setAutomaticIrrigation(!autoConfig.enabled)}>
+        {autoConfig.enabled?"IZKLOPI SAMODEJNO ZALIVANJE":"VKLOPI SAMODEJNO ZALIVANJE"}
+      </button>
+      {autoConfig.last_runs?.length>0&&<details><summary>Zadnji samodejni zagoni</summary><ul>{autoConfig.last_runs.map((run,i)=><li key={i}>{run.day} · {run.station} · {run.status} · {run.run_seconds} s</li>)}</ul></details>}
+    </section>
     <h3>Smart Irrigation prek Home Assistanta</h3>
     <p>Stanje povezave: <strong>{haStatus?.connected?"povezano":haStatus?.configured?"nastavljeno, še nepreverjeno":"ni nastavljena"}</strong>. Vnesi URL Home Assistanta, ki je dosegljiv iz računalnika GrowMaster, in njegov dolgoročni dostopni žeton. Žeton se shrani šifrirano na podatkovni disk strežnika in ga GrowMaster ne prikaže nazaj. Za naslov `.local` mora biti ime dosegljivo iz Docker vsebnika; sicer uporabi lokalni IP.</p>
     {haStatus?.source==="environment"&&haStatus?.configured&&<p>Trenutno je uporabljena starejša strežniška nastavitev. Če shraniš obrazec, bo nastavitev iz aplikacije prevzela prednost.</p>}
@@ -224,13 +259,13 @@ export function IrrigationPlanner({crops,beds}) {
     <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={testHomeAssistant}>PREVERI POVEZAVO</button>
     <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={readHomeAssistantStates}>PREBERI NASTAVLJENE SENZORJE</button>
     {haStates&&<article aria-label="Stanja Home Assistant senzorjev"><h4>Prebrane vrednosti senzorjev</h4><p>{haStates.note} WH51: {haStates.configured_wh51_count}/{haStates.maximum_wh51_count} skupin.</p><ul>{haStates.sensor_groups.map(group=><li key={`${group.group_number}-${group.entity_id}`}><strong>{group.name}</strong>{group.group_number?` (${group.group_number})`:""} · {group.entity_id} · {group.assigned_beds} gredic {group.needs_migration?" · premakni v novo skupino":""}</li>)}</ul><ul>{haStates.entities.map(item=><li key={item.entity_id}><strong>{item.entity_id}</strong>: {item.available?`${item.state}${item.unit?` ${item.unit}`:""}`:item.issue||item.error||"nedosegljiv"}{item.last_updated?` · posodobljeno ${new Date(item.last_updated).toLocaleString()}`:""}</li>)}</ul>{Object.entries(haStates.numeric_summary_by_unit||{}).map(([unit,summary])=><p key={unit}>Povzetek {unit}: {summary.count} senzorjev · povprečje {summary.mean} · min {summary.minimum} · max {summary.maximum}</p>)}</article>}
-    <p>Iz današnjih shranjenih izračunov pripravi Kc za trenutno aktivno kulturo in izbrano fazo. Po pregledu lahko GrowMaster Kc pošlje v Smart Irrigation. Ne zažene izračuna ali zalivanja; Smart Irrigation naj še naprej vodi svojo vremensko bilanco in urnik.</p>
+    <p>GrowMaster primerja Kc aktivne kulture in samodejno določene faze s trenutnim atributom multiplier v Smart Irrigation. Ob neskladju dnevni pregled označi gredico za pregled in ne pripravi osnutka ventila. Po pošiljanju Kc počakaj, da Smart Irrigation po svojem urniku ponovno izračuna cono.</p>
     <button type="button" className="secondary-button" disabled={dirty||busy||siBusy} onClick={prepareSmartIrrigation}>PRIPRAVI Kc ZA SMART IRRIGATION</button>
-    {siPreview&&<div aria-label="Osnutki Smart Irrigation"><p>{siPreview.note}</p>{!siPreview.rows.length&&<p>Za izbrani dan ni shranjenih dnevnih izračunov.</p>}
+    {siPreview&&<div aria-label="Osnutki Smart Irrigation"><p>{siPreview.note}</p>{!siPreview.rows.length&&<p>Ni aktivnih gredic za pripravo Kc.</p>}
       {siPreview.rows.map(r=><article key={r.bed_id}><strong>Gredica {r.bed||r.bed_id} · {r.status==="draft"?"Osnutek za pregled":"Posodobitev ni pripravljena"}</strong>
-        {r.status==="draft"?<><p>Kc {r.multiplier} · {r.action.target.entity_id}</p><textarea aria-label={`Smart Irrigation Kc za gredico ${r.bed||r.bed_id}`} readOnly rows={6} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
+        {r.status==="draft"?<><p>{r.crop} · faza: {r.stage==="initial"?"začetna":r.stage==="mid"?"polna rast":"pozna"} ({r.stage_progress_pct}% rastnega cikla) · Kc {r.multiplier} · {r.action.target.entity_id}</p><p>Fazo je GrowMaster določil iz datuma setve in pričakovanega pobiranja.</p><textarea aria-label={`Smart Irrigation Kc za gredico ${r.bed||r.bed_id}`} readOnly rows={6} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
       </article>)}</div>}
-    {siPreview?.rows?.some(r=>r.status==="draft")&&<button type="button" className="primary-button" disabled={!haStatus?.configured||haBusy||dirty} onClick={sendSmartIrrigation}>POŠLJI Kc V HOME ASSISTANT</button>}
+    {siPreview?.rows?.some(r=>r.status==="draft")&&<><label><input type="checkbox" checked={siConfirmed} onChange={e=>setSiConfirmed(e.target.checked)}/> Potrjujem, da sem preveril aktivno kulturo, profil Kc in HA cono za vse prikazane gredice. Fazo je GrowMaster izračunal iz datumov zasaditve.</label><button type="button" className="primary-button" disabled={!siConfirmed||!haStatus?.configured||haBusy||dirty} onClick={sendSmartIrrigation}>POŠLJI Kc V HOME ASSISTANT</button></>}
     <small>ETc = ET₀ × Kc. Voda v koreninah je ocenjena iz poljske kapacitete, točke venenja in globine korenin. Izračun ne modelira kapilarnega dotoka, odtoka ali rasti korenin. GrowMaster pošlje samo posodobitve Kc; ventilov ne odpira.</small>
   </section>;
 }
