@@ -994,7 +994,7 @@ def send_smart_irrigation(day: date, db: Session = Depends(get_db)):
     preview = smart_irrigation_preview(day, db)
     ready = [row for row in preview["rows"] if row["status"] == "draft"]
     if not ready:
-        raise HTTPException(409, "Ni veljavnih Kc posodobitev. Preveri in shrani današnje izračune ter povezave con.")
+        raise HTTPException(409, "Ni veljavnih Kc posodobitev. Preveri aktivno kulturo, profil kulture in Smart Irrigation cono.")
     sent = []
     blocked = [row for row in preview["rows"] if row["status"] != "draft"]
     try:
