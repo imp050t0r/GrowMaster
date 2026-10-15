@@ -126,3 +126,8 @@ Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMas
 6. Preglej prikazane zadnje zagone. Stanje »oddano« potrjuje le sprejem ukaza v HA, ne pretoka skozi kapljične cevi.
 
 Ob spremembi faze ali kulture GrowMaster najprej uskladi Kc in ne zaliva v istem prehodu. Počaka na nov izračun Smart Irrigation. Če je izračun star, Kc ni usklajen, manjka pretok/postaja ali skupni ventil ni v celoti pripravljen, gredica ostane brez samodejnega ukaza.
+
+
+## Delovanje urnika
+
+Samodejno preverjanje teče v GrowMaster backendu vsakih pet minut po izbrani uri, vendar najprej počaka na svež Smart Irrigation izračun, narejen po vklopu in po spremembi Kc. GrowMaster backend, Docker in omrežna povezava do Home Assistanta morajo biti takrat dosegljivi. Če je računalnik uspavan ali GrowMaster ugasnjen, se zalivanje takrat ne izvede. Za delovanje brez prekinitve mora backend teči na napravi, ki ostane vključena.
