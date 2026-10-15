@@ -1245,6 +1245,12 @@ def send_smart_irrigation(day: date, db: Session = Depends(get_db)):
         with httpx.Client(timeout=8.0, follow_redirects=False) as client:
             for row in ready:
                 action = row["action"]
+                automation_state = _read_automatic_state()
+                if automation_state.get("enabled"):
+                    zone = action["target"]["entity_id"]
+                    automation_state.setdefault("kc_pending", {})[zone] = {
+                        "value": row["multiplier"], "sent_at": datetime.now(timezone.utc).isoformat()}
+                    _write_automatic_state(automation_state)
                 response = client.post(
                     f"{base_url}/api/services/smart_irrigation/set_multiplier",
                     headers=ha_headers(token),
