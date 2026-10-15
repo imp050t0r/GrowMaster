@@ -123,6 +123,146 @@ class SensorGroupInput(Input):
     entity_id: str | None = Field(default=None, pattern=r"^sensor\.[a-z0-9_]+$", max_length=150)
 
 
+class AutomaticIrrigationConfig(Input):
+    enabled: bool
+    run_after_local_time: str = Field(default="07:00", pattern=r"^(?:[01]\\d|2[0-3]):[0-5]\\d$")
+
+
+def _automatic_state_path():
+    return os.path.join(os.environ.get("GROWMASTER_DATA_ROOT", "/data"), "secrets", "irrigation-automation-state.json")
+
+
+def _read_automatic_state():
+    path = _automatic_state_path()
+    try:
+        with open(path, "r", encoding="utf-8") as stream:
+            value = json.load(stream)
+        if not isinstance(value, dict):
+            raise ValueError("Invalid automation state.")
+        return value
+    except FileNotFoundError:
+        return {"enabled": False, "run_after_local_time": "07:00", "runs": {}}
+    except (OSError, ValueError, TypeError):
+        raise HTTPException(503, "Shranjeno stanje avtomatskega namakanja je poškodovano; preveri varnostno kopijo.")
+
+
+def _write_automatic_state(value):
+    path = _automatic_state_path()
+    directory = os.path.dirname(path)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, ensure_ascii=False, separators=(",", ":"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+    os.chmod(path, 0o600)
+
+
+@router.get("/automatic-irrigation")
+def automatic_irrigation_status():
+    state = _read_automatic_state()
+    return {"enabled": bool(state.get("enabled")), "run_after_local_time": state.get("run_after_local_time", "07:00"),
+            "last_runs": list(state.get("runs", {}).values())[-20:],
+            "note": "Samodejno zalivanje se privzeto ne izvaja. Vklop sproži le pripravljene individualne ali preverjene skupne ventile."}
+
+
+@router.put("/automatic-irrigation")
+def configure_automatic_irrigation(payload: AutomaticIrrigationConfig):
+    state = _read_automatic_state()
+    state["enabled"] = payload.enabled
+    state["run_after_local_time"] = payload.run_after_local_time
+    _write_automatic_state(state)
+    return {"enabled": state["enabled"], "run_after_local_time": state["run_after_local_time"],
+            "message": "Samodejno zalivanje je vključeno." if state["enabled"] else "Samodejno zalivanje je izključeno."}
+
+
+def automatic_irrigation_tick(db: Session):
+    """Execute only fresh, ready Smart Irrigation plans, once per local day and valve."""
+    from zoneinfo import ZoneInfo
+    local_now = datetime.now(ZoneInfo("Europe/Ljubljana"))
+    state = _read_automatic_state()
+    if not state.get("enabled") or local_now.strftime("%H:%M") < state.get("run_after_local_time", "07:00"):
+        return {"status": "disabled_or_not_due", "started": 0}
+    today = local_now.date()
+    day_key = today.isoformat()
+    runs = state.setdefault("runs", {})
+    day_runs = runs.setdefault(day_key, {})
+    readiness = daily_readiness(today, db)
+    base_url, token = home_assistant_config()
+    if not base_url or not token:
+        return {"status": "blocked", "reason": "Home Assistant ni povezan.", "started": 0}
+
+    # Synchronize changed crop Kc first. Never water in the same pass as a Kc change.
+    kc_updates = {}
+    for row in readiness["rows"]:
+        if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "needs_update":
+            zone = row.get("zone_entity")
+            expected = row.get("kc_expected")
+            if zone and expected is not None:
+                kc_updates[zone] = expected
+    if kc_updates:
+        with httpx.Client(timeout=10.0, follow_redirects=False) as client:
+            for zone, multiplier in kc_updates.items():
+                response = client.post(f"{base_url}/api/services/smart_irrigation/set_multiplier",
+                    headers=ha_headers(token), json={"entity_id": zone, "new_multiplier_value": multiplier})
+                if response.status_code < 200 or response.status_code >= 300:
+                    return {"status": "blocked", "reason": "Home Assistant ni sprejel posodobitve Kc.", "started": 0}
+        return {"status": "kc_updated_waiting_for_recalculation", "updated_zones": len(kc_updates), "started": 0}
+
+    actions = {}
+    for row in readiness["rows"]:
+        if row.get("mode") != "smart_irrigation" or not row.get("ready") or row.get("decision") != "irrigate":
+            continue
+        action = row.get("action")
+        if action:
+            actions[action["target"]["entity_id"]] = action["data"]
+    for group in readiness.get("valve_groups", []):
+        if group.get("status") == "draft" and group.get("action"):
+            actions[group["action"]["target"]["entity_id"]] = group["action"]["data"]
+
+    started = 0
+    with httpx.Client(timeout=15.0, follow_redirects=False) as client:
+        for station, action_data in actions.items():
+            if station in day_runs:
+                continue
+            # Persist the intent before the network call. If the result is ambiguous, do not retry:
+            # this avoids accidentally opening the same valve twice after a timeout or restart.
+            day_runs[station] = {"status": "pending", "started_at": local_now.isoformat(),
+                                 "run_seconds": action_data.get("run_seconds")}
+            _write_automatic_state(state)
+            payload = {"entity_id": station, **action_data}
+            try:
+                response = client.post(f"{base_url}/api/services/opensprinkler/run_station",
+                                       headers=ha_headers(token), json=payload)
+                if response.status_code < 200 or response.status_code >= 300:
+                    day_runs[station]["status"] = "failed"
+                    day_runs[station]["detail"] = f"Home Assistant HTTP {response.status_code}"
+                else:
+                    day_runs[station]["status"] = "submitted"
+                    started += 1
+            except httpx.RequestError:
+                day_runs[station]["status"] = "uncertain"
+                day_runs[station]["detail"] = "HA odgovor ni dosegljiv; preveri ventil pred ročnim ponovnim zagonom."
+            day_runs[station]["finished_at"] = datetime.now(ZoneInfo("Europe/Ljubljana")).isoformat()
+            _write_automatic_state(state)
+    return {"status": "completed", "started": started, "considered": len(actions)}
+
+
+async def automatic_irrigation_worker(stop_event: asyncio.Event):
+    while not stop_event.is_set():
+        try:
+            with SessionLocal() as db:
+                await asyncio.to_thread(automatic_irrigation_tick, db)
+        except Exception:
+            logger.exception("Automatic irrigation pass failed.")
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=5 * 60)
+        except TimeoutError:
+            pass
+
+
 class HomeAssistantConfigInput(Input):
     url: str = Field(min_length=8, max_length=2048)
     token: SecretStr | None = None
