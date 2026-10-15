@@ -409,13 +409,12 @@ def test_smart_irrigation_draft_uses_current_crop_and_does_not_run_valves(irriga
     assert not result["automatic_execution"] and result["requires_manual_review"]
     assert "opensprinkler.run_station" not in row["yaml"]
 
-def test_smart_irrigation_draft_blocks_if_crop_is_not_active(irrigation):
+def test_smart_irrigation_kc_preview_ignores_beds_without_active_crop(irrigation):
     _,c,_=irrigation
     c.put("/api/irrigation/beds/1",json={**BP,"smart_irrigation_entity":"sensor.smart_irrigation_a1"})
     c.put("/api/irrigation/daily",json=payload())
-    row=c.get(f"/api/irrigation/smart-irrigation?day={date.today()}").json()["rows"][0]
-    assert row["status"]=="blocked"
-    assert any("ni več trenutna aktivna zasaditev" in reason for reason in row["reasons"])
+    result=c.get(f"/api/irrigation/smart-irrigation?day={date.today()}").json()
+    assert result["rows"]==[] and result["requires_manual_review"]
 
 def test_smart_irrigation_draft_blocks_a_zone_shared_by_multiple_beds(irrigation):
     db,c,_=irrigation
