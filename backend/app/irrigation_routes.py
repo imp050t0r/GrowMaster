@@ -174,6 +174,8 @@ def automatic_irrigation_status():
 @router.put("/automatic-irrigation")
 def configure_automatic_irrigation(payload: AutomaticIrrigationConfig):
     state = _read_automatic_state()
+    if payload.enabled and not state.get("enabled"):
+        state["enabled_at"] = datetime.now(timezone.utc).isoformat()
     state["enabled"] = payload.enabled
     state["run_after_local_time"] = payload.run_after_local_time
     _write_automatic_state(state)
@@ -206,6 +208,17 @@ def automatic_irrigation_tick(db: Session):
         if zone and row.get("mode") == "smart_irrigation":
             zone_counts[zone] = zone_counts.get(zone, 0) + 1
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "matched" and zone:
+            enabled_at_value = state.get("enabled_at")
+            if enabled_at_value:
+                try:
+                    enabled_at = datetime.fromisoformat(enabled_at_value)
+                    calculated_at = datetime.fromisoformat(row.get("smart_irrigation_calculated_at") or "")
+                    if calculated_at <= enabled_at:
+                        waiting_for_kc = True
+                        continue
+                except (TypeError, ValueError):
+                    waiting_for_kc = True
+                    continue
             pending = state.setdefault("kc_pending", {}).get(zone)
             if pending:
                 try:
