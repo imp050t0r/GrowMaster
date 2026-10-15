@@ -128,7 +128,7 @@ class SensorGroupInput(Input):
 
 class AutomaticIrrigationConfig(Input):
     enabled: bool
-    run_after_local_time: str = Field(default="07:00", pattern=r"^(?:[01]\\d|2[0-3]):[0-5]\\d$")
+    run_after_local_time: str = Field(default="07:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
 def _automatic_state_path():
@@ -199,11 +199,25 @@ def automatic_irrigation_tick(db: Session):
 
     # Synchronize changed crop Kc first. Never water in the same pass as a Kc change.
     kc_updates = {}
+    zone_counts = {}
+    for row in readiness["rows"]:
+        zone = row.get("zone_entity")
+        if zone and row.get("mode") == "smart_irrigation":
+            zone_counts[zone] = zone_counts.get(zone, 0) + 1
+        if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "matched" and zone:
+            state.setdefault("kc_pending", {}).pop(zone, None)
     for row in readiness["rows"]:
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "needs_update":
             zone = row.get("zone_entity")
             expected = row.get("kc_expected")
-            if zone and expected is not None:
+            if zone and expected is not None and zone_counts.get(zone) == 1:
+                pending = state.setdefault("kc_pending", {}).get(zone)
+                try:
+                    pending_age = (local_now - datetime.fromisoformat(pending["sent_at"])).total_seconds() if pending else None
+                except (KeyError, TypeError, ValueError):
+                    pending_age = None
+                if pending and pending.get("value") == expected and pending_age is not None and 0 <= pending_age < 6 * 3600:
+                    return {"status": "kc_updated_waiting_for_recalculation", "updated_zones": 0, "started": 0}
                 kc_updates[zone] = expected
     if kc_updates:
         with httpx.Client(timeout=10.0, follow_redirects=False) as client:
@@ -212,6 +226,8 @@ def automatic_irrigation_tick(db: Session):
                     headers=ha_headers(token), json={"entity_id": zone, "new_multiplier_value": multiplier})
                 if response.status_code < 200 or response.status_code >= 300:
                     return {"status": "blocked", "reason": "Home Assistant ni sprejel posodobitve Kc.", "started": 0}
+                state.setdefault("kc_pending", {})[zone] = {"value": multiplier, "sent_at": local_now.isoformat()}
+                _write_automatic_state(state)
         return {"status": "kc_updated_waiting_for_recalculation", "updated_zones": len(kc_updates), "started": 0}
 
     actions = {}
