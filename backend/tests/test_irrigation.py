@@ -92,8 +92,9 @@ def test_daily_readiness_lists_active_beds_and_missing_inputs(irrigation):
     result=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()
     assert result["active_beds"]==1 and result["ready_beds"]==0 and result["needs_attention"]==1
     assert result["rows"][0]["crop"]=="Solata" and not result["rows"][0]["ready"]
-    assert result["rows"][0]["days_after_sowing"]==10 and result["rows"][0]["suggested_stage"]=="initial"
-    assert result["rows"][0]["stage_requires_confirmation"]
+    assert result["rows"][0]["days_after_sowing"]==10 and result["rows"][0]["suggested_stage"]=="mid"
+    assert result["rows"][0]["stage_progress_pct"]==25
+    assert result["rows"][0]["stage_requires_confirmation"] is False
     assert any("ni shranjenega izračuna" in reason for reason in result["rows"][0]["reasons"])
     assert not result["automatic_execution"]
 
