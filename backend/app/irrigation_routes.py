@@ -5,6 +5,8 @@ import os
 import re
 import socket
 from datetime import date, datetime, timezone, timedelta
+import asyncio
+import logging
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -14,11 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.ha_credentials import delete_config as delete_home_assistant_config, read_config as read_stored_home_assistant_config, write_config as write_home_assistant_config
 from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, Planting, Variety
 
 router = APIRouter(prefix="/api/irrigation")
+logger = logging.getLogger(__name__)
 FARM_ID = 1
 
 
