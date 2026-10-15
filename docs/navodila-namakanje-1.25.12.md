@@ -67,7 +67,7 @@ Ta pregled ne zahteva WH51 ali ročno shranjenega GrowMaster dnevnega izračuna.
 - Za oceno vode v litrih GrowMaster pomnoži trajanje v sekundah s pretokom grede v l/min in deli s 60.
 - Če pretok ni nastavljen, GrowMaster prikaže trajanje, količine v litrih pa ne more oceniti.
 
-Smart Irrigation še naprej računa svojo vremensko bilanco in trajanje. GrowMaster lahko pripravi Kc-osnutek iz trenutne aktivne kulture brez WH51 in brez shranjenega dnevnega izračuna. Faza je grob predlog po dnevih od setve: začetna do 19. dne, nato polna rast. Pred pošiljanjem ročno preveri dejansko fazo rastline in Kc. GrowMaster ne določi samodejno pozne faze.
+Smart Irrigation še naprej računa svojo vremensko bilanco in trajanje. GrowMaster lahko pripravi Kc-osnutek iz trenutne aktivne kulture brez WH51 in brez shranjenega dnevnega izračuna. GrowMaster določi fazo samodejno iz datuma setve in pričakovanega datuma pobiranja: začetna faza do 20 % cikla, polna rast od 20 do 80 %, pozna faza od 80 % do pobiranja. Če je dinamična napoved začetka pobiranja na voljo, jo uporabi namesto pričakovanega datuma. V pregledu prikaže fazo in napredek cikla.
 
 Dnevni pregled lahko pripravi OpenSprinkler osnutek, vendar ventila ne odpre. Osnutek pred uporabo preveri in zaženi ročno v Home Assistantu.
 
@@ -81,8 +81,8 @@ Dnevni pregled lahko pripravi OpenSprinkler osnutek, vendar ventila ne odpre. Os
 ### 3. Pošiljanje Kc v Smart Irrigation
 
 1. Klikni **PRIPRAVI Kc ZA SMART IRRIGATION**. GrowMaster uporabi trenutno aktivno kulturo in njen shranjeni profil; dnevni izračun ni potreben.
-2. Preglej vsako pripravljeno vrstico, kulturo, predlagano fazo, Kc in entity ID cone. Pred pošiljanjem ročno potrdi fazo rastline. Če se karkoli ne ujema, ne pošiljaj; popravi aktivno zasaditev ali profil kulture in pripravi osnutek znova.
-3. Označi potrditev, da si pregledal kulturo, fazo, Kc in cono za vse prikazane gredice. Šele nato klikni **POŠLJI Kc V HOME ASSISTANT**.
+2. Preglej vsako pripravljeno vrstico: aktivno kulturo, samodejno določeno fazo, napredek rastnega cikla, Kc in entity ID cone. Če se karkoli ne ujema, popravi aktivno zasaditev ali profil kulture in pripravi osnutek znova.
+3. Označi potrditev, da si pregledal aktivno kulturo, profil Kc in cono za vse prikazane gredice. Fazo izračuna GrowMaster iz zasaditvenih datumov. Nato klikni **POŠLJI Kc V HOME ASSISTANT**.
 4. Aplikacija potrdi število poslanih posodobitev Kc. Smart Irrigation še naprej izvaja svoje preračune in urnik.
 
 GrowMaster v tej različici pošilja samo Kc. Ne sproži Smart Irrigation izračuna, urnika ali OpenSprinkler ventila. Pošiljanje Kc samo po sebi ne potrjuje, da se je čas zalivanja spremenil; preveri stanje cone in urnik v Home Assistantu.
