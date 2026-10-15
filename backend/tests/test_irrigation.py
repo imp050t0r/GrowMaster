@@ -712,3 +712,23 @@ def test_water_ledger_migration_is_repeatable(irrigation):
         from app.migrations import add_irrigation_water_ledger
         add_irrigation_water_ledger(conn);add_irrigation_water_ledger(conn)
         assert "closing_depletion_mm" in {col["name"] for col in __import__("sqlalchemy").inspect(conn).get_columns("irrigation_water_ledger")}
+
+
+def test_automatic_irrigation_is_off_by_default_and_persisted(irrigation,monkeypatch,tmp_path):
+    _,client,_=irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT",str(tmp_path))
+    initial=client.get("/api/irrigation/automatic-irrigation").json()
+    assert initial["enabled"] is False and initial["run_after_local_time"]=="07:00"
+    saved=client.put("/api/irrigation/automatic-irrigation",
+                     json={"enabled":True,"run_after_local_time":"06:45"})
+    assert saved.status_code==200 and saved.json()["enabled"] is True
+    assert client.get("/api/irrigation/automatic-irrigation").json()["run_after_local_time"]=="06:45"
+    disabled=client.put("/api/irrigation/automatic-irrigation",
+                        json={"enabled":False,"run_after_local_time":"06:45"})
+    assert disabled.status_code==200 and disabled.json()["enabled"] is False
+
+
+def test_automatic_irrigation_time_must_be_valid(irrigation):
+    _,client,_=irrigation
+    assert client.put("/api/irrigation/automatic-irrigation",
+                      json={"enabled":True,"run_after_local_time":"25:70"}).status_code==422
