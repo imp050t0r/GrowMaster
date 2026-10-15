@@ -167,7 +167,7 @@ def _write_automatic_state(value):
 def automatic_irrigation_status():
     state = _read_automatic_state()
     return {"enabled": bool(state.get("enabled")), "run_after_local_time": state.get("run_after_local_time", "07:00"),
-            "last_runs": list(state.get("runs", {}).values())[-20:],
+            "last_runs": [run for day in sorted(state.get("runs", {})) for run in state["runs"][day].values()][-20:],
             "note": "Samodejno zalivanje se privzeto ne izvaja. Vklop sproži le pripravljene individualne ali preverjene skupne ventile."}
 
 
@@ -232,8 +232,8 @@ def automatic_irrigation_tick(db: Session):
                 continue
             # Persist the intent before the network call. If the result is ambiguous, do not retry:
             # this avoids accidentally opening the same valve twice after a timeout or restart.
-            day_runs[station] = {"status": "pending", "started_at": local_now.isoformat(),
-                                 "run_seconds": action_data.get("run_seconds")}
+            day_runs[station] = {"day": day_key, "station": station, "status": "pending",
+                                 "started_at": local_now.isoformat(), "run_seconds": action_data.get("run_seconds")}
             _write_automatic_state(state)
             payload = {"entity_id": station, **action_data}
             try:
@@ -253,13 +253,18 @@ def automatic_irrigation_tick(db: Session):
     return {"status": "completed", "started": started, "considered": len(actions)}
 
 
+def _automatic_irrigation_tick_safely():
+    try:
+        with SessionLocal() as db:
+            return automatic_irrigation_tick(db)
+    except Exception:
+        logger.exception("Automatic irrigation pass failed.")
+        return None
+
+
 async def automatic_irrigation_worker(stop_event: asyncio.Event):
     while not stop_event.is_set():
-        try:
-            with SessionLocal() as db:
-                await asyncio.to_thread(automatic_irrigation_tick, db)
-        except Exception:
-            logger.exception("Automatic irrigation pass failed.")
+        await asyncio.to_thread(_automatic_irrigation_tick_safely)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=5 * 60)
         except TimeoutError:
