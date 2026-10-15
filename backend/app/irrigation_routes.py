@@ -582,6 +582,11 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                                         "data": {"run_seconds": run_seconds, "queue_option": "append"}}
         if reasons:
             smart_action = None
+        smart_irrigation_litres = (
+            round(profile.flow_l_min * smart_irrigation_seconds / 60, 2)
+            if profile and profile.flow_l_min is not None and smart_irrigation_seconds is not None
+            else None
+        )
         days_after_sowing = (day - planting.sowing_date).days
         suggested_stage = "initial" if days_after_sowing < 20 else "mid"
         row_data = {"bed_id": bed.id, "bed": bed.name, "area_m2": bed.area_m2,
@@ -595,6 +600,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                      "wh51_group_name": sensor_group.name if sensor_group else None,
                      "sensor_group_beds": sum(1 for other in bed_profiles.values() if other.mode == "soil_sensor" and other.wh51_group == (profile.wh51_group if profile else None)) if profile and profile.wh51_group else 0,
                      "smart_irrigation_seconds": smart_irrigation_seconds,
+                     "estimated_litres": smart_irrigation_litres,
                      "action": smart_action,
                      "decision": (("irrigate" if report_status == "irrigate" else "hold" if report_status == "hold" else "review")
                                   if profile and profile.mode == "soil_sensor" else
