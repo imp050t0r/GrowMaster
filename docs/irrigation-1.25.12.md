@@ -22,7 +22,7 @@ WH51 način ostaja ločen. Gredico ročno dodeli eni od največ 16 skupin senzor
 
 ## Ventili in skupne cone
 
-Dnevni pregled lahko pripravi OpenSprinkler osnutek. GrowMaster ne pošlje ukaza za zagon ventila in ne označi zalivanja kot izvedenega. Osnutek pred uporabo preveri in zaženi ročno v Home Assistantu.
+Dnevni pregled lahko pripravi OpenSprinkler osnutek za ročni zagon. Če je samodejno zalivanje izrecno vključeno, lahko GrowMaster ob izbrani uri pošlje zagon samo za sveže in pripravljene Smart Irrigation ventile. Ukaz, ki ga HA sprejme, ni dokaz dejanskega pretoka vode.
 
 Pri skupnem ventilu morajo biti vse nanj vezane aktivne gredice nastavljene kot skupinske. Predlog je blokiran, če katera gredica ni pripravljena ali če bi skupni čas presegel varno omejitev ene od njih. Ocena litrov za vsako gredico uporablja njen vpisani pretok.
 
