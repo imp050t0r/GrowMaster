@@ -61,13 +61,16 @@ export function IrrigationPlanner({crops,beds}) {
     try {const r=await apiRequest(`/api/irrigation/smart-irrigation?day=${day.day}`);if(n===siGeneration.current)setSiPreview(r);}
     catch(e){if(n===siGeneration.current)setError(e.message);}finally{if(n===siGeneration.current)setSiBusy(false);}
   }
-  async function setAutomaticIrrigation(enabled) {
-    if(enabled&&!window.confirm("Vklopim samodejno zalivanje? GrowMaster bo po izbrani lokalni uri uporabil svež Smart Irrigation izračun in lahko odpre povezane OpenSprinkler ventile."))return;
+  async function saveAutomaticIrrigationSettings(enabled=autoConfig.enabled) {
     setHaBusy(true);setError("");setMessage("");
     try {
       const r=await apiRequest("/api/irrigation/automatic-irrigation",{method:"PUT",body:JSON.stringify({...autoConfig,enabled})});
-      setAutoConfig(value=>({...value,...r}));setMessage(r.message);
+      setAutoConfig(value=>({...value,...r}));setMessage(r.message||"Nastavitve samodejnega zalivanja so shranjene.");
     } catch(e){setError(e.message);} finally {setHaBusy(false);}
+  }
+  async function setAutomaticIrrigation(enabled) {
+    if(enabled&&!window.confirm("Vklopim samodejno zalivanje? GrowMaster bo po izbrani lokalni uri uporabil svež Smart Irrigation izračun in lahko odpre povezane OpenSprinkler ventile."))return;
+    await saveAutomaticIrrigationSettings(enabled);
   }
   async function testHomeAssistant() {
     setHaBusy(true);setError("");setMessage("");
@@ -237,6 +240,7 @@ export function IrrigationPlanner({crops,beds}) {
       <h3>Samodejno zalivanje</h3>
       <p>Ko je vključeno, GrowMaster po lokalni uri preverja sveže Smart Irrigation izračune. Pred odpiranjem ventila preveri aktivno kulturo, Kc, povezavo ventila, čas in omejitev zalivanja. Spremenjen Kc najprej posodobi in počaka na nov izračun cone. Negotovega HA odgovora ne ponovi samodejno.</p>
       <label>Začni preverjanje po lokalni uri <input type="time" value={autoConfig.run_after_local_time||"07:00"} onChange={e=>setAutoConfig({...autoConfig,run_after_local_time:e.target.value})}/></label>
+      <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={()=>saveAutomaticIrrigationSettings()}>SHRANI URNIK</button>
       <p>Stanje avtomatike: <strong>{autoConfig.enabled?"VKLOPLJENA":"IZKLOPLJENA"}</strong></p>
       <button type="button" className={autoConfig.enabled?"secondary-button":"primary-button"} disabled={haBusy||!haStatus?.configured} onClick={()=>setAutomaticIrrigation(!autoConfig.enabled)}>
         {autoConfig.enabled?"IZKLOPI SAMODEJNO ZALIVANJE":"VKLOPI SAMODEJNO ZALIVANJE"}
