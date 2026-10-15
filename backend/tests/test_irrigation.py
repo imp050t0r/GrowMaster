@@ -315,6 +315,31 @@ def test_daily_readiness_blocks_if_saved_crop_differs_from_active_crop(irrigatio
     assert not result["rows"][0]["ready"]
     assert any("ne ustreza" in reason for reason in result["rows"][0]["reasons"])
 
+def test_smart_irrigation_kc_draft_uses_active_crop_without_saved_daily_report(irrigation):
+    db,client,_=irrigation
+    db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,
+                   days_summer=35,days_autumn=45,days_winter=55))
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,
+                    sowing_date=date.today()-timedelta(days=25),
+                    expected_harvest_date=date.today()+timedelta(days=15),status="active"))
+    db.commit()
+    client.put("/api/irrigation/beds/1",json={**BP,"mode":"smart_irrigation",
+        "smart_irrigation_entity":"sensor.smart_irrigation_a1"})
+
+    response=client.get(f"/api/irrigation/smart-irrigation?day={date.today()}")
+
+    result=response.json()
+    assert result["automatic_execution"] is False
+    assert len(result["rows"])==1
+    row=result["rows"][0]
+    assert row["crop"]=="Solata" and row["stage"]=="mid"
+    assert row["stage_requires_confirmation"] is True
+    assert row["status"]=="draft" and row["multiplier"]==1
+    assert row["action"]["target"]["entity_id"]=="sensor.smart_irrigation_a1"
+    assert "new_multiplier_value: 1" in row["yaml"]
+    assert "shrani" not in row["yaml"]
+    assert not db.scalar(select(IrrigationDailyReport))
+
 def test_water_ledger_carries_depletion_between_days_and_validates_sequence(irrigation):
     _,c,_=irrigation
     day1=date.today()-timedelta(days=1)
