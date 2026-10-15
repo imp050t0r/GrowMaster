@@ -733,7 +733,6 @@ def opensprinkler_preview(day: date, db: Session = Depends(get_db)):
 @router.get("/smart-irrigation")
 def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
     """Draft current-crop Kc updates; never calculate or start a run."""
-    now = datetime.now(timezone.utc)
     beds = {bed.id: bed for bed in db.scalars(select(Bed).where(Bed.farm_id == FARM_ID))}
     crop_profiles = {row.crop_id: CropProfile.model_validate_json(row.parameters) for row in
                      db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))}
@@ -796,9 +795,9 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
             }
             item.update(
                 status="draft", action=action, multiplier=multiplier,
-                yaml=("action: smart_irrigation.set_multiplier\\n"
-                      f"target:\\n  entity_id: {zone_entity}\\n"
-                      f"data:\\n  new_multiplier_value: {multiplier}\\n"),
+                yaml=("action: smart_irrigation.set_multiplier\n"
+                      f"target:\n  entity_id: {zone_entity}\n"
+                      f"data:\n  new_multiplier_value: {multiplier}\n"),
             )
         rows.append(item)
 
