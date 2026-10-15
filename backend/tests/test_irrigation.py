@@ -265,8 +265,8 @@ def test_smart_irrigation_mode_calculates_without_wh51_or_ha(irrigation,monkeypa
     assert result["status"]=="irrigate"
     assert "wh51" not in result and result["inputs"]["soil_moisture_pct"] is None
 
-@pytest.mark.parametrize("seconds,decision,run_seconds",[(0,"hold",None),(125.2,"irrigate",126)])
-def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_draft(irrigation,monkeypatch,seconds,decision,run_seconds):
+@pytest.mark.parametrize("seconds,decision,run_seconds,estimated_litres",[(0,"hold",None,0),(125.2,"irrigate",126,4.17)])
+def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_draft(irrigation,monkeypatch,seconds,decision,run_seconds,estimated_litres):
     db,c,_=irrigation
     db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,days_summer=35,days_autumn=45,days_winter=55))
     db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
@@ -287,6 +287,7 @@ def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_d
     monkeypatch.setattr(irrigation_routes.httpx,"Client",Client)
     result=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()["rows"][0]
     assert result["decision"]==decision and result["smart_irrigation_seconds"]==seconds
+    assert result["estimated_litres"]==estimated_litres
     if run_seconds is None:
         assert result["action"] is None
     else:
