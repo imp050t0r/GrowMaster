@@ -238,7 +238,7 @@ export function IrrigationPlanner({crops,beds}) {
       </article>)}</div>}
     <section className="irrigation-automation">
       <h3>Samodejno zalivanje</h3>
-      <p>Ko je vključeno, GrowMaster po lokalni uri preverja sveže Smart Irrigation izračune. Pred odpiranjem ventila preveri aktivno kulturo, Kc, povezavo ventila, čas in omejitev zalivanja. Spremenjen Kc najprej posodobi in počaka na nov izračun cone. Negotovega HA odgovora ne ponovi samodejno.</p>
+      <p>Ko je vključeno, GrowMaster po lokalni uri preverja sveže Smart Irrigation izračune. Pred odpiranjem ventila preveri aktivno kulturo, Kc, povezavo ventila, čas in omejitev zalivanja. Po vklopu in ob spremembi Kc počaka na nov Smart Irrigation izračun cone. Negotovega HA odgovora ne ponovi samodejno.</p>
       <label>Začni preverjanje po lokalni uri <input type="time" value={autoConfig.run_after_local_time||"07:00"} onChange={e=>setAutoConfig({...autoConfig,run_after_local_time:e.target.value})}/></label>
       <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={()=>saveAutomaticIrrigationSettings()}>SHRANI URNIK</button>
       <p>Stanje avtomatike: <strong>{autoConfig.enabled?"VKLOPLJENA":"IZKLOPLJENA"}</strong></p>
