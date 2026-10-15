@@ -4,7 +4,7 @@ Ta navodila pokrivajo obe možnosti profila grede. Uporabiš ju lahko tudi skupa
 
 ## Pred začetkom: Home Assistant
 
-1. V GrowMasterju odpri **Več → Namakanje**.
+1. V GrowMasterju odpri **Plan → Namakanje**.
 2. V razdelku **Smart Irrigation prek Home Assistanta** vnesi URL, dosegljiv iz GrowMaster strežnika, npr. `http://192.168.1.50:8123`, in dolgoročni dostopni žeton.
 3. Klikni **SHRANI POVEZAVO**, nato **PREVERI POVEZAVO**. Uspeh je prikazan kot **povezano**.
 4. Gumb **PREBERI NASTAVLJENE SENZORJE** prikaže samo entitete, ki so že vpisane v konfiguracijo skupin WH51 oziroma v strežniški seznam vremenskih entitet. Ne išče samodejno vseh naprav.
@@ -113,7 +113,7 @@ Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMas
 - Ali se kultura in profili od shranjenega izračuna niso spremenili? Po spremembi ponovno izračunaj in shrani dan.
 - Ali je OpenSprinkler postaja pravilno povezana z eno gredico in je trajanje znotraj nastavljene omejitve?
 
-**Varnostno pravilo:** GrowMaster 1.25.12 ne izvaja samodejnega dnevnega odločanja in ne odpira ventilov sam. Vrednosti, vremenske podatke, profile ter vsak osnutek pred uporabo preveri uporabnik.
+**Varnostno pravilo:** Samodejno zalivanje je privzeto izključeno. Po izrecnem vklopu GrowMaster vsak dan preverja sveže Smart Irrigation podatke in odpre samo pripravljene ventile. Sprejem ukaza v Home Assistantu ne potrjuje fizičnega pretoka vode.
 
 
 ## Vklop samodejnega zalivanja
@@ -121,7 +121,7 @@ Ko ima gredica v profilu pravilen OpenSprinkler entity ID postaje, lahko GrowMas
 1. Najprej shrani in preveri povezavo Home Assistanta.
 2. Pri vsaki gredici nastavi aktivno kulturo prek zasaditve, Smart Irrigation entiteto, OpenSprinkler postajo, pretok in največji čas delovanja.
 3. Preveri, da so Kc profili kultur pravilni ter da časovni senzor Smart Irrigation izračunava sveže vrednosti v sekundah.
-4. V **Več → Namakanje → Samodejno zalivanje** nastavi lokalno uro začetka preverjanja.
+4. V **Plan → Namakanje → Samodejno zalivanje** nastavi lokalno uro začetka preverjanja.
 5. Izberi **VKLOPI SAMODEJNO ZALIVANJE** in potrdi opozorilo. Privzeto je funkcija izključena; kadar koli jo lahko izključiš.
 6. Preglej prikazane zadnje zagone. Stanje »oddano« potrjuje le sprejem ukaza v HA, ne pretoka skozi kapljične cevi.
 
