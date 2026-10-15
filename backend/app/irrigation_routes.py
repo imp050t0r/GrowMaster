@@ -761,15 +761,26 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
             "crop_id": planting.crop_id, "crop": planting.crop.name,
             "variety": planting.variety.name if planting.variety else None,
             "sowing_date": str(planting.sowing_date), "status": "blocked",
-            "stage": None, "stage_requires_confirmation": True,
+            "stage": None, "stage_requires_confirmation": False,
+            "stage_source": None, "stage_progress_pct": None,
             "multiplier": None, "action": None, "yaml": None, "reasons": [],
         }
         reasons = item["reasons"]
         days_after_sowing = (day - planting.sowing_date).days
         item["days_after_sowing"] = days_after_sowing
-        # This is only a starting suggestion. Crop-specific growth stages must be
-        # checked by the user before sending the Kc update to Home Assistant.
-        stage = "initial" if days_after_sowing < 20 else "mid"
+        harvest_target = planting.predicted_harvest_start or planting.expected_harvest_date
+        cycle_days = (harvest_target - planting.sowing_date).days
+        if cycle_days <= 0:
+            reasons.append("Datum setve in napoved pobiranja ne določata veljavnega rastnega cikla.")
+            stage = None
+        else:
+            progress = max(0.0, min(1.0, days_after_sowing / cycle_days))
+            item["stage_progress_pct"] = round(progress * 100, 1)
+            item["stage_source"] = ("predicted_harvest_start" if planting.predicted_harvest_start
+                                    else "expected_harvest_date")
+            # Estimate the FAO-style three Kc periods from the recorded planting
+            # cycle: initial 0–20%, mid 20–80%, late 80% until harvest.
+            stage = "initial" if progress < 0.2 else "mid" if progress < 0.8 else "late"
         item["stage"] = stage
         if day != date.today():
             reasons.append("Kc lahko pripraviš samo za današnji pregled.")
@@ -784,7 +795,7 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
             reasons.append("Gredica nima povezane Smart Irrigation cone.")
         elif len(mapped_zones.get(zone_entity, [])) > 1:
             reasons.append("Ista Smart Irrigation cona je povezana z več gredicami; Kc mora biti določen enkrat na cono.")
-        multiplier = getattr(crop_profile, "kc_" + stage) if crop_profile else None
+        multiplier = getattr(crop_profile, "kc_" + stage) if crop_profile and stage else None
         if multiplier is None or not math.isfinite(multiplier) or not 0 <= multiplier <= 2:
             reasons.append("Koeficient Kc ni veljaven.")
         if not reasons:
@@ -804,9 +815,9 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
     return {
         "day": str(day), "automatic_execution": False, "requires_manual_review": True,
         "rows": rows,
-        "note": "Osnutki Kc izhajajo iz trenutno aktivne kulture in profila kulture, ne iz shranjenega dnevnega izračuna. "
-                "Faza je samo predlog po dnevih od setve; pred pošiljanjem preveri dejansko fazo in Kc. "
-                "Pošlje se samo Kc. GrowMaster ne izračuna časa in ne sproži namakanja.",
+        "note": "Osnutki Kc izhajajo iz aktivne kulture in profila kulture, ne iz shranjenega dnevnega izračuna. "
+                "Fazo GrowMaster samodejno oceni iz datuma setve in pričakovanega pobiranja; uporabi dinamični datum pobiranja, če je na voljo. "
+                "Pred pošiljanjem preveri kulturo, Kc in HA cono. Pošlje se samo Kc; GrowMaster ne sproži namakanja.",
     }
 
 def home_assistant_config():
