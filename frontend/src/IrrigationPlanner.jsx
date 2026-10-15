@@ -22,6 +22,7 @@ export function IrrigationPlanner({crops,beds}) {
   const siGeneration=useRef(0);
   const [haStatus,setHaStatus]=useState(null),[haBusy,setHaBusy]=useState(false);
   const [haConfig,setHaConfig]=useState({url:"",token:""});
+  const [autoConfig,setAutoConfig]=useState({enabled:false,run_after_local_time:"07:00",last_runs:[]});
   const [haStates,setHaStates]=useState(null);
   function chooseBed(value) {
     setBedId(value);
@@ -30,6 +31,7 @@ export function IrrigationPlanner({crops,beds}) {
   }
   useEffect(()=>{let closed=false; apiRequest("/api/irrigation/profiles").then(p=>{if(!closed){setProfiles(p);setSensorGroups(Array.from({length:16},(_,i)=>p.sensor_groups?.find(item=>item.group_number===i+1)||{group_number:i+1,name:`WH51 ${i+1}`,entity_id:""}));}}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;generation.current++;};},[]);
   useEffect(()=>{let closed=false;apiRequest("/api/irrigation/home-assistant/status").then(r=>{if(!closed){setHaStatus(r);setHaConfig(value=>({...value,url:r.url||""}));}}).catch(()=>{if(!closed)setHaStatus({configured:false,token_configured:false});});return()=>{closed=true;};},[]);
+  useEffect(()=>{let closed=false;apiRequest("/api/irrigation/automatic-irrigation").then(r=>{if(!closed)setAutoConfig(r);}).catch(()=>{});return()=>{closed=true;};},[]);
   useEffect(()=>{setCp(profiles.crops.find(p=>String(p.crop_id)===cropId)||cropEmpty);},[cropId,profiles]);
   useEffect(()=>{setBp({...bedEmpty,...profiles.beds.find(p=>String(p.bed_id)===bedId)});},[bedId,profiles]);
   useEffect(()=>{generation.current++;setReport(null);setMessage("");setBusy(false);},[cropId,bedId,cp,bp,day]);
@@ -58,6 +60,14 @@ export function IrrigationPlanner({crops,beds}) {
     const n=++siGeneration.current;setSiBusy(true);setSiPreview(null);setSiConfirmed(false);setError("");
     try {const r=await apiRequest(`/api/irrigation/smart-irrigation?day=${day.day}`);if(n===siGeneration.current)setSiPreview(r);}
     catch(e){if(n===siGeneration.current)setError(e.message);}finally{if(n===siGeneration.current)setSiBusy(false);}
+  }
+  async function setAutomaticIrrigation(enabled) {
+    if(enabled&&!window.confirm("Vklopim samodejno zalivanje? GrowMaster bo po izbrani lokalni uri uporabil svež Smart Irrigation izračun in lahko odpre povezane OpenSprinkler ventile."))return;
+    setHaBusy(true);setError("");setMessage("");
+    try {
+      const r=await apiRequest("/api/irrigation/automatic-irrigation",{method:"PUT",body:JSON.stringify({...autoConfig,enabled})});
+      setAutoConfig(value=>({...value,...r}));setMessage(r.message);
+    } catch(e){setError(e.message);} finally {setHaBusy(false);}
   }
   async function testHomeAssistant() {
     setHaBusy(true);setError("");setMessage("");
@@ -223,6 +233,16 @@ export function IrrigationPlanner({crops,beds}) {
       {osPreview.rows.map(r=><article key={r.bed_id}><strong>Gredica {r.bed||r.bed_id} · {r.status==="draft"?"Osnutek za ročni pregled":"Akcija ni pripravljena"}</strong>
         {r.status==="draft"?<><p>{r.litres} l · {r.run_seconds} sekund · {r.action.target.entity_id}</p><ul>{r.warnings.map((w,i)=><li key={i}>{w}</li>)}</ul><p>Spodnji zapis lahko po preverjanju uporabiš v Home Assistantu, Orodja za razvijalce → Akcije → YAML. Izvedba tam dejansko odpre ventil.</p><textarea aria-label={`Akcija OpenSprinkler za gredico ${r.bed||r.bed_id}`} readOnly rows={8} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
       </article>)}</div>}
+    <section className="irrigation-automation">
+      <h3>Samodejno zalivanje</h3>
+      <p>Ko je vključeno, GrowMaster po lokalni uri preverja sveže Smart Irrigation izračune. Pred odpiranjem ventila preveri aktivno kulturo, Kc, povezavo ventila, čas in omejitev zalivanja. Spremenjen Kc najprej posodobi in počaka na nov izračun cone. Negotovega HA odgovora ne ponovi samodejno.</p>
+      <label>Začni preverjanje po lokalni uri <input type="time" value={autoConfig.run_after_local_time||"07:00"} onChange={e=>setAutoConfig({...autoConfig,run_after_local_time:e.target.value})}/></label>
+      <p>Stanje avtomatike: <strong>{autoConfig.enabled?"VKLOPLJENA":"IZKLOPLJENA"}</strong></p>
+      <button type="button" className={autoConfig.enabled?"secondary-button":"primary-button"} disabled={haBusy||!haStatus?.configured} onClick={()=>setAutomaticIrrigation(!autoConfig.enabled)}>
+        {autoConfig.enabled?"IZKLOPI SAMODEJNO ZALIVANJE":"VKLOPI SAMODEJNO ZALIVANJE"}
+      </button>
+      {autoConfig.last_runs?.length>0&&<details><summary>Zadnji samodejni zagoni</summary><ul>{autoConfig.last_runs.map((run,i)=><li key={i}>{run.day} · {run.station} · {run.status} · {run.run_seconds} s</li>)}</ul></details>}
+    </section>
     <h3>Smart Irrigation prek Home Assistanta</h3>
     <p>Stanje povezave: <strong>{haStatus?.connected?"povezano":haStatus?.configured?"nastavljeno, še nepreverjeno":"ni nastavljena"}</strong>. Vnesi URL Home Assistanta, ki je dosegljiv iz računalnika GrowMaster, in njegov dolgoročni dostopni žeton. Žeton se shrani šifrirano na podatkovni disk strežnika in ga GrowMaster ne prikaže nazaj. Za naslov `.local` mora biti ime dosegljivo iz Docker vsebnika; sicer uporabi lokalni IP.</p>
     {haStatus?.source==="environment"&&haStatus?.configured&&<p>Trenutno je uporabljena starejša strežniška nastavitev. Če shraniš obrazec, bo nastavitev iz aplikacije prevzela prednost.</p>}
