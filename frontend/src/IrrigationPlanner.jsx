@@ -145,7 +145,7 @@ export function IrrigationPlanner({crops,beds}) {
   const dirty=JSON.stringify(numeric(cp))!==JSON.stringify(numeric(storedCrop||cropEmpty))||JSON.stringify(numeric(bp))!==JSON.stringify(numeric({...bedEmpty,...storedBed}));
   return <section className="panel" aria-label="Namakanje">
     <p className="eyebrow">Dnevna vodna bilanca</p><h2>Namakanje</h2>
-    <p>Dnevni pregled uporablja trenutno aktivno kulturo. Za gredice brez WH51 GrowMaster prebere sveže trajanje Smart Irrigation in iz nastavljenega pretoka oceni količino vode. Pregled se osveži ob odprtju, ob vrnitvi v aplikacijo in vsakih 15 minut. Ročni vodni izračun ET₀, dežja in začetnega primanjkljaja je ločen. GrowMaster pripravi le osnutek ventila za pregled; sam ga ne zažene.</p>
+    <p>Dnevni pregled uporablja trenutno aktivno kulturo. Za gredice brez WH51 GrowMaster prebere sveže trajanje Smart Irrigation in iz nastavljenega pretoka oceni količino vode. Pregled se osveži ob odprtju, ob vrnitvi v aplikacijo in vsakih 15 minut. Ročni vodni izračun ET₀, dežja in začetnega primanjkljaja je ločen. Ročni OpenSprinkler osnutek je namenjen pregledu in sam ne zažene ventila. Ločena avtomatika deluje samo, če jo izrecno vklopiš.</p>
     <div className="irrigation-bed-review" aria-label={`Pregled gredic za ${day.day}`}>
       <div className="section-heading"><div><p className="eyebrow">Pregled za {day.day}</p><h3>Gredice z aktivnim posevkom</h3></div><span>{beds.filter(item=>item.current_planting).length} aktivnih</span></div>
       {dailyStates.length===0?<p className="empty-state">Ni zabeleženih aktivnih zasaditev na gredicah.</p>:dailyStates.map(({bed:b,report,hasCropProfile,hasBedProfile,needsCalculation})=>{
@@ -230,7 +230,7 @@ export function IrrigationPlanner({crops,beds}) {
     </details>}
     <details><summary>Shranjeni izračuni za {day.day} ({saved.length})</summary><p>To so posnetki izračuna s takratnimi profili, ne dokazi izvedenega zalivanja. Sprememba profila jih ne preračuna.</p><ul>{saved.map(r=><li key={r.bed_id}>{r.crop} · gredica {r.bed}: {statusNames[r.status]} · {r.litres==null?"količina ni določena":`${r.litres} l`} · {r.day}</li>)}</ul></details>
     <h3>OpenSprinkler prek Home Assistanta</h3>
-    <p>Pripravi osnutke iz shranjenih današnjih izračunov, največ šest ur starih. Pred tem shrani povezavo postaje in ponovno izračunaj dan. To ni samodejni zagon ventilov.</p>
+    <p>Pripravi osnutke iz shranjenih današnjih izračunov, največ šest ur starih. Pred tem shrani povezavo postaje in ponovno izračunaj dan. Ta gumb pripravi le ročni osnutek; za samodejni zagon uporabi ločen izbirni nadzor spodaj.</p>
     <button type="button" className="secondary-button" disabled={dirty||busy||osBusy} onClick={prepareOpenSprinkler}>PRIPRAVI AKCIJE OPENSPRINKLER</button>
     {osPreview&&<div aria-label="Osnutki OpenSprinkler"><p>{osPreview.note}</p>{!osPreview.rows.length&&<p>Za izbrani dan ni shranjenih izračunov.</p>}
       {osPreview.rows.map(r=><article key={r.bed_id}><strong>Gredica {r.bed||r.bed_id} · {r.status==="draft"?"Osnutek za ročni pregled":"Akcija ni pripravljena"}</strong>
