@@ -1,4 +1,4 @@
-"""Manual, advisory water balance. No weather polling or valve commands."""
+"""Irrigation planning, Home Assistant integration, and guarded optional automation."""
 import json
 import math
 import os
