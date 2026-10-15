@@ -67,7 +67,7 @@ Ta pregled ne zahteva WH51 ali ročno shranjenega GrowMaster dnevnega izračuna.
 - Za oceno vode v litrih GrowMaster pomnoži trajanje v sekundah s pretokom grede v l/min in deli s 60.
 - Če pretok ni nastavljen, GrowMaster prikaže trajanje, količine v litrih pa ne more oceniti.
 
-Smart Irrigation še naprej računa svojo vremensko bilanco in trajanje. GrowMaster prikaže trenutno aktivno kulturo, vendar je ne pošlje samodejno kot Kc v Home Assistant. Za Kc za trenutno kulturo uporabi spodnji postopek **Pošiljanje Kc v Smart Irrigation** in pred pošiljanjem preveri osnutek.
+Smart Irrigation še naprej računa svojo vremensko bilanco in trajanje. GrowMaster lahko pripravi Kc-osnutek iz trenutne aktivne kulture brez WH51 in brez shranjenega dnevnega izračuna. Faza je grob predlog po dnevih od setve: začetna do 19. dne, nato polna rast. Pred pošiljanjem ročno preveri dejansko fazo rastline in Kc. GrowMaster ne določi samodejno pozne faze.
 
 Dnevni pregled lahko pripravi OpenSprinkler osnutek, vendar ventila ne odpre. Osnutek pred uporabo preveri in zaženi ročno v Home Assistantu.
 
@@ -75,13 +75,13 @@ Dnevni pregled lahko pripravi OpenSprinkler osnutek, vendar ventila ne odpre. Os
 
 1. Izberi aktivno kulturo in gredico ter ustrezno fazo rasti.
 2. Vnesi začetni primanjkljaj, ET₀, učinkoviti dež, že izvedeno zalivanje in vir podatkov. Trenutno GrowMaster teh vrednosti še ne pobira in ne pretvarja samodejno iz vremenske postaje.
-3. Klikni **IZRAČUNAJ IN SHRANI DAN** in preglej rezultat. Za naslednji dan preveri preneseni začetni primanjkljaj ter popravi dejanski dež in izvedeno namakanje.
-4. Smart Irrigation v Home Assistantu še naprej vodi svojo vremensko bilanco in urnik. GrowMaster lahko iz shranjenega dnevnega izračuna pripravi Kc za cono.
+3. Klikni **IZRAČUNAJ IN SHRANI DAN** samo, če želiš uporabljati ločeno ročno vodno bilanco GrowMasterja. Ta korak ni potreben za dnevno branje priporočila Smart Irrigation.
+4. Smart Irrigation v Home Assistantu še naprej vodi svojo vremensko bilanco in urnik.
 
 ### 3. Pošiljanje Kc v Smart Irrigation
 
-1. Klikni **PRIPRAVI Kc ZA SMART IRRIGATION**.
-2. Preglej vsako pripravljeno vrstico, kulturo, fazo, Kc in entity ID cone. Če se karkoli ne ujema, ne pošiljaj; popravi profile oziroma izračun in pripravi osnutek znova.
+1. Klikni **PRIPRAVI Kc ZA SMART IRRIGATION**. GrowMaster uporabi trenutno aktivno kulturo in njen shranjeni profil; dnevni izračun ni potreben.
+2. Preglej vsako pripravljeno vrstico, kulturo, predlagano fazo, Kc in entity ID cone. Pred pošiljanjem ročno potrdi fazo rastline. Če se karkoli ne ujema, ne pošiljaj; popravi aktivno zasaditev ali profil kulture in pripravi osnutek znova.
 3. Ko si pregledal osnutke, klikni **POŠLJI Kc V HOME ASSISTANT**.
 4. Aplikacija potrdi število poslanih posodobitev Kc. Smart Irrigation še naprej izvaja svoje preračune in urnik.
 
