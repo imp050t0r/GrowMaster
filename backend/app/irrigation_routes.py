@@ -389,6 +389,12 @@ def save_crop(crop_id: int, payload: CropProfile, db: Session = Depends(get_db))
 @router.put("/beds/{bed_id}")
 def save_bed(bed_id: int, payload: BedProfile, db: Session = Depends(get_db)):
     entity(db, Bed, bed_id)
+    stations = {BedProfile.model_validate_json(r.parameters).opensprinkler_station_entity for r in
+                db.scalars(select(IrrigationBedProfile).where(
+                    IrrigationBedProfile.farm_id == FARM_ID, IrrigationBedProfile.bed_id != bed_id))}
+    stations.add(payload.opensprinkler_station_entity)
+    if len(stations - {None}) > 72:
+        raise HTTPException(422, "OpenSprinkler podpira največ 72 fizičnih con; več gredic lahko uporablja isti ventil.")
     return save_profile(db, IrrigationBedProfile, "bed_id", bed_id, payload)
 
 
