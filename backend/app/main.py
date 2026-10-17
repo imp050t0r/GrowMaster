@@ -67,6 +67,7 @@ from app.planting_advisor import (
     seasonal_assessment,
 )
 from app.planting_calendar import default_calendar_for_crop
+from app.irrigation_planning import validate_plan as validate_irrigation_plan
 from app.models import (
     Bed,
     Cost,
@@ -3534,6 +3535,13 @@ def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> 
         plan.crop = crop
         plan.variety = variety
         store_prediction(plan, variety)
+        with db.no_autoflush:
+            irrigation_check = validate_irrigation_plan(db, plan, DEFAULT_FARM_ID)
+        if not irrigation_check["compatible"]:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Skupni ventil: " + "; ".join(irrigation_check["reasons"]))
+        if irrigation_check["shared"]:
+            warnings.append("Skupni ventil: profili so združljivi; preveri tlak in pretok na kapljičnih ceveh, vključno z izgubami dovoda.")
         db.add(plan)
         created.append(plan)
     db.commit()

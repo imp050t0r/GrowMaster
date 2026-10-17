@@ -26,6 +26,7 @@ from app.dtm_learning import learning_report, apply_suggestion, save_result, sna
 from app.workload import workload_report
 from app.harvest_forecast import harvest_forecast
 from app.production_planner import production_proposals
+from app.irrigation_planning import load_context
 
 
 router = APIRouter()
@@ -56,7 +57,8 @@ def get_production_proposals(payload: ProductionProposalRequest, db: Session = D
     plantings = db.scalars(select(Planting).where(
         Planting.farm_id == DEFAULT_FARM_ID, Planting.status.in_(["active", "completed"]),
     ).options(selectinload(Planting.crop), selectinload(Planting.variety))).all()
-    return production_proposals(beds, crops, plans, plantings, payload.start, payload.end, payload.max_beds)
+    return production_proposals(beds, crops, plans, plantings, payload.start, payload.end, payload.max_beds,
+                                irrigation=load_context(db, DEFAULT_FARM_ID))
 
 
 @router.get("/api/planning/harvest-forecast")
