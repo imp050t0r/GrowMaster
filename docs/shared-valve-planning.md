@@ -60,10 +60,10 @@ vseh kombinacij ali vračanja na predhodne izbire. Lahko izpusti kombinacijo, ki
 jo našla globalna optimizacija. Poljuben začetni neuspeh obstoječega sezonskega ali
 kolobarnega filtra se ne rešuje z dodatnim iskanjem; zamike išče po vodnem konfliktu.
 
-Spremembe vodnih profilov in potrjevanje naučenih popravkov DTM še ne preverjajo
-vseh že shranjenih načrtov. Premiki nasledstva, zamiki, zaključki zasedenosti ter
-aktivacija in neposredna setev so vključeni v tretji sklop spodaj. Avtomatika ni
-bila preverjena na fizični opremi.
+Spremembe vodnih profilov vrnejo konflikte obstoječih načrtov in aktivnih zasaditev;
+potrjevanje popravkov DTM preveri združljivost pred zapisom. Premiki nasledstva,
+zamiki, zaključki zasedenosti ter aktivacija in neposredna setev so vključeni spodaj.
+Avtomatika ni bila preverjena na fizični opremi.
 
 ## Drugi sklop: ena Smart Irrigation cona na fizični ventil
 
@@ -128,7 +128,8 @@ ventil pred shranjevanjem. Konflikt vrne HTTP 409 in razveljavi celoten popravek
 napovedi za načrt ali aktivno zasaditev. Združljiv preračun ohrani prvotni posnetek
 napovedi in načrtovani datum spravila; drugih gredic ne spreminja.
 
-1. Pripraviti pregled konfiguracije za dejansko HA namestitev pred preizkusom opreme.
+1. Izpolniti pripravljeni [pregled konfiguracije in zapisnik preizkusa](commissioning-shared-irrigation.md)
+   z dejanskimi različicami, entitetami in meritvami na lokaciji.
 2. Na dejanski HA namestitvi preveriti skupni senzor, enote, `last_calculated` in
    knjiženje dejansko izvedenega zalivanja v SI bilanco. Programsko združevanje je izvedeno.
 3. Uvesti shranjene meritve hidravlike in omejitev vira namesto projektne konstante;
