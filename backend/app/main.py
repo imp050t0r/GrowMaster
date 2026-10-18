@@ -6823,5 +6823,10 @@ def update_dynamic_dtm(record_type: str, record_id: int, payload: ClimateInput,
             reference = source_plan.transplant_date or source_plan.sowing_date
             kind = "transplant" if source_plan.transplant_date else "sowing"
     result = store_prediction(record, record.variety, payload, reference, kind)
+    with db.no_autoflush:
+        irrigation = validate_irrigation_plan(db, record, DEFAULT_FARM_ID)
+    if not irrigation["compatible"]:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Skupni ventil: " + " ".join(irrigation["reasons"]))
     db.commit()
     return {"dynamic_dtm": result}

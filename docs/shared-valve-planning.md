@@ -123,8 +123,12 @@ Skupni seznam idej upošteva tudi predhodno izbrane ideje v istem odgovoru.
 Izločitev vrne razloge; svetovalec gredic jih prikaže v vmesniku. Ta dva svetovalca
 ohranita zahtevani datum in ne iščeta časovnih zamikov; te išče proizvodni načrtovalnik.
 
-1. Preveriti še neposredno ponovno računanje razvojne napovedi z vremenskimi vhodi
-   in njegov vpliv na skupne ventile.
+Neposredno ponovno računanje razvojne napovedi z vremenskimi vhodi preveri skupni
+ventil pred shranjevanjem. Konflikt vrne HTTP 409 in razveljavi celoten popravek
+napovedi za načrt ali aktivno zasaditev. Združljiv preračun ohrani prvotni posnetek
+napovedi in načrtovani datum spravila; drugih gredic ne spreminja.
+
+1. Pripraviti pregled konfiguracije za dejansko HA namestitev pred preizkusom opreme.
 2. Na dejanski HA namestitvi preveriti skupni senzor, enote, `last_calculated` in
    knjiženje dejansko izvedenega zalivanja v SI bilanco. Programsko združevanje je izvedeno.
 3. Uvesti shranjene meritve hidravlike in omejitev vira namesto projektne konstante;
@@ -139,8 +143,8 @@ ohranita zahtevani datum in ne iščeta časovnih zamikov; te išče proizvodni 
 
 ## Preverjanje in viri
 
-Po dopolnitvi priporočil: 343 zalednih testov uspešnih (vključno s 5 testi priporočil
-in 9 testi vpliva profilov ter popravkov napovedi),
+Po dopolnitvi vremenskega preračuna: 347 zalednih testov uspešnih (vključno s 4 testi
+vremenskega preračuna, 5 testi priporočil in 9 testi profilov ter popravkov napovedi),
 produkcijska gradnja vmesnika uspešna. Gradnja uporablja obstoječe lokalne odvisnosti
 in opozori na paket nad 500 kB. Fizična oprema in dejanska HA namestitev nista bili testirani.
 
