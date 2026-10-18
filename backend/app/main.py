@@ -1784,6 +1784,12 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
         status="active",
     )
     store_prediction(planting, variety)
+    planting.variety = variety
+    with db.no_autoflush:
+        irrigation_check = validate_irrigation_plan(db, planting, DEFAULT_FARM_ID)
+    if not irrigation_check["compatible"]:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Skupni ventil: " + "; ".join(irrigation_check["reasons"]))
     bed.status = "growing"
     db.add(planting)
     db.flush()
@@ -3598,6 +3604,12 @@ def activate_crop_plan(
         store_prediction(planting, plan.variety,
                          reference_date=plan.transplant_date or plan.sowing_date,
                          reference_kind="transplant" if plan.transplant_date else "sowing")
+    planting.variety = plan.variety
+    with db.no_autoflush:
+        irrigation_check = validate_irrigation_plan(db, planting, DEFAULT_FARM_ID)
+    if not irrigation_check["compatible"]:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Skupni ventil: " + "; ".join(irrigation_check["reasons"]))
     plan.bed.status = "growing"
     db.add(planting)
     db.flush()

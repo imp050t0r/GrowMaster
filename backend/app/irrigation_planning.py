@@ -1,12 +1,16 @@
 """Conservative shared-valve screening, not a hydraulic or weather forecast."""
 from datetime import date, timedelta
 from math import isclose
+import hashlib
+import json
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
 from app.irrigation_routes import BedProfile, CropProfile
 from app.models import Bed, CropPlan, IrrigationBedProfile, IrrigationCropProfile, Planting
 from app.succession import field_start, release_estimate
+from app.dynamic_dtm import store_prediction
 
 
 def load_context(db, farm_id):
@@ -113,3 +117,36 @@ def validate_plan(db, plan, farm_id):
     records = list(db.scalars(select(CropPlan).where(CropPlan.farm_id == farm_id, CropPlan.status == "planned")))
     records += list(db.scalars(select(Planting).where(Planting.farm_id == farm_id, Planting.status == "active")))
     return assess(crop_cycle(plan), [crop_cycle(r) for r in records if r is not plan], context)
+
+
+def check_succession_irrigation(report, plans, plantings, context):
+    """Screen proposed dates and destinations without changing stored records."""
+    profiles = {kind: {key: value.model_dump(mode="json") for key, value in context[kind].items()}
+                for kind in ("profiles", "crops")}
+    report["token"] = hashlib.sha256((report["token"] + json.dumps(profiles, sort_keys=True)).encode()).hexdigest()
+    records = [*plans, *(p for p in plantings if p.status == "active")]
+    by_id = {p.id: p for p in plans}
+    for group in report["beds"]:
+        for row in group["plans"]:
+            plan = by_id[row["plan_id"]]
+            peers = [crop_cycle(p) for p in records if p is not plan]
+            candidate = SimpleNamespace(**{c.name: getattr(plan, c.name) for c in plan.__table__.columns},
+                                        variety=plan.variety)
+            alternatives = []
+            for bed in row["alternative_beds"]:
+                candidate.bed_id = bed["id"]
+                if assess(crop_cycle(candidate), peers, context)["compatible"]:
+                    alternatives.append(bed)
+            row["alternative_beds"] = alternatives
+            candidate.bed_id = plan.bed_id
+            if row["shift_days"]:
+                for name, value in row["proposed"].items():
+                    setattr(candidate, name, value)
+                store_prediction(candidate, plan.variety)
+                check = assess(crop_cycle(candidate), peers, context)
+                row["irrigation_reasons"] = check["reasons"]
+                if not check["compatible"]:
+                    row["blocked"] = True
+                    row["warnings"].extend(check["reasons"])
+                    group["can_apply"] = False
+    return report

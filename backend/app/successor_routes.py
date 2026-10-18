@@ -26,7 +26,7 @@ from app.dtm_learning import learning_report, apply_suggestion, save_result, sna
 from app.workload import workload_report
 from app.harvest_forecast import harvest_forecast
 from app.production_planner import production_proposals
-from app.irrigation_planning import load_context
+from app.irrigation_planning import load_context, check_succession_irrigation, validate_plan
 
 
 router = APIRouter()
@@ -121,7 +121,18 @@ def succession_state(db: Session, *, lock=False):
     beds = list(db.scalars(beds_query).all())
     plans = list(db.scalars(plans_query).all())
     plantings = list(db.scalars(plantings_query).all())
-    return beds, plans, plantings, succession_review(beds, plans, plantings)
+    report = succession_review(beds, plans, plantings)
+    check_succession_irrigation(report, plans, plantings, load_context(db, DEFAULT_FARM_ID))
+    return beds, plans, plantings, report
+
+
+def require_irrigation_compatibility(db, records):
+    with db.no_autoflush:
+        for record in records:
+            check = validate_plan(db, record, DEFAULT_FARM_ID)
+            if not check["compatible"]:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="Skupni ventil: " + "; ".join(check["reasons"]))
 
 
 def checked_succession_state(db: Session, token: str):
@@ -148,6 +159,7 @@ def update_bed_release(record_type: str, record_id: int, payload: BedReleaseUpda
     if payload.expected_bed_release_date and payload.expected_bed_release_date < minimum:
         raise HTTPException(status_code=422, detail=f"Zaključek zasedenosti mora biti {minimum} ali pozneje. Dejansko končan cikel zaključi v gredicah.")
     record.expected_bed_release_date = payload.expected_bed_release_date
+    require_irrigation_compatibility(db, [record])
     db.commit()
     return {"message": "Predvideni zaključek zasedenosti je shranjen."}
 
@@ -173,6 +185,7 @@ def apply_succession(bed_id: int, payload: SuccessionAction, db: Session = Depen
         # The initial snapshot remains intact for planned-versus-actual work.
         store_prediction(plan, plan.variety)
         changed.append({"plan_id": plan.id, "before": before, "after": row["proposed"]})
+    require_irrigation_compatibility(db, [by_id[row["plan_id"]] for row in changed])
     db.commit()
     return {"message": f"Posodobljenih je {len(changed)} načrtov. Razmik med setvijo sadik in presajanjem je ohranjen.", "changes": changed}
 
@@ -187,6 +200,7 @@ def move_succession(plan_id: int, payload: SuccessionMove, db: Session = Depends
         raise HTTPException(status_code=409, detail="Gredica ni več med preverjenimi možnostmi. Osveži pregled.")
     plan = next(p for p in plans if p.id == plan_id)
     plan.bed_id = payload.bed_id
+    require_irrigation_compatibility(db, [plan])
     db.commit()
     return {"message": "Načrt je prestavljen na preverjeno prazno gredico enakih mer; datumi ostanejo ohranjeni."}
 

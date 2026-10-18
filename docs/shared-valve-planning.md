@@ -60,10 +60,10 @@ vseh kombinacij ali vračanja na predhodne izbire. Lahko izpusti kombinacijo, ki
 jo našla globalna optimizacija. Poljuben začetni neuspeh obstoječega sezonskega ali
 kolobarnega filtra se ne rešuje z dodatnim iskanjem; zamike išče po vodnem konfliktu.
 
-Ostali predlogi nasledstva/premikov, neposredna aktivacija zasaditve ter spremembe
-vodnih profilov še niso vključeni v načrtovalni validator. Avtomatika ni bila
-preverjena na fizični opremi. Drugi sklop podpira en skupni Smart Irrigation senzor,
-kot je opisano spodaj.
+Spremembe vodnih profilov in potrjevanje naučenih popravkov DTM še ne preverjajo
+vseh že shranjenih načrtov. Premiki nasledstva, zamiki, zaključki zasedenosti ter
+aktivacija in neposredna setev so vključeni v tretji sklop spodaj. Avtomatika ni
+bila preverjena na fizični opremi.
 
 ## Drugi sklop: ena Smart Irrigation cona na fizični ventil
 
@@ -92,11 +92,24 @@ Potrditev dejansko izvedenega zalivanja in knjiženje vode v SI bilanco ostajata
 odgovornost HA izvedbene avtomatike. HTTP uspeh ne sme samodejno ničliti primanjkljaja.
 Pred uporabo je treba preveriti nameščeno SI različico, izgube in umerjanje sistema.
 
+## Tretji sklop: nasledstvo in aktivacija
+
+- Pregled nasledstva izloči namakalno nezdružljive ciljne gredice in blokira
+  predlagan zamik, če nove razvojne faze ne ustrezajo drugim gredicam istega ventila.
+  Pregled ne spreminja zapisov v podatkovni bazi.
+- Žeton predloga vključuje tudi vodne profile gredic in kultur. Po njihovi spremembi
+  je treba pregled osvežiti; prej odprtega predloga ni mogoče potrditi.
+- Premik, potrditev zamikov in sprememba zaključka zasedenosti ponovno preverijo
+  skupni ventil pred zapisom. Pri konfliktu se transakcija razveljavi.
+- Aktivacija načrta in neposredna setev preverita dejanski zapis nove zasaditve
+  pred spremembo stanja gredice in ustvarjanjem opravil. Obstoječe preverjanje
+  kolobarja ostane veljavno; njegov ročni obhod ne obide namakalne združljivosti.
+
 ## Naslednji implementacijski koraki
 
-1. Isti validator vključiti v predloge in potrditve premikov nasledstva,
-   neposredne zasaditve/aktivacije ter spremembe napovedi in profilov. Pred potrditvijo
-   znova preveriti trenutno stanje; dodati teste zastarelih predlogov in transakcij.
+1. Isti validator vključiti še v potrjene popravke napovedi DTM in spremembe vodnih
+   profilov ter opozarjanje na prizadete obstoječe načrte. Preveriti še vse ostale
+   poti priporočil, ki niso proizvodni načrtovalnik ali pregled nasledstva.
 2. Na dejanski HA namestitvi preveriti skupni senzor, enote, `last_calculated` in
    knjiženje dejansko izvedenega zalivanja v SI bilanco. Programsko združevanje je izvedeno.
 3. Uvesti shranjene meritve hidravlike in omejitev vira namesto projektne konstante;
@@ -111,12 +124,13 @@ Pred uporabo je treba preveriti nameščeno SI različico, izgube in umerjanje s
 
 ## Preverjanje in viri
 
-Po drugem sklopu: 319 zalednih testov uspešnih (20 novih testov skupne SI cone),
+Po tretjem sklopu: 329 zalednih testov uspešnih (20 testov skupne SI cone in 10 novih
+testov sprememb nasledstva ter aktivacije),
 produkcijska gradnja vmesnika uspešna. Gradnja uporablja obstoječe lokalne odvisnosti
 in opozori na paket nad 500 kB. Fizična oprema in dejanska HA namestitev nista bili testirani.
 
 Regresijski sklop: `python -m pytest tests/test_irrigation_planning.py
-tests/test_production_planner.py tests/test_irrigation.py tests/test_shared_smart_irrigation.py tests/test_succession.py -q`
+tests/test_production_planner.py tests/test_irrigation.py tests/test_shared_smart_irrigation.py tests/test_shared_irrigation_mutations.py tests/test_succession.py -q`
 iz mape `backend`. Testi uporabljajo SQLite in nadomestne HA odzive; ne odpirajo ventilov.
 
 - [OpenSprinkler: največ 72 con](https://opensprinkler.com/product/opensprinkler/)
