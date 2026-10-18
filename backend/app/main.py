@@ -67,6 +67,8 @@ from app.planting_advisor import (
     seasonal_assessment,
 )
 from app.planting_calendar import default_calendar_for_crop
+from app.irrigation_planning import validate_plan as validate_irrigation_plan
+from app.irrigation_planning import load_context, assess, crop_cycle, suggestion_cycle
 from app.models import (
     Bed,
     Cost,
@@ -1251,7 +1253,13 @@ def planting_suggestions(
         ).all()
     )
 
+    irrigation_context = load_context(db, DEFAULT_FARM_ID)
+    peer_cycles = [crop_cycle(record) for record in [*planned_rows, *active_plantings]]
+    selected_cycles = []
+
     def candidate_for(bed: Bed, crop: Crop, variety: Variety) -> dict:
+        cycle = suggestion_cycle(bed.id, crop.id, variety, payload.sowing_date)
+        irrigation = assess(cycle, [*peer_cycles, *selected_cycles], irrigation_context)
         maturity_days = maturity_days_for_date(variety, payload.sowing_date)
         expected_harvest_date = payload.sowing_date + timedelta(days=maturity_days)
         bed_history = history_by_bed.get(bed.id, [])
@@ -1340,6 +1348,8 @@ def planting_suggestions(
                 for planting in recent_history
             ],
             "_rotation_families": candidate_family_set,
+            "irrigation": irrigation,
+            "_irrigation_cycle": cycle,
             "_seasonal_score": seasonal_score,
             **result,
         }
@@ -1348,6 +1358,9 @@ def planting_suggestions(
         candidate_for(bed, selected_crop, selected_variety) for bed in empty_beds
     ]
     recommended_beds.sort(key=lambda item: (-item["score"], item["bed"]))
+    irrigation_excluded = [{"bed_id": item["bed_id"], "bed": item["bed"], "reasons": item["irrigation"]["reasons"]}
+                           for item in recommended_beds if not item["irrigation"]["compatible"]]
+    recommended_beds = [item for item in recommended_beds if item["irrigation"]["compatible"]]
 
     used_crops: set[int] = set()
     used_families: set[str] = set()
@@ -1365,6 +1378,8 @@ def planting_suggestions(
                 ),
             )
             candidate = candidate_for(bed, crop, variety)
+            if not candidate["irrigation"]["compatible"]:
+                continue
             if candidate["_seasonal_score"] <= -25:
                 continue
             diversity_penalty = 0
@@ -1393,11 +1408,13 @@ def planting_suggestions(
         used_crops.add(choice["crop_id"])
         used_families.update(choice["_rotation_families"])
         planting_ideas.append(choice)
+        selected_cycles.append(choice["_irrigation_cycle"])
 
     for item in [*recommended_beds, *planting_ideas]:
         item.pop("_rotation_families", None)
         item.pop("_seasonal_score", None)
         item.pop("_selection_score", None)
+        item.pop("_irrigation_cycle", None)
 
     return {
         "message": "Predlog upošteva kolobar, termin, načrte in ponovljene rezultate žetve.",
@@ -1408,6 +1425,7 @@ def planting_suggestions(
         "empty_beds": len(empty_beds),
         "recommended_beds": recommended_beds[:5],
         "planting_ideas": planting_ideas,
+        "irrigation_excluded": irrigation_excluded,
         "note": (
             "Predlog je pomoč pri odločitvi. Upoštevaj tudi tla, vreme, bolezni, "
             "razpoložljivo zaščito in lastne izkušnje."
@@ -1783,6 +1801,12 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
         status="active",
     )
     store_prediction(planting, variety)
+    planting.variety = variety
+    with db.no_autoflush:
+        irrigation_check = validate_irrigation_plan(db, planting, DEFAULT_FARM_ID)
+    if not irrigation_check["compatible"]:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Skupni ventil: " + "; ".join(irrigation_check["reasons"]))
     bed.status = "growing"
     db.add(planting)
     db.flush()
@@ -3534,6 +3558,13 @@ def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> 
         plan.crop = crop
         plan.variety = variety
         store_prediction(plan, variety)
+        with db.no_autoflush:
+            irrigation_check = validate_irrigation_plan(db, plan, DEFAULT_FARM_ID)
+        if not irrigation_check["compatible"]:
+            db.rollback()
+            raise HTTPException(status_code=422, detail="Skupni ventil: " + "; ".join(irrigation_check["reasons"]))
+        if irrigation_check["shared"]:
+            warnings.append("Skupni ventil: profili so združljivi; preveri tlak in pretok na kapljičnih ceveh, vključno z izgubami dovoda.")
         db.add(plan)
         created.append(plan)
     db.commit()
@@ -3590,6 +3621,12 @@ def activate_crop_plan(
         store_prediction(planting, plan.variety,
                          reference_date=plan.transplant_date or plan.sowing_date,
                          reference_kind="transplant" if plan.transplant_date else "sowing")
+    planting.variety = plan.variety
+    with db.no_autoflush:
+        irrigation_check = validate_irrigation_plan(db, planting, DEFAULT_FARM_ID)
+    if not irrigation_check["compatible"]:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Skupni ventil: " + "; ".join(irrigation_check["reasons"]))
     plan.bed.status = "growing"
     db.add(planting)
     db.flush()
@@ -6786,5 +6823,10 @@ def update_dynamic_dtm(record_type: str, record_id: int, payload: ClimateInput,
             reference = source_plan.transplant_date or source_plan.sowing_date
             kind = "transplant" if source_plan.transplant_date else "sowing"
     result = store_prediction(record, record.variety, payload, reference, kind)
+    with db.no_autoflush:
+        irrigation = validate_irrigation_plan(db, record, DEFAULT_FARM_ID)
+    if not irrigation["compatible"]:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Skupni ventil: " + " ".join(irrigation["reasons"]))
     db.commit()
     return {"dynamic_dtm": result}
