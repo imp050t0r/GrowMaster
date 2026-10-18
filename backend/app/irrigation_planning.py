@@ -36,6 +36,14 @@ def proposal_cycle(row):
             "end": date.fromisoformat(row["predicted_harvest_end"])}
 
 
+def suggestion_cycle(bed_id, crop_id, variety, start):
+    candidate = CropPlan(bed_id=bed_id, crop_id=crop_id, sowing_date=start,
+                         expected_harvest_date=start, status="planned")
+    candidate.variety = variety
+    store_prediction(candidate, variety)
+    return crop_cycle(candidate)
+
+
 def _kc(cycle, profile, day):
     days = (cycle["target"] - cycle["start"]).days
     if days <= 0:

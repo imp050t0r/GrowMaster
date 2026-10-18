@@ -117,8 +117,14 @@ Pred uporabo je treba preveriti nameščeno SI različico, izgube in umerjanje s
 
 ## Naslednji implementacijski koraki
 
-1. Preveriti še vse ostale
-   poti priporočil, ki niso proizvodni načrtovalnik ali pregled nasledstva.
+Priporočila gredic za izbrano kulturo in naslednje kulture po spravilu zdaj izločijo
+namakalno nezdružljive kandidate glede na shranjene načrte in aktivne zasaditve.
+Skupni seznam idej upošteva tudi predhodno izbrane ideje v istem odgovoru.
+Izločitev vrne razloge; svetovalec gredic jih prikaže v vmesniku. Ta dva svetovalca
+ohranita zahtevani datum in ne iščeta časovnih zamikov; te išče proizvodni načrtovalnik.
+
+1. Preveriti še neposredno ponovno računanje razvojne napovedi z vremenskimi vhodi
+   in njegov vpliv na skupne ventile.
 2. Na dejanski HA namestitvi preveriti skupni senzor, enote, `last_calculated` in
    knjiženje dejansko izvedenega zalivanja v SI bilanco. Programsko združevanje je izvedeno.
 3. Uvesti shranjene meritve hidravlike in omejitev vira namesto projektne konstante;
@@ -133,8 +139,8 @@ Pred uporabo je treba preveriti nameščeno SI različico, izgube in umerjanje s
 
 ## Preverjanje in viri
 
-Po četrtem sklopu: 338 zalednih testov uspešnih (vključno z 9 testi vpliva profilov
-in popravkov napovedi),
+Po dopolnitvi priporočil: 343 zalednih testov uspešnih (vključno s 5 testi priporočil
+in 9 testi vpliva profilov ter popravkov napovedi),
 produkcijska gradnja vmesnika uspešna. Gradnja uporablja obstoječe lokalne odvisnosti
 in opozori na paket nad 500 kB. Fizična oprema in dejanska HA namestitev nista bili testirani.
 

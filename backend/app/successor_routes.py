@@ -26,7 +26,7 @@ from app.dtm_learning import learning_report, apply_suggestion, save_result, sna
 from app.workload import workload_report
 from app.harvest_forecast import harvest_forecast
 from app.production_planner import production_proposals
-from app.irrigation_planning import load_context, check_succession_irrigation, check_dtm_irrigation, validate_plan
+from app.irrigation_planning import load_context, check_succession_irrigation, check_dtm_irrigation, validate_plan, assess, crop_cycle, suggestion_cycle
 
 
 router = APIRouter()
@@ -310,6 +310,11 @@ def next_crop_suggestions(
         ).all()
     )
     candidates: list[dict] = []
+    irrigation_context = load_context(db, DEFAULT_FARM_ID)
+    peers = list(db.scalars(select(CropPlan).where(CropPlan.farm_id == DEFAULT_FARM_ID, CropPlan.status == "planned")))
+    peers += list(db.scalars(select(Planting).where(Planting.farm_id == DEFAULT_FARM_ID, Planting.status == "active")))
+    peer_cycles = [crop_cycle(record) for record in peers]
+    irrigation_excluded = []
 
     for crop in crops:
         if not crop.varieties:
@@ -320,6 +325,10 @@ def next_crop_suggestions(
         )
         maturity_days = maturity_days_for_date(variety, target_date)
         expected_harvest = target_date + timedelta(days=maturity_days)
+        irrigation = assess(suggestion_cycle(bed.id, crop.id, variety, target_date), peer_cycles, irrigation_context)
+        if not irrigation["compatible"]:
+            irrigation_excluded.append({"crop_id": crop.id, "crop": crop.name, "reasons": irrigation["reasons"]})
+            continue
         families = rotation_families(crop.name, crop.family, variety.name)
 
         overlapping_plans = [
@@ -457,6 +466,7 @@ def next_crop_suggestions(
             for planting in recent_history
         ],
         "suggestions": candidates[:limit],
+        "irrigation_excluded": irrigation_excluded,
         "message": (
             "Naslednje kulture so razvrščene glede na kolobar, termin, DTM, "
             "prosto časovno okno, obstoječe načrte, pridelek, sejalniški profil "
