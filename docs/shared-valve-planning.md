@@ -1,7 +1,7 @@
 # Skupne fizične cone: načrt in prvi izvedbeni sklop
 
 Osnova: GrowMaster 1.25.12, commit 1fdcf9288802a3484ecc70ad3162fdb9aa61ebea.
-Datum: 17. oktober 2026.
+Datum: 18. oktober 2026.
 
 ## Dogovorjena arhitektura
 
@@ -61,19 +61,44 @@ jo našla globalna optimizacija. Poljuben začetni neuspeh obstoječega sezonske
 kolobarnega filtra se ne rešuje z dodatnim iskanjem; zamike išče po vodnem konfliktu.
 
 Ostali predlogi nasledstva/premikov, neposredna aktivacija zasaditve ter spremembe
-vodnih profilov še niso vključeni v ta validator. Obstoječa avtomatika ostane
-nespremenjena in ni bila preverjena na fizični opremi. En skupni Smart Irrigation
-senzor na več gredicah obstoječa koda še zavrača; to zahteva naslednji sklop.
+vodnih profilov še niso vključeni v načrtovalni validator. Avtomatika ni bila
+preverjena na fizični opremi. Drugi sklop podpira en skupni Smart Irrigation senzor,
+kot je opisano spodaj.
+
+## Drugi sklop: ena Smart Irrigation cona na fizični ventil
+
+Vse gredice skupnega ventila nastavite na `smart_irrigation`, `valve_mode=shared`,
+isti OpenSprinkler switch in isti SI senzor. V Home Assistantu ročno nastavite
+skupno površino in vsoto pretokov. GrowMaster nastavitve primerja z atributi `size`
+in `throughput`; zahteva metrične enote `m²`/`m2` ter `l/min`/`L/min` in način
+izračuna iz pretoka. Manjkajoče enote ali nepodprta različica pomenijo blokado.
+
+- Vse fizično povezane gredice morajo imeti aktivno zasaditev in primerljive profile.
+  Različni trenutni Kc, prazna gredica ali senzor, ki pokriva več ventilov, blokirajo cono.
+- Dnevni pregled senzor prebere enkrat; ne zahteva dodatnih ročnih dnevnih bilanc.
+  SI rezultat ostaja izračun Home Assistanta. GrowMaster ne kliče dodatnega preračuna.
+- Predogled in pošiljanje pripravita en Kc na skupno cono. Po spremembi Kc mora biti
+  `last_calculated` novejši od oddaje Kc, tudi pri ročni posodobitvi brez avtomatike.
+  `last_updated` sam ne potrjuje novega izračuna skupne cone.
+- Čas ventila ni vsota časov gredic. Uporabi en SI čas, omejen z najstrožjim največjim
+  odmerkom in časom posamezne gredice. Litri se ocenijo ločeno po vejah in seštejejo.
+- Samodejni zagon ostaja izrecno vključljiv in zabeleži namero pred klicem HA.
+  Pri negotovem odzivu istega ventila isti dan ne pošlje znova. To ni potrditev pretoka.
+  Ročno kopiranje osnutka v HA nima te zaščite pred ponavljanjem.
+- Stara pot z ločenimi SI senzorji na skupnem ventilu ostaja združljiva in še zahteva
+  ločene dnevne bilance. Priporočena nova konfiguracija uporablja en senzor na ventil.
+
+Potrditev dejansko izvedenega zalivanja in knjiženje vode v SI bilanco ostajata
+odgovornost HA izvedbene avtomatike. HTTP uspeh ne sme samodejno ničliti primanjkljaja.
+Pred uporabo je treba preveriti nameščeno SI različico, izgube in umerjanje sistema.
 
 ## Naslednji implementacijski koraki
 
 1. Isti validator vključiti v predloge in potrditve premikov nasledstva,
    neposredne zasaditve/aktivacije ter spremembe napovedi in profilov. Pred potrditvijo
    znova preveriti trenutno stanje; dodati teste zastarelih predlogov in transakcij.
-2. HA/Smart Irrigation obravnavati enkrat na fizično cono: en senzor trajanja,
-   skupna površina in vsota pretokov, en usklajen Kc ter en ukaz ventilu. Odpraviti
-   obstoječo prepoved deljenega SI senzorja šele skupaj s testi združevanja,
-   preprečevanja dvojnih ukazov in konfliktnih profilov.
+2. Na dejanski HA namestitvi preveriti skupni senzor, enote, `last_calculated` in
+   knjiženje dejansko izvedenega zalivanja v SI bilanco. Programsko združevanje je izvedeno.
 3. Uvesti shranjene meritve hidravlike in omejitev vira namesto projektne konstante;
    umeriti mm/min vsake cone pri delovnem tlaku. Preveriti zaporedno izvajanje,
    črpalko/master izhod in seštevek pretokov pri morebitnem sočasnem odpiranju.
@@ -86,13 +111,18 @@ senzor na več gredicah obstoječa koda še zavrača; to zahteva naslednji sklop
 
 ## Preverjanje in viri
 
+Po drugem sklopu: 319 zalednih testov uspešnih (20 novih testov skupne SI cone),
+produkcijska gradnja vmesnika uspešna. Gradnja uporablja obstoječe lokalne odvisnosti
+in opozori na paket nad 500 kB. Fizična oprema in dejanska HA namestitev nista bili testirani.
+
 Regresijski sklop: `python -m pytest tests/test_irrigation_planning.py
-tests/test_production_planner.py tests/test_irrigation.py tests/test_succession.py -q`
+tests/test_production_planner.py tests/test_irrigation.py tests/test_shared_smart_irrigation.py tests/test_succession.py -q`
 iz mape `backend`. Testi uporabljajo SQLite in nadomestne HA odzive; ne odpirajo ventilov.
 
 - [OpenSprinkler: največ 72 con](https://opensprinkler.com/product/opensprinkler/)
 - [Home Assistant Ecowitt](https://www.home-assistant.io/integrations/ecowitt/)
 - [Smart Irrigation storitve](https://altmenorg.github.io/HAsmartirrigation/usage-services.html)
+- [Smart Irrigation atributi con](https://altmenorg.github.io/HAsmartirrigation/usage-entities.html)
 
 Dokumentacija potrjuje splošne možnosti integracij. Nameščene različice HA,
 Smart Irrigation in OpenSprinkler ter W3001 združljivost na tej lokaciji niso preverjene.
