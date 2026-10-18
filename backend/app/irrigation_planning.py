@@ -11,6 +11,7 @@ from app.irrigation_routes import BedProfile, CropProfile
 from app.models import Bed, CropPlan, IrrigationBedProfile, IrrigationCropProfile, Planting
 from app.succession import field_start, release_estimate
 from app.dynamic_dtm import store_prediction
+from app.dtm_learning import apply_suggestion, save_result, snapshot
 
 
 def load_context(db, farm_id):
@@ -149,4 +150,50 @@ def check_succession_irrigation(report, plans, plantings, context):
                     row["blocked"] = True
                     row["warnings"].extend(check["reasons"])
                     group["can_apply"] = False
+    return report
+
+
+def planning_conflicts(db, farm_id):
+    """Report existing conflicts without hiding newly measured profile values."""
+    context = load_context(db, farm_id)
+    records = list(db.scalars(select(CropPlan).where(CropPlan.farm_id == farm_id, CropPlan.status == "planned")))
+    records += list(db.scalars(select(Planting).where(Planting.farm_id == farm_id, Planting.status == "active")))
+    cycles = [crop_cycle(record) for record in records]
+    conflicts = []
+    for index, record in enumerate(records):
+        if record.bed_id not in context["beds"]:
+            continue
+        check = assess(cycles[index], cycles[:index] + cycles[index+1:], context)
+        if not check["compatible"]:
+            conflicts.append({"record_type": "plans" if isinstance(record, CropPlan) else "plantings",
+                              "record_id": record.id, "bed_id": record.bed_id,
+                              "bed": context["beds"][record.bed_id].name, "crop_id": record.crop_id,
+                              "reasons": check["reasons"]})
+    return conflicts
+
+
+def check_dtm_irrigation(report, plans, plantings, context):
+    profiles = {kind: {key: value.model_dump(mode="json") for key, value in context[kind].items()}
+                for kind in ("profiles", "crops")}
+    # The learning token already covers all plans; add active peers and water profiles.
+    profiles["active"] = [{c.name: getattr(p, c.name) for c in p.__table__.columns} for p in plantings]
+    profiles["beds"] = {bid: (b.width_m, b.length_m) for bid, b in context["beds"].items()}
+    report["token"] = hashlib.sha256((report["token"] + json.dumps(profiles, sort_keys=True, default=str)).encode()).hexdigest()
+    by_id = {p.id: p for p in plans}
+    records = [*plans, *plantings]
+    for row in report["rows"]:
+        plan = by_id[row["plan_id"]]
+        for action in ("apply", "reset"):
+            if not row["can_" + action]:
+                continue
+            candidate = SimpleNamespace(**{c.name: getattr(plan, c.name) for c in plan.__table__.columns},
+                                        variety=plan.variety)
+            if action == "apply":
+                apply_suggestion(candidate, row)
+            else:
+                save_result(candidate, snapshot(plan.dynamic_dtm_explanation)["history_correction"]["baseline"])
+            check = assess(crop_cycle(candidate), [crop_cycle(p) for p in records if p is not plan], context)
+            if not check["compatible"]:
+                row["can_" + action] = False
+                row.setdefault("irrigation_reasons", {})[action] = check["reasons"]
     return report

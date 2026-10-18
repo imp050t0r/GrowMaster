@@ -26,7 +26,7 @@ from app.dtm_learning import learning_report, apply_suggestion, save_result, sna
 from app.workload import workload_report
 from app.harvest_forecast import harvest_forecast
 from app.production_planner import production_proposals
-from app.irrigation_planning import load_context, check_succession_irrigation, validate_plan
+from app.irrigation_planning import load_context, check_succession_irrigation, check_dtm_irrigation, validate_plan
 
 
 router = APIRouter()
@@ -498,7 +498,12 @@ def dtm_learning_state(db: Session, *, lock=False):
         history_query = history_query.with_for_update()
     plans = list(db.scalars(plans_query).all())
     history = list(db.scalars(history_query).all())
-    return plans, learning_report(plans, history)
+    active = list(db.scalars(select(Planting).where(
+        Planting.farm_id == DEFAULT_FARM_ID, Planting.status == "active").order_by(Planting.id)
+        .options(selectinload(Planting.variety))))
+    report = learning_report(plans, history)
+    check_dtm_irrigation(report, plans, active, load_context(db, DEFAULT_FARM_ID))
+    return plans, report
 
 
 @router.get("/api/planning/dtm-learning")
@@ -529,5 +534,6 @@ def confirm_dtm_learning(plan_id: int, action: str, payload: SuccessionAction,
         baseline = snapshot(plan.dynamic_dtm_explanation)["history_correction"]["baseline"]
         save_result(plan, baseline)
         message = "Obnovljena je napoved pred potrjenim popravkom."
+    require_irrigation_compatibility(db, [plan])
     db.commit()
     return {"message": message}

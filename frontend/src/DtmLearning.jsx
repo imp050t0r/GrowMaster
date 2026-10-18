@@ -41,6 +41,7 @@ export function DtmLearning({ plans, onApplied }) {
     {report?.rows.map(row => <details key={row.plan_id} open={row.can_apply || row.applied}>
       <summary>Gredica {row.bed} · {row.crop} · {row.variety} · setev {row.sowing_date}</summary>
       <p>{row.reason}</p>
+      {Object.entries(row.irrigation_reasons||{}).map(([action,reasons])=><p role="alert" key={action}>{action==="apply"?"Popravek":"Odstranitev popravka"} je blokiran zaradi skupnega ventila: {reasons.join(" ")}</p>)}
       <p>Primerljivih zapisov: {row.evidence.length} · Različnih začetnih datumov: {row.distinct_dates}</p>
       {(row.can_apply || row.applied) && <p>Napoved DTM: {row.before_days} → {row.after_days} dni · Popravek: {row.correction_days > 0 ? "+" : ""}{row.correction_days} dni · Predvidena prva žetev: {row.after_date}</p>}
       {row.evidence.length > 0 && <details><summary>Uporabljeni zapisi</summary><ul>{row.evidence.map(item => <li key={item.planting_id}>Zasaditev {item.planting_id} · začetek {item.reference_date} · prvo pobiranje {item.first_harvest_date} · odmik {item.error_days > 0 ? "+" : ""}{item.error_days} dni</li>)}</ul></details>}

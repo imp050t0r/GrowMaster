@@ -349,7 +349,9 @@ def profile_row(db, model, key, identifier):
 
 @router.get("/profiles")
 def profiles(db: Session = Depends(get_db)):
-    return {"crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
+    from app.irrigation_planning import planning_conflicts
+    return {"planning_conflicts": planning_conflicts(db, FARM_ID),
+            "crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
                       db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))],
             "beds": [{"bed_id": r.bed_id, **BedProfile.model_validate_json(r.parameters).model_dump()} for r in
                      db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))],
@@ -372,13 +374,16 @@ def save_sensor_group(group_number: int, payload: SensorGroupInput, db: Session 
 
 
 def save_profile(db, model, key, identifier, payload):
+    from app.irrigation_planning import planning_conflicts
     row = profile_row(db, model, key, identifier)
     if row is None:
         row = model(farm_id=FARM_ID, **{key: identifier})
         db.add(row)
     row.parameters = payload.model_dump_json()
+    db.flush()
+    conflicts = planning_conflicts(db, FARM_ID)
     db.commit()
-    return {key: identifier, **payload.model_dump()}
+    return {key: identifier, **payload.model_dump(), "planning_conflicts": conflicts}
 
 
 @router.put("/crops/{crop_id}")

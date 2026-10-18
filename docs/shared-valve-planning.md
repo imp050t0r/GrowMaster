@@ -105,10 +105,19 @@ Pred uporabo je treba preveriti nameščeno SI različico, izgube in umerjanje s
   pred spremembo stanja gredice in ustvarjanjem opravil. Obstoječe preverjanje
   kolobarja ostane veljavno; njegov ročni obhod ne obide namakalne združljivosti.
 
+## Četrti sklop: popravki napovedi in vodni profili
+
+- Predogled popravka DTM in njegove ponastavitve preveri namakalno združljivost;
+  nezdružljivo dejanje je blokirano tudi ob potrditvi pred zapisom.
+- Žeton vključuje vodne profile, mere gredic in aktivne zasaditve. Njihova sprememba
+  zahteva osvežitev odprtega predloga.
+- Veljavne nove meritve profilov se shranijo tudi, če razkrijejo konflikt. Odgovor
+  shranjevanja in pregled profilov vrneta seznam prizadetih odprtih načrtov in aktivnih
+  zasaditev. Vmesnik opozorila prikazuje do odprave konflikta; datumov ne spreminja.
+
 ## Naslednji implementacijski koraki
 
-1. Isti validator vključiti še v potrjene popravke napovedi DTM in spremembe vodnih
-   profilov ter opozarjanje na prizadete obstoječe načrte. Preveriti še vse ostale
+1. Preveriti še vse ostale
    poti priporočil, ki niso proizvodni načrtovalnik ali pregled nasledstva.
 2. Na dejanski HA namestitvi preveriti skupni senzor, enote, `last_calculated` in
    knjiženje dejansko izvedenega zalivanja v SI bilanco. Programsko združevanje je izvedeno.
@@ -124,8 +133,8 @@ Pred uporabo je treba preveriti nameščeno SI različico, izgube in umerjanje s
 
 ## Preverjanje in viri
 
-Po tretjem sklopu: 329 zalednih testov uspešnih (20 testov skupne SI cone in 10 novih
-testov sprememb nasledstva ter aktivacije),
+Po četrtem sklopu: 338 zalednih testov uspešnih (vključno z 9 testi vpliva profilov
+in popravkov napovedi),
 produkcijska gradnja vmesnika uspešna. Gradnja uporablja obstoječe lokalne odvisnosti
 in opozori na paket nad 500 kB. Fizična oprema in dejanska HA namestitev nista bili testirani.
 

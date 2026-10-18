@@ -168,6 +168,7 @@ export function IrrigationPlanner({crops,beds}) {
       <label>Gredica<select value={bedId} onChange={e=>chooseBed(e.target.value)}><option value="">Izberi gredico</option>{beds.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label></div>
     {currentPlanting&&<p className="irrigation-current-crop">Trenutna zasaditev GrowMasterja: <strong>{currentPlanting.crop} {currentPlanting.variety||""}</strong> · setev {currentPlanting.sowing_date}. Če je bila zasaditev v resnici že zamenjana, najprej posodobi evidenco setve.</p>}
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
+    {!!profiles.planning_conflicts?.length&&<section role="alert" aria-label="Konflikti načrtov na skupnih ventilih"><strong>Vodnim profilom ne ustrezajo vsi shranjeni načrti oziroma zasaditve.</strong><p>Izmerjeni podatki so ohranjeni. Pred nadaljevanjem preveri naslednje zapise:</p><ul>{profiles.planning_conflicts.map(item=><li key={`${item.record_type}-${item.record_id}`}>Gredica {item.bed} · {item.record_type==="plans"?"načrt":"zasaditev"} {item.record_id}: {item.reasons.join(" ")}</li>)}</ul></section>}
     <details><summary>Profil kulture — koeficienti in korenine</summary>
       <p>Vnesi preverjene koeficiente za svojo kulturo in način pridelave. Globina je trenutna učinkovita globina korenin, ne največja globina odrasle rastline. Delež izsušitve je med 0 in 1.</p>
       <form className="planning-form" onSubmit={e=>{e.preventDefault();saveProfile("crops");}}>
