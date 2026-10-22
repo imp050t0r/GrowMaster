@@ -55,6 +55,29 @@ class Farm(Base):
     inventory_write_offs: Mapped[list["InventoryWriteOff"]] = relationship(back_populates="farm")
 
 
+class IrrigationValveZone(Base):
+    """Permanent physical OpenSprinkler valve; independent of crop rotation."""
+    __tablename__ = "irrigation_valve_zones"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "controller_id", "station_number", name="uq_irrigation_physical_valve"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    controller_id: Mapped[str] = mapped_column(String(80))
+    station_number: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(100))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class IrrigationValveBed(Base):
+    """One permanent valve assignment per bed, including grouped beds."""
+    __tablename__ = "irrigation_valve_beds"
+    __table_args__ = (UniqueConstraint("bed_id", name="uq_irrigation_bed_single_valve"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zone_id: Mapped[int] = mapped_column(ForeignKey("irrigation_valve_zones.id", ondelete="RESTRICT"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"))
+
+
 class IrrigationCropProfile(Base):
     __tablename__ = "irrigation_crop_profiles"
     __table_args__ = (UniqueConstraint("farm_id", "crop_id", name="uq_irrigation_crop"),)
