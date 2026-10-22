@@ -253,6 +253,12 @@ def add_irrigation_sensor_groups(connection: Connection) -> None:
     app.models.IrrigationSensorGroup.__table__.create(bind=connection, checkfirst=True)
 
 
+def add_permanent_irrigation_valve_groups(connection: Connection) -> None:
+    """Add physical valve mappings without changing existing planting records."""
+    app.models.IrrigationValveZone.__table__.create(bind=connection, checkfirst=True)
+    app.models.IrrigationValveBed.__table__.create(bind=connection, checkfirst=True)
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -272,6 +278,7 @@ MIGRATIONS = (
     Migration("0016_irrigation", add_irrigation_schema),
     Migration("0017_irrigation_water_ledger", add_irrigation_water_ledger),
     Migration("0018_irrigation_sensor_groups", add_irrigation_sensor_groups),
+    Migration("0019_permanent_irrigation_valve_groups", add_permanent_irrigation_valve_groups),
 )
 
 
