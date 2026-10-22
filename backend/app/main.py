@@ -2087,6 +2087,7 @@ def finish_planting(planting_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="Rastni cikel ne obstaja.")
     if planting.status != "active":
         raise HTTPException(status_code=409, detail="Rastni cikel je že zaključen.")
+    require_group_planting_workflow(db, planting.bed_id)
 
     planting.status = "completed"
     planting.completed_on = date.today()
