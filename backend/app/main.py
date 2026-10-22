@@ -1783,6 +1783,64 @@ def require_group_planting_workflow(db: Session, bed_id: int) -> None:
         )
 
 
+@app.get("/api/irrigation/valves/{zone_id}/suggestions")
+def irrigation_valve_planting_suggestions(
+    zone_id: int,
+    sowing_date: date = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Only offer crop/variety combinations suitable for every member bed."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(select(IrrigationValveZone).where(
+        IrrigationValveZone.id == zone_id,
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+    ))
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    )).all())
+    if not members:
+        return {"zone_id": zone_id, "sowing_date": sowing_date, "suggestions": []}
+    beds = list(db.scalars(select(Bed).where(
+        Bed.farm_id == DEFAULT_FARM_ID,
+        Bed.id.in_([m.bed_id for m in members]),
+    )).all())
+    if len(beds) != len(members):
+        raise HTTPException(status_code=409, detail="Namakalna skupina vsebuje neveljavno gredico.")
+    crops = list(db.scalars(select(Crop).options(selectinload(Crop.varieties))).all())
+    suggestions = []
+    for crop in crops:
+        for variety in crop.varieties:
+            warnings = []
+            eligible = True
+            for bed in beds:
+                candidate = PlantingCreate(
+                    crop_id=crop.id, variety_id=variety.id,
+                    bed_id=bed.id, sowing_date=sowing_date,
+                )
+                preview = rotation_preview(candidate, db)
+                if not preview.allowed:
+                    eligible = False
+                    break
+                if preview.requires_override:
+                    # Strict recommendation policy: no override-requiring crops.
+                    eligible = False
+                    break
+                warnings.extend(preview.warnings)
+            if eligible:
+                suggestions.append({
+                    "crop_id": crop.id, "crop_name": crop.name,
+                    "variety_id": variety.id, "variety_name": variety.name,
+                    "warnings": sorted(set(warnings)),
+                })
+    return {
+        "zone_id": zone_id, "sowing_date": sowing_date,
+        "bed_ids": [bed.id for bed in beds],
+        "suggestions": suggestions,
+    }
+
+
 @app.post("/api/irrigation/valves", status_code=status.HTTP_201_CREATED)
 def create_irrigation_valve_group(
     payload: dict,
