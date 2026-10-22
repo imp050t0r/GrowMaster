@@ -2059,6 +2059,28 @@ def create_irrigation_valve_group(
             "station_number": station_number, "bed_ids": bed_ids, "enabled": False}
 
 
+@app.get("/api/irrigation/controllers/capacity")
+def irrigation_controller_capacity(db: Session = Depends(get_db)) -> dict:
+    """Inventory two OpenSprinkler station spaces without commanding hardware."""
+    from app.models import IrrigationValveZone
+    zones = list(db.scalars(select(IrrigationValveZone).where(
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID
+    )).all())
+    result = []
+    for controller_id in ("opensprinkler-1", "opensprinkler-2"):
+        used = {zone.station_number for zone in zones if zone.controller_id == controller_id}
+        result.append({
+            "controller_id": controller_id,
+            "capacity": 72,
+            "assigned": len(used),
+            "free": 72 - len(used),
+            "next_free_station": next((n for n in range(72) if n not in used), None),
+        })
+    return {"controllers": result, "total_capacity": 144,
+            "assigned": sum(item["assigned"] for item in result),
+            "free": sum(item["free"] for item in result)}
+
+
 @app.get("/api/irrigation/valves")
 def list_irrigation_valve_groups(db: Session = Depends(get_db)) -> list[dict]:
     """Read-only permanent mapping for planting UI; no hardware operations."""
