@@ -2076,6 +2076,49 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
     }
 
 
+@app.post("/api/irrigation/valves/{zone_id}/finish")
+def finish_irrigation_valve_group(
+    zone_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Finish all active crop cycles on a valve together, preserving bed histories."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(select(IrrigationValveZone).where(
+        IrrigationValveZone.id == zone_id,
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+    ).with_for_update())
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    )).all())
+    if not members:
+        raise HTTPException(status_code=409, detail="Ventil nima povezanih gredic.")
+    bed_ids = [m.bed_id for m in members]
+    plantings = list(db.scalars(
+        select(Planting).where(
+            Planting.farm_id == DEFAULT_FARM_ID,
+            Planting.bed_id.in_(bed_ids),
+            Planting.status == "active",
+        ).options(selectinload(Planting.bed), selectinload(Planting.crop))
+    ).all())
+    signatures = {(p.crop_id, p.variety_id, p.sowing_date) for p in plantings}
+    if len(plantings) != len(bed_ids) or len(signatures) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Skupina nima enotne aktivne zasaditve na vseh gredicah.",
+        )
+    completed_on = date.today()
+    for planting in plantings:
+        planting.status = "completed"
+        planting.completed_on = completed_on
+        planting.bed.status = "empty"
+        planting.bed.last_crop_family = planting.crop.family
+    db.commit()
+    return {"zone_id": zone_id, "completed_on": completed_on.isoformat(),
+            "completed_planting_ids": [p.id for p in plantings]}
+
+
 @app.post("/api/plantings/{planting_id}/finish")
 def finish_planting(planting_id: int, db: Session = Depends(get_db)) -> dict:
     planting = db.scalar(
