@@ -4,6 +4,7 @@ import {apiRequest} from "./platform";
 /** Plant all beds wired to the same valve in a single backend transaction. */
 export function IrrigationValveGroups({crops,beds=[]}) {
   const [zones,setZones]=useState([]),[zoneId,setZoneId]=useState("");
+  const [capacity,setCapacity]=useState(null);
   const [cropId,setCropId]=useState(""),[varietyId,setVarietyId]=useState("");
   const [sowingDate,setSowingDate]=useState("");
   const [suggestions,setSuggestions]=useState([]),[suggestBusy,setSuggestBusy]=useState(false),[suggestLoaded,setSuggestLoaded]=useState(false);
@@ -18,6 +19,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
   const refresh=async()=>{
     const data=await apiRequest("/api/irrigation/valves");
     setZones(data);
+    setCapacity(await apiRequest("/api/irrigation/controllers/capacity"));
   };
   useEffect(()=>{refresh().catch(e=>setError(e.message));},[]);
   const zone=zones.find(z=>String(z.id)===zoneId);
@@ -87,7 +89,8 @@ export function IrrigationValveGroups({crops,beds=[]}) {
     finally{setBusy(false);}
   };
   return <section className="panel">
-    <h3>Skupinska zasaditev po namakalnem ventilu</h3>
+    <h3>Namakalni ventili – 2 × OpenSprinkler</h3>
+    {capacity&&<p>Zasedeni izhodi: {capacity.assigned} / {capacity.total_capacity}. Prosti: {capacity.free}. {capacity.controllers.map(c=>`${c.controller_id}: ${c.assigned}/72`).join(" · ")}</p>}
     <p>Vse gredice istega ventila dobijo isto kulturo, sorto in datum setve. Pred shranjevanjem se preveri kolobar vsake gredice.</p>
     <details>
       <summary>Trajna konfiguracija fizičnih ventilov</summary>
