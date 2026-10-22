@@ -9,6 +9,8 @@ export function IrrigationValveGroups({crops,beds=[]}) {
   const [suggestions,setSuggestions]=useState([]),[suggestBusy,setSuggestBusy]=useState(false),[suggestLoaded,setSuggestLoaded]=useState(false);
   const [overrideRotation,setOverrideRotation]=useState(false);
   const [confirmFinish,setConfirmFinish]=useState(false);
+  const [cycleCount,setCycleCount]=useState(1),[cycleInterval,setCycleInterval]=useState(21);
+  const [expectedYield,setExpectedYield]=useState("1");
   const [newName,setNewName]=useState(""),[controllerId,setControllerId]=useState("opensprinkler-1");
   const [stationNumber,setStationNumber]=useState("0"),[selectedBeds,setSelectedBeds]=useState([]);
   const [configBusy,setConfigBusy]=useState(false);
@@ -45,6 +47,20 @@ export function IrrigationValveGroups({crops,beds=[]}) {
     finally{setSuggestBusy(false);}
   };
   useEffect(()=>{setSuggestions([]);setSuggestLoaded(false);},[zoneId,sowingDate]);
+  const planGroup=async()=>{
+    if(!zone?.beds?.length||!cropId||!varietyId||!sowingDate)return;
+    setBusy(true);setError("");setMessage("");
+    try{
+      const result=await apiRequest(`/api/irrigation/valves/${zoneId}/plans`,{
+        method:"POST",body:JSON.stringify({
+          bed_id:zone.beds[0].id,crop_id:Number(cropId),variety_id:Number(varietyId),
+          sowing_date:sowingDate,expected_yield_kg:Number(expectedYield),
+          succession_count:Number(cycleCount),succession_interval_days:Number(cycleInterval)
+        })
+      });
+      setMessage(`Načrtovanih ${result.cycles} ciklov za ${result.bed_ids.length} gredic. Aktivacija ni izvedena.`);
+    }catch(e){setError(e.message);}finally{setBusy(false);}
+  };
   const finishGroup=async()=>{
     if(!zoneId||!confirmFinish)return;
     setBusy(true);setError("");setMessage("");
@@ -132,6 +148,16 @@ export function IrrigationValveGroups({crops,beds=[]}) {
         {busy?"Shranjujem…":"Zasadi vse gredice skupine"}
       </button>
     </form>
+    {zone?.beds?.length>0&&<details>
+      <summary>Načrtuj zaporedne setve za celotno skupino</summary>
+      <p>Uporabljeni bodo zgoraj izbrana kultura, sorta in datum. Načrti se ne aktivirajo samodejno.</p>
+      <label>Število ciklov <input type="number" min="1" max="20" value={cycleCount} onChange={e=>setCycleCount(e.target.value)}/></label>
+      <label>Razmik med setvami (dni) <input type="number" min="1" max="365" value={cycleInterval} onChange={e=>setCycleInterval(e.target.value)}/></label>
+      <label>Predviden pridelek na gredico (kg) <input type="number" min="0.01" step="0.1" value={expectedYield} onChange={e=>setExpectedYield(e.target.value)}/></label>
+      <button type="button" disabled={busy||!cropId||!varietyId||!sowingDate||!(Number(expectedYield)>0)} onClick={planGroup}>
+        Shrani načrte za vse gredice
+      </button>
+    </details>}
     {zone?.beds?.length>0&&<details>
       <summary>Zaključi celotno namakalno skupino</summary>
       <p>Zaključek velja za vse gredice tega ventila. Posamično zaključevanje ni dovoljeno.</p>
