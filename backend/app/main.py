@@ -1783,6 +1783,87 @@ def require_group_planting_workflow(db: Session, bed_id: int) -> None:
         )
 
 
+@app.post("/api/irrigation/valves/{zone_id}/plans", status_code=status.HTTP_201_CREATED)
+def plan_irrigation_valve_group(
+    zone_id: int,
+    payload: CropPlanCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create identical succession plans for every bed on one physical valve."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(select(IrrigationValveZone).where(
+        IrrigationValveZone.id == zone_id,
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+    ).with_for_update())
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    ).order_by(IrrigationValveBed.bed_id)).all())
+    bed_ids = [member.bed_id for member in members]
+    if not bed_ids or payload.bed_id not in bed_ids:
+        raise HTTPException(status_code=422, detail="Izbrana gredica ni del namakalne skupine.")
+    beds = list(db.scalars(select(Bed).where(
+        Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID
+    )).all())
+    crop = db.get(Crop, payload.crop_id)
+    variety = db.get(Variety, payload.variety_id)
+    if len(beds) != len(bed_ids) or crop is None or variety is None or variety.crop_id != crop.id:
+        raise HTTPException(status_code=422, detail="Neveljavna gredica, kultura ali sorta.")
+    if payload.transplant_date and payload.transplant_date < payload.sowing_date:
+        raise HTTPException(status_code=422, detail="Presajanje ne sme biti pred setvijo.")
+    first_start = payload.transplant_date or payload.sowing_date
+    if payload.expected_harvest_date and payload.expected_harvest_date < first_start:
+        raise HTTPException(status_code=422, detail="Žetev ne sme biti pred začetkom rasti.")
+    existing = list(db.scalars(select(CropPlan).where(
+        CropPlan.bed_id.in_(bed_ids), CropPlan.farm_id == DEFAULT_FARM_ID,
+        CropPlan.status == "planned"
+    )).all())
+    active = list(db.scalars(select(Planting).where(
+        Planting.bed_id.in_(bed_ids), Planting.farm_id == DEFAULT_FARM_ID,
+        Planting.status == "active"
+    )).all())
+    if active:
+        raise HTTPException(status_code=409, detail="Skupina ima aktivno zasaditev; najprej jo zaključite.")
+    schedule = []
+    for index in range(payload.succession_count):
+        offset = timedelta(days=index * payload.succession_interval_days)
+        sow = payload.sowing_date + offset
+        transplant = payload.transplant_date + offset if payload.transplant_date else None
+        start = transplant or sow
+        harvest = (payload.expected_harvest_date + offset if payload.expected_harvest_date
+                   else start + timedelta(days=maturity_days_for_date(variety, start)))
+        for other in existing:
+            other_start = other.transplant_date or other.sowing_date
+            if other_start <= harvest and other.expected_harvest_date >= start:
+                raise HTTPException(status_code=409, detail="Načrt se prekriva z obstoječim načrtom skupine.")
+        if any(prior_start <= harvest and prior_end >= start for prior_start, prior_end, _, _ in schedule):
+            raise HTTPException(status_code=409, detail="Zaporedne setve iste skupine se časovno prekrivajo.")
+        schedule.append((start, harvest, sow, transplant))
+    series_id = str(uuid4())
+    created = []
+    for bed in beds:
+        for start, harvest, sow, transplant in schedule:
+            plan = CropPlan(
+                farm_id=DEFAULT_FARM_ID, bed_id=bed.id,
+                crop_id=crop.id, variety_id=variety.id,
+                series_id=series_id, sowing_date=sow,
+                transplant_date=transplant, expected_harvest_date=harvest,
+                expected_yield_kg=payload.expected_yield_kg,
+                status="planned",
+                notes=payload.notes.strip() if payload.notes else None,
+            )
+            store_prediction(plan, variety)
+            db.add(plan)
+            created.append(plan)
+    db.flush()
+    result = {"zone_id": zone_id, "series_id": series_id,
+              "bed_ids": sorted(bed_ids), "plan_ids": [plan.id for plan in created],
+              "cycles": len(schedule)}
+    db.commit()
+    return result
+
+
 @app.post("/api/irrigation/valves/{zone_id}/finish")
 def finish_irrigation_valve_group(
     zone_id: int,
