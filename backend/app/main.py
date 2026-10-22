@@ -1783,6 +1783,91 @@ def require_group_planting_workflow(db: Session, bed_id: int) -> None:
         )
 
 
+@app.post("/api/irrigation/valves/{zone_id}/plant", status_code=status.HTTP_201_CREATED)
+def plant_irrigation_valve_group(
+    zone_id: int,
+    payload: PlantingCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create one identical planting on every bed of a permanently wired valve."""
+    from app.models import IrrigationValveZone
+    from app.irrigation_zone_planning import ZonePlanting, validate_zone_plantings
+
+    zone = db.scalar(
+        select(IrrigationValveZone).where(
+            IrrigationValveZone.id == zone_id,
+            IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+        )
+    )
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    # Lock valve row so simultaneous group planting requests cannot interleave.
+    zone = db.scalar(
+        select(IrrigationValveZone)
+        .where(IrrigationValveZone.id == zone_id)
+        .with_for_update()
+    )
+    members = list(db.scalars(
+        select(IrrigationValveBed)
+        .where(IrrigationValveBed.zone_id == zone_id)
+        .order_by(IrrigationValveBed.bed_id)
+    ).all())
+    if not members:
+        raise HTTPException(status_code=409, detail="Ventil nima povezanih gredic.")
+    bed_ids = [member.bed_id for member in members]
+    if payload.bed_id not in bed_ids:
+        raise HTTPException(status_code=422, detail="Izbrana gredica ni del tega ventila.")
+    validate_zone_plantings(
+        bed_ids,
+        [ZonePlanting(bed_id, payload.crop_id, payload.variety_id, payload.sowing_date)
+         for bed_id in bed_ids],
+    )
+    previews = []
+    selections = []
+    for bed_id in bed_ids:
+        candidate = payload.model_copy(update={"bed_id": bed_id})
+        crop, variety, bed = resolve_selection(candidate, db)
+        preview = rotation_preview(candidate, db)
+        if not preview.allowed or (preview.requires_override and not payload.override_rotation):
+            raise HTTPException(
+                status_code=409,
+                detail={"bed_id": bed_id, "rotation": preview.model_dump()},
+            )
+        selections.append((crop, variety, bed))
+        previews.append({"bed_id": bed_id, "rotation": preview.model_dump()})
+
+    created = []
+    for crop, variety, bed in selections:
+        planting = Planting(
+            farm_id=DEFAULT_FARM_ID,
+            bed_id=bed.id,
+            crop_id=crop.id,
+            variety_id=variety.id,
+            sowing_date=payload.sowing_date,
+            expected_harvest_date=payload.sowing_date
+            + timedelta(days=maturity_days_for_date(variety, payload.sowing_date)),
+            rotation_override=payload.override_rotation,
+            status="active",
+        )
+        store_prediction(planting, variety)
+        bed.status = "growing"
+        db.add(planting)
+        db.flush()
+        planting.crop = crop
+        planting.variety = variety
+        add_automatic_tasks(db, planting, bed)
+        created.append({"planting_id": planting.id, "bed_id": bed.id})
+    db.commit()
+    return {
+        "zone_id": zone_id,
+        "crop_id": payload.crop_id,
+        "variety_id": payload.variety_id,
+        "sowing_date": payload.sowing_date.isoformat(),
+        "plantings": created,
+        "rotation_checks": previews,
+    }
+
+
 @app.post("/api/plantings", status_code=status.HTTP_201_CREATED)
 def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> dict:
     crop, variety, bed = resolve_selection(payload, db)
