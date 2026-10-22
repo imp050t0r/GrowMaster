@@ -91,11 +91,12 @@ export function IrrigationValveGroups({crops,beds=[]}) {
     <p>Vse gredice istega ventila dobijo isto kulturo, sorto in datum setve. Pred shranjevanjem se preveri kolobar vsake gredice.</p>
     <details>
       <summary>Trajna konfiguracija fizičnih ventilov</summary>
+      <p>Priporočilo: en ventil za vsako gredico. Dva neodvisna krmilnika omogočata do 144 izhodov skupaj.</p>
       <form onSubmit={register}>
         <label>Ime ventila <input value={newName} onChange={e=>setNewName(e.target.value)} required maxLength={100}/></label>
-        <label>ID krmilnika <input value={controllerId} onChange={e=>setControllerId(e.target.value)} required maxLength={80}/></label>
-        <label>Številka postaje (0–255) <input type="number" min="0" max="255" value={stationNumber} onChange={e=>setStationNumber(e.target.value)} required/></label>
-        <fieldset><legend>Trajno dodeljene gredice</legend>
+        <label>Krmilnik <select value={controllerId} onChange={e=>setControllerId(e.target.value)}><option value="opensprinkler-1">OpenSprinkler 1</option><option value="opensprinkler-2">OpenSprinkler 2</option></select></label>
+        <label>Številka izhoda (0–71) <input type="number" min="0" max="71" value={stationNumber} onChange={e=>setStationNumber(e.target.value)} required/></label>
+        <fieldset><legend>Gredice na ventilu (priporočena ena)</legend>
           {beds.filter(b=>!assigned.has(b.id)).map(b=><label key={b.id}>
             <input type="checkbox" checked={selectedBeds.includes(b.id)}
               onChange={e=>setSelectedBeds(ids=>e.target.checked?[...ids,b.id]:ids.filter(id=>id!==b.id))}/>
