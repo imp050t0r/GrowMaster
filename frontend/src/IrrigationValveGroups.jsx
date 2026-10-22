@@ -6,7 +6,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
   const [zones,setZones]=useState([]),[zoneId,setZoneId]=useState("");
   const [cropId,setCropId]=useState(""),[varietyId,setVarietyId]=useState("");
   const [sowingDate,setSowingDate]=useState("");
-  const [suggestions,setSuggestions]=useState([]),[suggestBusy,setSuggestBusy]=useState(false);
+  const [suggestions,setSuggestions]=useState([]),[suggestBusy,setSuggestBusy]=useState(false),[suggestLoaded,setSuggestLoaded]=useState(false);
   const [overrideRotation,setOverrideRotation]=useState(false);
   const [newName,setNewName]=useState(""),[controllerId,setControllerId]=useState("opensprinkler-1");
   const [stationNumber,setStationNumber]=useState("0"),[selectedBeds,setSelectedBeds]=useState([]);
@@ -39,11 +39,11 @@ export function IrrigationValveGroups({crops,beds=[]}) {
     setSuggestBusy(true);setError("");
     try{
       const data=await apiRequest(`/api/irrigation/valves/${zoneId}/suggestions?sowing_date=${encodeURIComponent(sowingDate)}`);
-      setSuggestions(data.suggestions||[]);
-    }catch(e){setError(e.message);setSuggestions([]);}
+      setSuggestions(data.suggestions||[]);setSuggestLoaded(true);
+    }catch(e){setError(e.message);setSuggestions([]);setSuggestLoaded(false);}
     finally{setSuggestBusy(false);}
   };
-  useEffect(()=>{setSuggestions([]);},[zoneId,sowingDate]);
+  useEffect(()=>{setSuggestions([]);setSuggestLoaded(false);},[zoneId,sowingDate]);
   const submit=async(e)=>{
     e.preventDefault();
     if(!zone?.beds?.length||!cropId||!varietyId||!sowingDate)return;
@@ -91,6 +91,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
         <button type="button" disabled={!zoneId||!sowingDate||suggestBusy} onClick={loadSuggestions}>
           {suggestBusy?"Preverjam kolobar…":"Predlagaj sorte za celotno skupino"}
         </button>
+        {suggestLoaded&&suggestions.length===0&&<p>Za ta datum ni predlogov, ki bi ustrezali vsem gredicam.</p>}
         {suggestions.length>0&&<label>Predlogi brez kolobarskih opozoril
           <select defaultValue="" onChange={e=>{
             const [c,v]=e.target.value.split(":");
