@@ -99,7 +99,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
           }}>
             <option value="">Izberite predlog</option>
             {suggestions.map(x=><option key={x.variety_id} value={`${x.crop_id}:${x.variety_id}`}>
-              {x.crop_name} – {x.variety_name}
+              {x.crop_name} – {x.variety_name} (ocena {x.score}, {x.maturity_days} dni)
             </option>)}
           </select>
         </label>}
