@@ -1783,6 +1783,61 @@ def require_group_planting_workflow(db: Session, bed_id: int) -> None:
         )
 
 
+@app.post("/api/irrigation/valves/{zone_id}/finish")
+def finish_irrigation_valve_group(
+    zone_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Finish the entire valve planting group atomically, never one bed alone."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(
+        select(IrrigationValveZone)
+        .where(IrrigationValveZone.id == zone_id,
+               IrrigationValveZone.farm_id == DEFAULT_FARM_ID)
+        .with_for_update()
+    )
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    )).all())
+    if not members:
+        raise HTTPException(status_code=409, detail="Ventil nima povezanih gredic.")
+    bed_ids = [m.bed_id for m in members]
+    beds = {b.id: b for b in db.scalars(
+        select(Bed).where(Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID)
+    ).all()}
+    plantings = list(db.scalars(
+        select(Planting).where(
+            Planting.bed_id.in_(bed_ids), Planting.farm_id == DEFAULT_FARM_ID,
+            Planting.status == "active"
+        ).options(selectinload(Planting.crop))
+    ).all())
+    if len(beds) != len(bed_ids) or len(plantings) != len(bed_ids):
+        raise HTTPException(
+            status_code=409,
+            detail="Vse gredice skupine morajo imeti aktivno zasaditev.",
+        )
+    signatures = {(p.crop_id, p.variety_id, p.sowing_date) for p in plantings}
+    if len(signatures) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Aktivne zasaditve skupine niso usklajene.",
+        )
+    finished_on = date.today()
+    for planting in plantings:
+        planting.status = "completed"
+        planting.completed_on = finished_on
+        beds[planting.bed_id].status = "empty"
+        beds[planting.bed_id].last_crop_family = planting.crop.family
+    db.commit()
+    return {
+        "zone_id": zone_id, "completed_on": finished_on.isoformat(),
+        "finished_planting_ids": sorted(p.id for p in plantings),
+        "bed_ids": sorted(bed_ids),
+    }
+
+
 @app.get("/api/irrigation/valves/{zone_id}/suggestions")
 def irrigation_valve_planting_suggestions(
     zone_id: int,
