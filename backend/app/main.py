@@ -3994,6 +3994,7 @@ def update_crop_plan_status(
         raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
     if plan.status != "planned":
         raise HTTPException(status_code=409, detail="Spremeniti je mogoče le načrtovano setev.")
+    require_group_planting_workflow(db, plan.bed_id)
     plan.status = payload.status
     db.commit()
     return {"message": "Načrt je preklican.", **serialize_crop_plan(plan)}
