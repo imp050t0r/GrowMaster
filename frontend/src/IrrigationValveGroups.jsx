@@ -2,11 +2,14 @@ import React, {useEffect, useState} from "react";
 import {apiRequest} from "./platform";
 
 /** Plant all beds wired to the same valve in a single backend transaction. */
-export function IrrigationValveGroups({crops}) {
+export function IrrigationValveGroups({crops,beds=[]}) {
   const [zones,setZones]=useState([]),[zoneId,setZoneId]=useState("");
   const [cropId,setCropId]=useState(""),[varietyId,setVarietyId]=useState("");
   const [sowingDate,setSowingDate]=useState("");
   const [overrideRotation,setOverrideRotation]=useState(false);
+  const [newName,setNewName]=useState(""),[controllerId,setControllerId]=useState("opensprinkler-1");
+  const [stationNumber,setStationNumber]=useState("0"),[selectedBeds,setSelectedBeds]=useState([]);
+  const [configBusy,setConfigBusy]=useState(false);
   const [busy,setBusy]=useState(false),[message,setMessage]=useState(""),[error,setError]=useState("");
   const refresh=async()=>{
     const data=await apiRequest("/api/irrigation/valves");
@@ -16,6 +19,20 @@ export function IrrigationValveGroups({crops}) {
   const zone=zones.find(z=>String(z.id)===zoneId);
   const crop=(crops||[]).find(c=>String(c.id)===cropId);
   const varieties=crop?.varieties||[];
+  const register=async(e)=>{
+    e.preventDefault();setError("");setMessage("");setConfigBusy(true);
+    try{
+      await apiRequest("/api/irrigation/valves",{
+        method:"POST",body:JSON.stringify({
+          name:newName,controller_id:controllerId,station_number:Number(stationNumber),
+          bed_ids:selectedBeds
+        })
+      });
+      await refresh();setSelectedBeds([]);setNewName("");
+      setMessage("Fizični ventil in trajne gredice so registrirani. Ventil ostaja izklopljen.");
+    }catch(e){setError(e.message);}finally{setConfigBusy(false);}
+  };
+  const assigned=new Set(zones.flatMap(z=>z.beds.map(b=>b.id)));
   const submit=async(e)=>{
     e.preventDefault();
     if(!zone?.beds?.length||!cropId||!varietyId||!sowingDate)return;
@@ -35,6 +52,22 @@ export function IrrigationValveGroups({crops}) {
   return <section className="panel">
     <h3>Skupinska zasaditev po namakalnem ventilu</h3>
     <p>Vse gredice istega ventila dobijo isto kulturo, sorto in datum setve. Pred shranjevanjem se preveri kolobar vsake gredice.</p>
+    <details>
+      <summary>Trajna konfiguracija fizičnih ventilov</summary>
+      <form onSubmit={register}>
+        <label>Ime ventila <input value={newName} onChange={e=>setNewName(e.target.value)} required maxLength={100}/></label>
+        <label>ID krmilnika <input value={controllerId} onChange={e=>setControllerId(e.target.value)} required maxLength={80}/></label>
+        <label>Številka postaje (0–255) <input type="number" min="0" max="255" value={stationNumber} onChange={e=>setStationNumber(e.target.value)} required/></label>
+        <fieldset><legend>Trajno dodeljene gredice</legend>
+          {beds.filter(b=>!assigned.has(b.id)).map(b=><label key={b.id}>
+            <input type="checkbox" checked={selectedBeds.includes(b.id)}
+              onChange={e=>setSelectedBeds(ids=>e.target.checked?[...ids,b.id]:ids.filter(id=>id!==b.id))}/>
+            {b.name}
+          </label>)}
+        </fieldset>
+        <button type="submit" disabled={configBusy||!selectedBeds.length}>{configBusy?"Shranjujem…":"Registriraj ventil in gredice"}</button>
+      </form>
+    </details>
     <form onSubmit={submit}>
       <label>Trajna namakalna skupina
         <select value={zoneId} onChange={e=>setZoneId(e.target.value)} required>
