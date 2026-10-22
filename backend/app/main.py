@@ -1783,6 +1783,37 @@ def require_group_planting_workflow(db: Session, bed_id: int) -> None:
         )
 
 
+@app.get("/api/irrigation/valves")
+def list_irrigation_valve_groups(db: Session = Depends(get_db)) -> list[dict]:
+    """Read-only permanent mapping for planting UI; no hardware operations."""
+    from app.models import IrrigationValveZone
+    zones = list(db.scalars(
+        select(IrrigationValveZone)
+        .where(IrrigationValveZone.farm_id == DEFAULT_FARM_ID)
+        .order_by(IrrigationValveZone.controller_id, IrrigationValveZone.station_number)
+    ).all())
+    mappings = list(db.scalars(
+        select(IrrigationValveBed)
+        .where(IrrigationValveBed.zone_id.in_([zone.id for zone in zones]))
+    ).all()) if zones else []
+    bed_ids = [mapping.bed_id for mapping in mappings]
+    beds = {bed.id: bed for bed in db.scalars(
+        select(Bed).where(Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID)
+    ).all()} if bed_ids else {}
+    return [{
+        "id": zone.id,
+        "name": zone.name,
+        "controller_id": zone.controller_id,
+        "station_number": zone.station_number,
+        "enabled": zone.enabled,
+        "beds": [
+            {"id": mapping.bed_id, "name": beds[mapping.bed_id].name}
+            for mapping in mappings
+            if mapping.zone_id == zone.id and mapping.bed_id in beds
+        ],
+    } for zone in zones]
+
+
 @app.post("/api/irrigation/valves/{zone_id}/plant", status_code=status.HTTP_201_CREATED)
 def plant_irrigation_valve_group(
     zone_id: int,
