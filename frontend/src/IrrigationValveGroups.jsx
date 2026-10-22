@@ -6,6 +6,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
   const [zones,setZones]=useState([]),[zoneId,setZoneId]=useState("");
   const [cropId,setCropId]=useState(""),[varietyId,setVarietyId]=useState("");
   const [sowingDate,setSowingDate]=useState("");
+  const [suggestions,setSuggestions]=useState([]),[suggestBusy,setSuggestBusy]=useState(false);
   const [overrideRotation,setOverrideRotation]=useState(false);
   const [newName,setNewName]=useState(""),[controllerId,setControllerId]=useState("opensprinkler-1");
   const [stationNumber,setStationNumber]=useState("0"),[selectedBeds,setSelectedBeds]=useState([]);
@@ -33,6 +34,16 @@ export function IrrigationValveGroups({crops,beds=[]}) {
     }catch(e){setError(e.message);}finally{setConfigBusy(false);}
   };
   const assigned=new Set(zones.flatMap(z=>z.beds.map(b=>b.id)));
+  const loadSuggestions=async()=>{
+    if(!zoneId||!sowingDate)return;
+    setSuggestBusy(true);setError("");
+    try{
+      const data=await apiRequest(`/api/irrigation/valves/${zoneId}/suggestions?sowing_date=${encodeURIComponent(sowingDate)}`);
+      setSuggestions(data.suggestions||[]);
+    }catch(e){setError(e.message);setSuggestions([]);}
+    finally{setSuggestBusy(false);}
+  };
+  useEffect(()=>{setSuggestions([]);},[zoneId,sowingDate]);
   const submit=async(e)=>{
     e.preventDefault();
     if(!zone?.beds?.length||!cropId||!varietyId||!sowingDate)return;
@@ -76,6 +87,22 @@ export function IrrigationValveGroups({crops,beds=[]}) {
         </select>
       </label>
       {zone&&<p>Gredice: {zone.beds.map(b=>b.name).join(", ")||"Ni dodeljenih gredic"}</p>}
+      <div>
+        <button type="button" disabled={!zoneId||!sowingDate||suggestBusy} onClick={loadSuggestions}>
+          {suggestBusy?"Preverjam kolobar…":"Predlagaj sorte za celotno skupino"}
+        </button>
+        {suggestions.length>0&&<label>Predlogi brez kolobarskih opozoril
+          <select defaultValue="" onChange={e=>{
+            const [c,v]=e.target.value.split(":");
+            setCropId(c||"");setVarietyId(v||"");
+          }}>
+            <option value="">Izberite predlog</option>
+            {suggestions.map(x=><option key={x.variety_id} value={`${x.crop_id}:${x.variety_id}`}>
+              {x.crop_name} – {x.variety_name}
+            </option>)}
+          </select>
+        </label>}
+      </div>
       <label>Kultura
         <select value={cropId} onChange={e=>{setCropId(e.target.value);setVarietyId("");}} required>
           <option value="">Izberite kulturo</option>
