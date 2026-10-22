@@ -69,6 +69,7 @@ from app.planting_advisor import (
 from app.planting_calendar import default_calendar_for_crop
 from app.models import (
     Bed,
+    IrrigationValveBed,
     Cost,
     Crop,
     CropPlan,
@@ -1762,8 +1763,30 @@ def apply_task_review(payload: TaskReviewApply, db: Session = Depends(get_db)) -
 
 
 @app.post("/api/plantings", status_code=status.HTTP_201_CREATED)
+def require_group_planting_workflow(db: Session, bed_id: int) -> None:
+    """Fail closed until an atomic whole-zone planting workflow is implemented.
+
+    Existing single-bed endpoints must never create a partial planting on a
+    shared valve. Unmapped beds and single-bed valves retain legacy behavior.
+    """
+    mapping = db.scalar(select(IrrigationValveBed).where(IrrigationValveBed.bed_id == bed_id))
+    if mapping is None:
+        return
+    member_count = db.scalar(
+        select(func.count(IrrigationValveBed.id))
+        .where(IrrigationValveBed.zone_id == mapping.zone_id)
+    )
+    if member_count and member_count > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Gredica pripada skupnemu ventilu. Zasaditev celotne skupine "
+                   "mora biti potrjena skupaj; posamično urejanje ni dovoljeno.",
+        )
+
+
 def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> dict:
     crop, variety, bed = resolve_selection(payload, db)
+    require_group_planting_workflow(db, bed.id)
     preview = rotation_preview(payload, db)
 
     if not preview.allowed:
@@ -3464,6 +3487,7 @@ def list_crop_plans(
 
 @app.post("/api/plans", status_code=status.HTTP_201_CREATED)
 def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> dict:
+    require_group_planting_workflow(db, payload.bed_id)
     bed = db.get(Bed, payload.bed_id)
     crop = db.get(Crop, payload.crop_id)
     variety = db.get(Variety, payload.variety_id)
@@ -3560,6 +3584,7 @@ def activate_crop_plan(
         raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
     if plan.status != "planned":
         raise HTTPException(status_code=409, detail="Aktivirati je mogoče le načrtovano setev.")
+    require_group_planting_workflow(db, plan.bed_id)
     planting_payload = PlantingCreate(
         crop_id=plan.crop_id,
         variety_id=plan.variety_id,
