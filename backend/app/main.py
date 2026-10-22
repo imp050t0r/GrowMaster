@@ -2007,6 +2007,13 @@ def create_irrigation_valve_group(
         raise HTTPException(status_code=422, detail="Izberite najmanj eno veljavno gredico.")
     if len(bed_ids) != len(set(bed_ids)):
         raise HTTPException(status_code=422, detail="Gredice se ne smejo ponavljati.")
+    # Two independent OpenSprinkler controllers, each with up to 72 stations.
+    # This endpoint only registers mappings; it never switches outputs.
+    allowed_controllers = {"opensprinkler-1", "opensprinkler-2"}
+    if controller_id not in allowed_controllers:
+        raise HTTPException(status_code=422, detail="Dovoljena krmilnika: opensprinkler-1 in opensprinkler-2.")
+    if station_number >= 72:
+        raise HTTPException(status_code=422, detail="OpenSprinkler podpira največ 72 izhodov (0–71) na krmilnik.")
     beds = list(db.scalars(select(Bed).where(
         Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID
     )).all())
