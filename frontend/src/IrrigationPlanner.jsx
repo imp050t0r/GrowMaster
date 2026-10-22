@@ -145,7 +145,7 @@ export function IrrigationPlanner({crops,beds}) {
   const dailyStates=dailyBedStates(beds,crops,profiles,saved);
   const dirty=JSON.stringify(numeric(cp))!==JSON.stringify(numeric(storedCrop||cropEmpty))||JSON.stringify(numeric(bp))!==JSON.stringify(numeric({...bedEmpty,...storedBed}));
   return <section className="panel" aria-label="Namakanje">
-    <IrrigationValveGroups crops={crops}/>
+    <IrrigationValveGroups crops={crops} beds={beds}/>
     <p className="eyebrow">Dnevna vodna bilanca</p><h2>Namakanje</h2>
     <p>Dnevni pregled uporablja trenutno aktivno kulturo. Za gredice brez WH51 GrowMaster prebere sveže trajanje Smart Irrigation in iz nastavljenega pretoka oceni količino vode. Pregled se osveži ob odprtju, ob vrnitvi v aplikacijo in vsakih 15 minut. Ročni vodni izračun ET₀, dežja in začetnega primanjkljaja je ločen. Ročni OpenSprinkler osnutek je namenjen pregledu in sam ne zažene ventila. Ločena avtomatika deluje samo, če jo izrecno vklopiš.</p>
     <div className="irrigation-bed-review" aria-label={`Pregled gredic za ${day.day}`}>
