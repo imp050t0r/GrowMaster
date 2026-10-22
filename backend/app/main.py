@@ -1783,6 +1783,70 @@ def require_group_planting_workflow(db: Session, bed_id: int) -> None:
         )
 
 
+@app.post("/api/irrigation/valves", status_code=status.HTTP_201_CREATED)
+def create_irrigation_valve_group(
+    payload: dict,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Register a physical valve with explicit, permanent member beds."""
+    from app.models import IrrigationValveZone
+    controller_id = str(payload.get("controller_id") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    station_number = payload.get("station_number")
+    bed_ids = payload.get("bed_ids")
+    if not controller_id or len(controller_id) > 80 or not name or len(name) > 100:
+        raise HTTPException(status_code=422, detail="Ime ventila in krmilnik sta obvezna.")
+    if type(station_number) is not int or not 0 <= station_number <= 255:
+        raise HTTPException(status_code=422, detail="Številka postaje mora biti med 0 in 255.")
+    if not isinstance(bed_ids, list) or not bed_ids or any(type(x) is not int for x in bed_ids):
+        raise HTTPException(status_code=422, detail="Izberite najmanj eno veljavno gredico.")
+    if len(bed_ids) != len(set(bed_ids)):
+        raise HTTPException(status_code=422, detail="Gredice se ne smejo ponavljati.")
+    beds = list(db.scalars(select(Bed).where(
+        Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID
+    )).all())
+    if len(beds) != len(bed_ids):
+        raise HTTPException(status_code=422, detail="Nekatere gredice ne obstajajo.")
+    assigned = db.scalar(select(IrrigationValveBed.bed_id).where(
+        IrrigationValveBed.bed_id.in_(bed_ids)
+    ).limit(1))
+    if assigned is not None:
+        raise HTTPException(status_code=409, detail="Gredica je že trajno povezana z ventilom.")
+    existing = db.scalar(select(IrrigationValveZone.id).where(
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+        IrrigationValveZone.controller_id == controller_id,
+        IrrigationValveZone.station_number == station_number,
+    ).limit(1))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Ta ventil je že registriran.")
+    # Do not group beds with incompatible active plantings.
+    active = list(db.scalars(select(Planting).where(
+        Planting.bed_id.in_(bed_ids), Planting.status == "active"
+    )).all())
+    if active:
+        signatures = {(p.crop_id, p.variety_id, p.sowing_date) for p in active}
+        if len(active) != len(bed_ids) or len(signatures) != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Gredic z različnimi ali nepopolnimi aktivnimi zasaditvami ni dovoljeno združiti.",
+            )
+    zone = IrrigationValveZone(
+        farm_id=DEFAULT_FARM_ID, controller_id=controller_id,
+        station_number=station_number, name=name, enabled=False,
+    )
+    try:
+        db.add(zone)
+        db.flush()
+        for bed_id in bed_ids:
+            db.add(IrrigationValveBed(zone_id=zone.id, bed_id=bed_id))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ventil ali gredica je že dodeljena.")
+    return {"id": zone.id, "name": name, "controller_id": controller_id,
+            "station_number": station_number, "bed_ids": bed_ids, "enabled": False}
+
+
 @app.get("/api/irrigation/valves")
 def list_irrigation_valve_groups(db: Session = Depends(get_db)) -> list[dict]:
     """Read-only permanent mapping for planting UI; no hardware operations."""
