@@ -1829,11 +1829,22 @@ def irrigation_valve_planting_suggestions(
                     break
                 warnings.extend(preview.warnings)
             if eligible:
+                seasonal_score, seasonal_reason, seasonal_warning = seasonal_assessment(
+                    crop.name, crop.category, sowing_date
+                )
+                if seasonal_warning:
+                    continue
+                maturity_days = maturity_days_for_date(variety, sowing_date)
                 suggestions.append({
                     "crop_id": crop.id, "crop_name": crop.name,
                     "variety_id": variety.id, "variety_name": variety.name,
+                    "expected_harvest_date": (sowing_date + timedelta(days=maturity_days)).isoformat(),
+                    "maturity_days": maturity_days,
+                    "score": 70 + seasonal_score,
+                    "seasonal_reason": seasonal_reason,
                     "warnings": sorted(set(warnings)),
                 })
+    suggestions.sort(key=lambda item: (-item["score"], item["maturity_days"], item["crop_name"], item["variety_name"]))
     return {
         "zone_id": zone_id, "sowing_date": sowing_date,
         "bed_ids": [bed.id for bed in beds],
