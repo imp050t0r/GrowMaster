@@ -1762,7 +1762,6 @@ def apply_task_review(payload: TaskReviewApply, db: Session = Depends(get_db)) -
     }
 
 
-@app.post("/api/plantings", status_code=status.HTTP_201_CREATED)
 def require_group_planting_workflow(db: Session, bed_id: int) -> None:
     """Fail closed until an atomic whole-zone planting workflow is implemented.
 
@@ -1784,6 +1783,7 @@ def require_group_planting_workflow(db: Session, bed_id: int) -> None:
         )
 
 
+@app.post("/api/plantings", status_code=status.HTTP_201_CREATED)
 def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> dict:
     crop, variety, bed = resolve_selection(payload, db)
     require_group_planting_workflow(db, bed.id)
