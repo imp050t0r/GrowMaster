@@ -8,6 +8,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
   const [sowingDate,setSowingDate]=useState("");
   const [suggestions,setSuggestions]=useState([]),[suggestBusy,setSuggestBusy]=useState(false),[suggestLoaded,setSuggestLoaded]=useState(false);
   const [overrideRotation,setOverrideRotation]=useState(false);
+  const [confirmFinish,setConfirmFinish]=useState(false);
   const [newName,setNewName]=useState(""),[controllerId,setControllerId]=useState("opensprinkler-1");
   const [stationNumber,setStationNumber]=useState("0"),[selectedBeds,setSelectedBeds]=useState([]);
   const [configBusy,setConfigBusy]=useState(false);
@@ -44,6 +45,15 @@ export function IrrigationValveGroups({crops,beds=[]}) {
     finally{setSuggestBusy(false);}
   };
   useEffect(()=>{setSuggestions([]);setSuggestLoaded(false);},[zoneId,sowingDate]);
+  const finishGroup=async()=>{
+    if(!zoneId||!confirmFinish)return;
+    setBusy(true);setError("");setMessage("");
+    try{
+      const result=await apiRequest(`/api/irrigation/valves/${zoneId}/finish`,{method:"POST"});
+      setMessage(`Zaključenih je ${result.finished_planting_ids.length} zasaditev. Osvežite pregled zasaditev.`);
+      setConfirmFinish(false);
+    }catch(e){setError(e.message);}finally{setBusy(false);}
+  };
   const submit=async(e)=>{
     e.preventDefault();
     if(!zone?.beds?.length||!cropId||!varietyId||!sowingDate)return;
@@ -122,7 +132,17 @@ export function IrrigationValveGroups({crops,beds=[]}) {
         {busy?"Shranjujem…":"Zasadi vse gredice skupine"}
       </button>
     </form>
-    {error&&<p role="alert">{error}</p>}
+    {zone?.beds?.length>0&&<details>
+      <summary>Zaključi celotno namakalno skupino</summary>
+      <p>Zaključek velja za vse gredice tega ventila. Posamično zaključevanje ni dovoljeno.</p>
+      <label><input type="checkbox" checked={confirmFinish} onChange={e=>setConfirmFinish(e.target.checked)}/>
+        Potrjujem zaključek vseh aktivnih zasaditev izbrane skupine
+      </label>
+      <button type="button" disabled={!confirmFinish||busy} onClick={finishGroup}>
+        Zaključi vse zasaditve skupine
+      </button>
+    </details>}
+    {error&&<p role="alert">{error}</p>
     {message&&<p role="status">{message}</p>}
     {!zones.length&&<p>Ni nastavljenih fizičnih ventilov. Najprej je treba trajno povezati gredice in ventile.</p>}
   </section>;
