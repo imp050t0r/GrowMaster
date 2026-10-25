@@ -1047,3 +1047,103 @@ def test_ha_weather_handles_timeout(ha_weather):
     response = fetch_weather(client)
     assert response.status_code == 502
     assert "test-secret" not in response.text
+
+
+@pytest.fixture
+def sequence_mapping(irrigation, monkeypatch):
+    from app.models import IrrigationValveBed, IrrigationValveZone
+    db, client, _ = irrigation
+    db.add(Bed(id=3, farm_id=1, name="A2", width_m=1, length_m=10, status="empty"))
+    db.add_all([
+        IrrigationValveZone(id=1, farm_id=1, name="A1", controller_id="opensprinkler-1", station_number=0, enabled=False),
+        IrrigationValveZone(id=2, farm_id=1, name="A2", controller_id="opensprinkler-2", station_number=71, enabled=False),
+    ])
+    db.flush()
+    db.add_all([IrrigationValveBed(zone_id=1, bed_id=1), IrrigationValveBed(zone_id=2, bed_id=3)])
+    db.commit()
+    def forbidden(*args, **kwargs):
+        pytest.fail("Sequence preview must not contact hardware or change automation state")
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", forbidden)
+    monkeypatch.setattr(irrigation_routes, "_write_automatic_state", forbidden)
+    return db, client
+
+
+def sequence_request(client, runs):
+    return client.post("/api/irrigation/sequence-preview", json={"runs": runs})
+
+
+def test_sequence_api_resolves_disabled_valves_preserves_order_and_has_no_side_effects(sequence_mapping):
+    from app.models import IrrigationValveZone
+    db, client = sequence_mapping
+    response = sequence_request(client, [{"bed_id": 3, "run_seconds": 10}, {"bed_id": 1, "run_seconds": 20}])
+    assert response.status_code == 200
+    result = response.json()
+    assert result["simulation_only"] is True
+    assert result["automatic_execution"] is False
+    assert result["total_seconds"] == 45
+    assert [r["bed_id"] for r in result["runs"]] == [3, 1]
+    assert all(r["valve_enabled"] is False for r in result["runs"])
+    assert [(e["at_seconds"], e["action"], e["controller_id"], e["station_number"]) for e in result["events"]] == [
+        (0, "valve_open", "opensprinkler-2", 71), (5, "pump_on", None, None),
+        (15, "valve_open", "opensprinkler-1", 0), (20, "valve_close", "opensprinkler-2", 71),
+        (40, "pump_off", None, None), (45, "valve_close", "opensprinkler-1", 0),
+    ]
+    assert list(db.scalars(select(IrrigationValveZone.enabled))) == [False, False]
+    assert list(db.scalars(select(IrrigationDailyReport))) == []
+    assert not db.new and not db.dirty and not db.deleted
+
+
+def test_sequence_api_empty_plan_has_no_pump_events(sequence_mapping):
+    _, client = sequence_mapping
+    result = sequence_request(client, []).json()
+    assert result["events"] == [] and result["runs"] == []
+    assert result["total_seconds"] == 0
+    assert result["automatic_execution"] is False
+
+
+@pytest.mark.parametrize("run", [
+    {"bed_id": True, "run_seconds": 10}, {"bed_id": "1", "run_seconds": 10},
+    {"bed_id": 0, "run_seconds": 10}, {"bed_id": 1, "run_seconds": 0},
+    {"bed_id": 1, "run_seconds": 86401}, {"bed_id": 1, "run_seconds": True},
+    {"bed_id": 1, "run_seconds": 1.5}, {"bed_id": 1, "run_seconds": "10"},
+    {"bed_id": 1, "run_seconds": 10, "controller_id": "opensprinkler-2"},
+    {"bed_id": 1, "run_seconds": 10, "station_number": 5},
+])
+def test_sequence_api_rejects_invalid_or_injected_inputs(sequence_mapping, run):
+    _, client = sequence_mapping
+    assert sequence_request(client, [run]).status_code == 422
+
+
+def test_sequence_api_rejects_duplicate_beds_and_oversized_plan(sequence_mapping):
+    _, client = sequence_mapping
+    run = {"bed_id": 1, "run_seconds": 10}
+    assert sequence_request(client, [run, run]).status_code == 422
+    assert sequence_request(client, [run] * 145).status_code == 422
+    assert client.post("/api/irrigation/sequence-preview", json={"runs": [run], "execute": True}).status_code == 422
+
+
+@pytest.mark.parametrize("bed_id", [2, 999])
+def test_sequence_api_rejects_foreign_or_missing_beds(sequence_mapping, bed_id):
+    _, client = sequence_mapping
+    assert sequence_request(client, [{"bed_id": bed_id, "run_seconds": 10}]).status_code == 409
+
+
+@pytest.mark.parametrize("fault", ["missing", "foreign_zone", "shared", "bad_controller", "bad_station"])
+def test_sequence_api_rejects_incomplete_or_unsupported_mapping(sequence_mapping, fault):
+    from app.models import IrrigationValveBed, IrrigationValveZone
+    db, client = sequence_mapping
+    zone = db.get(IrrigationValveZone, 1)
+    if fault == "missing":
+        db.delete(db.scalar(select(IrrigationValveBed).where(IrrigationValveBed.bed_id == 1)))
+    elif fault == "foreign_zone":
+        zone.farm_id = 2
+    elif fault == "shared":
+        db.add(Bed(id=4, farm_id=1, name="A3", width_m=1, length_m=10, status="empty"))
+        db.flush()
+        db.add(IrrigationValveBed(zone_id=1, bed_id=4))
+    elif fault == "bad_controller":
+        zone.controller_id = "opensprinkler-3"
+    else:
+        zone.station_number = 72
+    db.commit()
+    assert sequence_request(client, [{"bed_id": 1, "run_seconds": 10}]).status_code == 409

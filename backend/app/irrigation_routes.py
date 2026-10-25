@@ -1,5 +1,6 @@
 """Irrigation planning, Home Assistant integration, and guarded optional automation."""
 import json
+from dataclasses import asdict
 import math
 import os
 import re
@@ -13,12 +14,13 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
+from app.irrigation_sequence import ValveRun, preview_sequence
 from app.ha_credentials import delete_config as delete_home_assistant_config, read_config as read_stored_home_assistant_config, write_config as write_home_assistant_config
-from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, Planting, Variety
+from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, IrrigationValveBed, IrrigationValveZone, Planting, Variety
 
 router = APIRouter(prefix="/api/irrigation")
 logger = logging.getLogger(__name__)
@@ -27,6 +29,15 @@ FARM_ID = 1
 
 class Input(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, str_strip_whitespace=True)
+
+
+class SequenceRunInput(Input):
+    bed_id: int = Field(gt=0, strict=True)
+    run_seconds: int = Field(ge=1, le=86400, strict=True)
+
+
+class SequencePreviewInput(Input):
+    runs: list[SequenceRunInput] = Field(max_length=144)
 
 
 class CropProfile(Input):
@@ -562,6 +573,41 @@ def apply_wh51_reading(db, payload: DayInput, report: dict):
         report.update(status="review", confidence="low")
         report["warnings"].append(f"Meritve WH51 ni mogoče varno uporabiti: {exc}")
     return report
+
+
+@router.post("/sequence-preview")
+def sequence_preview(payload: SequencePreviewInput, db: Session = Depends(get_db)):
+    """Simulate caller-supplied dwell times using stored, farm-scoped mappings."""
+    bed_ids = [run.bed_id for run in payload.runs]
+    if len(bed_ids) != len(set(bed_ids)):
+        raise HTTPException(422, "Gredica se lahko v predogledu pojavi samo enkrat.")
+    rows = db.execute(select(Bed.id, IrrigationValveZone).join(
+        IrrigationValveBed, IrrigationValveBed.bed_id == Bed.id).join(
+        IrrigationValveZone, IrrigationValveZone.id == IrrigationValveBed.zone_id).where(
+        Bed.farm_id == FARM_ID, IrrigationValveZone.farm_id == FARM_ID,
+        Bed.id.in_(bed_ids))).all()
+    zones = {bed_id: zone for bed_id, zone in rows}
+    if len(zones) != len(bed_ids):
+        raise HTTPException(409, "Vsaka izbrana gredica mora imeti ventil na tej kmetiji.")
+    zone_ids = [zone.id for zone in zones.values()]
+    shared = db.scalar(select(IrrigationValveBed.zone_id).where(
+        IrrigationValveBed.zone_id.in_(zone_ids)).group_by(
+        IrrigationValveBed.zone_id).having(func.count(IrrigationValveBed.id) != 1).limit(1))
+    if shared is not None:
+        raise HTTPException(409, "Predogled zahteva eno gredico na ventil; skupni ventili niso podprti.")
+    runs = [ValveRun(run.bed_id, zones[run.bed_id].controller_id,
+                    zones[run.bed_id].station_number, run.run_seconds) for run in payload.runs]
+    try:
+        events = preview_sequence(runs)
+    except ValueError as exc:
+        raise HTTPException(409, "Shranjena preslikava ventilov ni veljavna za predogled.") from exc
+    return {"simulation_only": True, "automatic_execution": False,
+            "runs": [{**asdict(run), "valve_enabled": zones[run.bed_id].enabled} for run in runs],
+            "events": [asdict(event) for event in events],
+            "total_seconds": events[-1].at_seconds if events else 0,
+            "note": "Simulacija z ročno podanimi časi; ni odobritev zalivanja. "
+                    "Podana trajanja ne vključujejo dodatnega prekrivanja in zakasnitve zapiranja. "
+                    "Predpostavlja izključeno črpalko in zaprte ventile; strojna oprema ni preverjena."}
 
 
 @router.post("/calculate")

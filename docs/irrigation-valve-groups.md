@@ -169,3 +169,38 @@ verified. A later installation step must map verified ET0 and source timestamps
 to this contract, for example through a dedicated HA sensor. Do not invent source
 timestamps, substitute HA fetch time, or label a duration/rain sensor as ET0.
 The adapter has mocked integration tests; it is not live-hardware acceptance.
+
+## Sequence preview API using permanent mappings
+
+`POST /api/irrigation/sequence-preview` exposes the pure sequence simulator through
+the existing irrigation API. Example request:
+
+```json
+{"runs": [{"bed_id": 1, "run_seconds": 10}, {"bed_id": 3, "run_seconds": 20}]}
+```
+
+Each run supplies only a bed ID and an exclusive dwell duration (strict integers,
+1–86400 seconds). The server resolves controller/station from the permanent valve
+mapping for the current farm. It preserves caller order and accepts at most 144
+runs; an empty plan returns no events and zero total time. Caller-supplied hardware
+addresses and execution flags are rejected. This does not derive irrigation demand
+from weather or authorize the supplied durations.
+
+Missing/foreign beds or mappings, cross-farm valve references, shared-bed valves
+and unsupported controller/station mappings return 409. Duplicate beds, invalid
+durations and oversized requests return 422. All membership is checked, including
+beds on a selected valve that were not included in the request. Shared-valve
+planting features remain unchanged; this preview targets one bed per valve.
+
+The response includes `simulation_only: true`, `automatic_execution: false`, the
+resolved `runs` with each valve's `valve_enabled` state, timestamped `events` and
+`total_seconds` including startup, overlap and shutdown delays. Disabled valves
+can be simulated and stay disabled. For dwell times 10 and 20 seconds, the total
+is 45 seconds, following the timeline above. No database writes, automation-state
+writes, HA calls or hardware commands are performed.
+
+This API is an engineering preview, not a runnable or approved watering plan.
+It does not validate water demand, configured runtime limits, hydraulic capacity,
+weather availability or actual pump/valve state. Do not send its events directly
+to hardware. Local acknowledgement/fault handling and hardware acceptance testing
+are still required before execution can be implemented.
