@@ -127,3 +127,45 @@ or water-ledger application is created. Reports remain advisory with
 `automatic_execution: false`. Existing requests without `weather` retain manual
 input behavior; the legacy automatic runner remains separate and still needs the
 architecture migration described above.
+
+## Read-only Home Assistant weather adapter
+
+`GET /api/irrigation/home-assistant/weather?entity_id=sensor.growmaster_et0&day=2026-10-25`
+reads one entity using the existing encrypted HA connection (or its existing
+URL/token environment fallback). The requested sensor must be explicitly listed
+in the existing `HOME_ASSISTANT_WEATHER_ENTITIES` setting. This endpoint makes
+one HA state GET with an eight-second timeout and redirects disabled. It neither
+calls HA services nor writes reports, configuration or irrigation state.
+
+The entity must expose this **GrowMaster adapter contract**. These attribute
+names are not claimed to exist in the native Smart Irrigation integration:
+
+| HA state field | Meaning |
+| --- | --- |
+| `entity_id` | Exactly the requested sensor ID |
+| `state` | Numeric daily reference ET0 depth, 0–30 inclusive; numeric zero is valid |
+| `attributes.unit_of_measurement` | `mm` |
+| `attributes.growmaster_source` | `ha_smart_irrigation_ws90` |
+| `attributes.growmaster_day` | ET0 balance day, ISO date; must match the requested day |
+| `attributes.growmaster_observed_at` | Timestamp of the actual WS90 observation used |
+| `attributes.growmaster_calculated_at` | Timestamp of the ET0 calculation using that observation |
+
+The two source timestamps use the same timezone, ordering and six-hour freshness
+validation as the calculation API. HA `last_updated` is deliberately ignored:
+re-reading or refreshing a stale value must not make the underlying weather fresh.
+Missing attributes, unavailable values, duration/rate units, mismatched entities
+or periods, malformed responses and upstream HTTP/network failures return 502.
+An unapproved entity or future request day returns 422; missing HA connection
+returns 503. Upstream bodies and credentials are not included in error responses.
+
+A successful response contains `entity_id`, `weather` (the normalized object
+accepted by `/calculate` and `/daily`) and `automatic_execution: false`. The caller
+can pass `weather` unchanged to an advisory calculation, which rechecks freshness.
+Reading weather alone never records irrigation or changes an existing report.
+
+Installation status: Smart Irrigation is installed, but complete weather/ET0
+inputs are not yet available. No real entity mapping or WS90 connection has been
+verified. A later installation step must map verified ET0 and source timestamps
+to this contract, for example through a dedicated HA sensor. Do not invent source
+timestamps, substitute HA fetch time, or label a duration/rain sensor as ET0.
+The adapter has mocked integration tests; it is not live-hardware acceptance.

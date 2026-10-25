@@ -906,3 +906,144 @@ def test_automatic_irrigation_waits_for_post_kc_recalculation(irrigation,monkeyp
     result=irrigation_routes.automatic_irrigation_tick(db)
     assert result["status"]=="kc_updated_waiting_for_recalculation"
     assert result["started"]==0
+
+
+@pytest.fixture
+def ha_weather(irrigation, monkeypatch):
+    from types import SimpleNamespace
+    _, client, _ = irrigation
+    now = datetime.now(timezone.utc)
+    reply = SimpleNamespace(status_code=200, body={
+        "entity_id": "sensor.growmaster_et0", "state": "3.2",
+        "last_updated": now.isoformat(),
+        "attributes": {"unit_of_measurement": "mm",
+                       "growmaster_source": "ha_smart_irrigation_ws90",
+                       "growmaster_day": str(date.today()),
+                       "growmaster_observed_at": (now - timedelta(minutes=10)).isoformat(),
+                       "growmaster_calculated_at": (now - timedelta(minutes=5)).isoformat()},
+    }, error=None, calls=[])
+    monkeypatch.setenv("HOME_ASSISTANT_WEATHER_ENTITIES", " sensor.growmaster_et0 ,sensor.other")
+    monkeypatch.setattr(irrigation_routes, "home_assistant_config", lambda: ("http://ha:8123", "test-secret"))
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs == {"timeout": 8.0, "follow_redirects": False}
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers):
+            reply.calls.append((url, headers))
+            if reply.error:
+                raise reply.error
+            return self
+        @property
+        def status_code(self): return reply.status_code
+        def json(self):
+            if isinstance(reply.body, Exception):
+                raise reply.body
+            return reply.body
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", Client)
+    return client, reply
+
+
+def fetch_weather(client, **changes):
+    return client.get("/api/irrigation/home-assistant/weather", params={
+        "entity_id": "sensor.growmaster_et0", "day": str(date.today()), **changes})
+
+
+@pytest.mark.parametrize("state", ["0", "3.2", "30"])
+def test_ha_weather_reads_only_and_feeds_existing_calculation(ha_weather, state):
+    client, reply = ha_weather
+    reply.body["state"] = state
+    before = client.get(f"/api/irrigation/daily?day={date.today()}").json()
+    response = fetch_weather(client)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["weather"]["eto_mm"] == float(state)
+    assert data["automatic_execution"] is False
+    assert reply.calls == [("http://ha:8123/api/states/sensor.growmaster_et0",
+                            irrigation_routes.ha_headers("test-secret"))]
+    report = calc(client, eto_mm=None, stage="initial", weather=data["weather"])
+    assert report.status_code == 200
+    assert report.json()["etc_mm"] == float(state) * 0.5
+    assert report.json()["automatic_execution"] is False
+    assert client.get(f"/api/irrigation/daily?day={date.today()}").json() == before
+    assert len(reply.calls) == 1
+
+
+@pytest.mark.parametrize("entity", ["sensor.not_allowed", "switch.pump", "sensor.x/../../services", "https://other/", "sensor." + "x" * 150])
+def test_ha_weather_rejects_unapproved_entities_without_network(ha_weather, entity):
+    client, reply = ha_weather
+    assert fetch_weather(client, entity_id=entity).status_code == 422
+    assert reply.calls == []
+
+
+def test_ha_weather_requires_config_and_nonfuture_day(ha_weather, monkeypatch):
+    client, reply = ha_weather
+    assert fetch_weather(client, day=str(date.today() + timedelta(days=1))).status_code == 422
+    monkeypatch.setattr(irrigation_routes, "home_assistant_config", lambda: (None, None))
+    assert fetch_weather(client).status_code == 503
+    assert reply.calls == []
+
+
+@pytest.mark.parametrize("state", ["unknown", "unavailable", "nan", "inf", "-1", "31", True, None, [], {}])
+def test_ha_weather_rejects_invalid_et0(ha_weather, state):
+    client, reply = ha_weather
+    reply.body["state"] = state
+    assert fetch_weather(client).status_code == 502
+
+
+@pytest.mark.parametrize("attribute", ["unit_of_measurement", "growmaster_source", "growmaster_day", "growmaster_observed_at", "growmaster_calculated_at"])
+def test_ha_weather_requires_metadata_despite_fresh_ha_update(ha_weather, attribute):
+    client, reply = ha_weather
+    del reply.body["attributes"][attribute]
+    assert fetch_weather(client).status_code == 502
+
+
+@pytest.mark.parametrize("attribute,value", [
+    ("unit_of_measurement", "seconds"), ("unit_of_measurement", "mm/h"),
+    ("growmaster_source", "other"), ("growmaster_day", "2000-01-01"),
+    ("growmaster_observed_at", "2026-10-25T10:00:00"),
+    ("growmaster_calculated_at", "2026-10-25T10:00:00"),
+])
+def test_ha_weather_rejects_wrong_metadata(ha_weather, attribute, value):
+    client, reply = ha_weather
+    reply.body["attributes"][attribute] = value
+    assert fetch_weather(client).status_code == 502
+
+
+@pytest.mark.parametrize("age_seconds,expected", [(0, 200), (21600, 200), (21601, 502), (-1, 502)])
+def test_ha_weather_checks_source_freshness_not_fetch_time(ha_weather, monkeypatch, age_seconds, expected):
+    client, reply = ha_weather
+    now = datetime.now(timezone.utc)
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None): return now
+    monkeypatch.setattr(irrigation_routes, "datetime", FixedDatetime)
+    timestamp = (now - timedelta(seconds=age_seconds)).isoformat()
+    reply.body["attributes"].update(growmaster_observed_at=timestamp, growmaster_calculated_at=timestamp)
+    assert fetch_weather(client).status_code == expected
+
+
+@pytest.mark.parametrize("body", [[], None, {}, {"entity_id": "sensor.other"},
+                                  {"entity_id": "sensor.growmaster_et0", "state": "1", "attributes": []},
+                                  ValueError("test-secret upstream body")])
+def test_ha_weather_handles_malformed_response_without_leaking_details(ha_weather, body):
+    client, reply = ha_weather
+    reply.body = body
+    response = fetch_weather(client)
+    assert response.status_code == 502
+    assert "test-secret" not in response.text
+
+
+@pytest.mark.parametrize("status", [301, 401, 404, 500])
+def test_ha_weather_handles_upstream_http_failures(ha_weather, status):
+    client, reply = ha_weather
+    reply.status_code = status
+    assert fetch_weather(client).status_code == 502
+
+
+def test_ha_weather_handles_timeout(ha_weather):
+    client, reply = ha_weather
+    reply.error = irrigation_routes.httpx.ReadTimeout("test-secret")
+    response = fetch_weather(client)
+    assert response.status_code == 502
+    assert "test-secret" not in response.text

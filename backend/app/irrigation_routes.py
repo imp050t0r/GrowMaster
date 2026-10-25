@@ -10,7 +10,7 @@ import logging
 from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from sqlalchemy import select
@@ -97,6 +97,11 @@ class WeatherInput(Input):
         if self.observed_at > self.calculated_at:
             raise ValueError("ET0 ne more biti izračunan pred uporabljeno meritvijo WS90.")
         return self
+
+    def require_fresh(self, now: datetime) -> None:
+        if any(not timedelta(0) <= now - timestamp <= timedelta(hours=6)
+               for timestamp in (self.observed_at, self.calculated_at)):
+            raise ValueError("WS90 meritev in izračun ET0 morata biti sveža (največ 6 ur) in ne v prihodnosti.")
 
 
 class DayInput(Input):
@@ -422,10 +427,10 @@ def calculate(payload: DayInput, bed: Bed, cp: CropProfile | None, bp: BedProfil
     # Check freshness at calculation time: a previously parsed
     # payload must not make an old observation fresh again when reused.
     if payload.weather is not None:
-        now = datetime.now(timezone.utc)
-        if any(not timedelta(0) <= now - timestamp <= timedelta(hours=6)
-               for timestamp in (payload.weather.observed_at, payload.weather.calculated_at)):
-            raise HTTPException(422, "WS90 meritev in izračun ET0 morata biti sveža (največ 6 ur) in ne v prihodnosti.")
+        try:
+            payload.weather.require_fresh(datetime.now(timezone.utc))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     result = {"bed_id": bed.id, "bed": bed.name, "crop_id": payload.crop_id,
               "day": str(payload.day), "inputs": payload.model_dump(mode="json"),
               "status": "missing_data", "confidence": "low", "automatic_execution": False,
@@ -1186,6 +1191,53 @@ def home_assistant_test():
     except ValueError as exc:
         raise HTTPException(502, "Home Assistant API ni vrnil veljavnega odgovora.") from exc
     return {"connected": True, "message": info.get("message", "API dosegljiv"), "automatic_execution": False}
+
+
+@router.get("/home-assistant/weather")
+def home_assistant_weather(
+    day: date,
+    entity_id: str = Query(pattern=r"^sensor\.[a-z0-9_]+$", max_length=150),
+):
+    """Read one explicitly normalized ET0 sensor; no service calls or persistence."""
+    if day > date.today():
+        raise HTTPException(422, "Vremenski vhod zahteva današnji ali pretekli dan.")
+    allowed = {item.strip() for item in os.environ.get("HOME_ASSISTANT_WEATHER_ENTITIES", "").split(",") if item.strip()}
+    if entity_id not in allowed:
+        raise HTTPException(422, "Entiteta ni dovoljena v HOME_ASSISTANT_WEATHER_ENTITIES.")
+    base_url, token = home_assistant_config()
+    if not base_url:
+        raise HTTPException(503, "Home Assistant ni nastavljen.")
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=False) as client:
+            response = client.get(f"{base_url}/api/states/{entity_id}", headers=ha_headers(token))
+        if response.status_code != 200:
+            raise HTTPException(502, "Home Assistant ni vrnil vremenske entitete.")
+        data = response.json()
+        if not isinstance(data, dict) or data.get("entity_id") != entity_id:
+            raise ValueError("Unexpected entity response")
+        attributes = data.get("attributes")
+        if not isinstance(attributes, dict) or type(data.get("state")) not in (str, int, float):
+            raise ValueError("Invalid sensor state")
+        # These are GrowMaster adapter attributes, not assumed native Smart
+        # Irrigation attributes. Never fall back to last_updated or a duration.
+        weather = WeatherInput.model_validate({
+            "source": attributes.get("growmaster_source"),
+            "day": attributes.get("growmaster_day"),
+            "eto_mm": float(data["state"]),
+            "unit": attributes.get("unit_of_measurement"),
+            "observed_at": attributes.get("growmaster_observed_at"),
+            "calculated_at": attributes.get("growmaster_calculated_at"),
+        })
+        if weather.day != day:
+            raise ValueError("Weather period does not match requested day")
+        weather.require_fresh(datetime.now(timezone.utc))
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "Home Assistant ni dosegljiv.") from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        # Do not expose upstream bodies, URLs or credentials in API errors.
+        raise HTTPException(502, "Vremenski vhod HA ni veljaven za zahtevani dan; preveri ET0, enoto, izvor in časovna žiga.") from exc
+    return {"entity_id": entity_id, "weather": weather.model_dump(mode="json"),
+            "automatic_execution": False}
 
 
 @router.get("/home-assistant/states")
