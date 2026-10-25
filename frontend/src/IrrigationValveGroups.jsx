@@ -1,5 +1,6 @@
 import React, {useEffect, useState} from "react";
 import {apiRequest} from "./platform";
+import {IrrigationSequencePreview} from "./IrrigationSequencePreview";
 
 /** Plant all beds wired to the same valve in a single backend transaction. */
 export function IrrigationValveGroups({crops,beds=[]}) {
@@ -109,6 +110,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
         <button type="submit" disabled={configBusy||!selectedBeds.length}>{configBusy?"Shranjujem…":"Registriraj ventil in gredice"}</button>
       </form>
     </details>
+    <IrrigationSequencePreview zones={zones}/>
     <form onSubmit={submit}>
       <label>Trajna namakalna skupina
         <select value={zoneId} onChange={e=>setZoneId(e.target.value)} required>
@@ -172,7 +174,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
         Zaključi vse zasaditve skupine
       </button>
     </details>}
-    {error&&<p role="alert">{error}</p>
+    {error&&<p role="alert">{error}</p>}
     {message&&<p role="status">{message}</p>}
     {!zones.length&&<p>Ni nastavljenih fizičnih ventilov. Najprej je treba trajno povezati gredice in ventile.</p>}
   </section>;

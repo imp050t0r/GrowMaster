@@ -204,3 +204,17 @@ It does not validate water demand, configured runtime limits, hydraulic capacity
 weather availability or actual pump/valve state. Do not send its events directly
 to hardware. Local acknowledgement/fault handling and hardware acceptance testing
 are still required before execution can be implemented.
+
+## Sequence preview in the irrigation screen
+
+The existing valve section now includes **Predogled zaporedja namakanja – simulacija**.
+Choose beds with individual permanent valve mappings, enter dwell durations in
+seconds, and use **Prej**, **Pozneje** or **Odstrani** to edit the order. Disabled
+valves are available for simulation. Shared-bed valves are excluded.
+
+**Prikaži časovnico** calls only the sequence-preview endpoint. The result shows
+elapsed seconds, valve/pump events, mapped bed/controller/output and total elapsed
+time including delays. Editing the plan clears the old preview. Refreshing valve
+mappings clears the plan and ignores an outstanding response for the old mappings.
+No execution button is provided. Weather inputs are not required for this manual
+engineering simulation; it is not a watering recommendation.
