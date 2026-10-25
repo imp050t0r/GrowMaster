@@ -82,6 +82,109 @@ def test_missing_et0_is_not_zero(irrigation):
     assert r["status"]=="missing_data" and r["litres"] is None
     assert calc(c,eto_mm=0,initial_depletion_mm=0).json()["status"]=="hold"
 
+
+def weather_input(**changes):
+    now = datetime.now(timezone.utc)
+    return {"source": "ha_smart_irrigation_ws90", "day": str(date.today()),
+            "eto_mm": 5, "unit": "mm", "observed_at": (now - timedelta(minutes=10)).isoformat(),
+            "calculated_at": (now - timedelta(minutes=5)).isoformat(), **changes}
+
+
+def test_weather_et0_uses_growmaster_kc_and_never_calls_hardware(irrigation, monkeypatch):
+    _, client, _ = irrigation
+    def no_network(*args, **kwargs):
+        pytest.fail("Weather input calculation must not contact HA or hardware")
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", no_network)
+    response = calc(client, eto_mm=None, stage="initial", weather=weather_input())
+    assert response.status_code == 200
+    report = response.json()
+    assert report["etc_mm"] == 2.5
+    assert report["inputs"]["eto_mm"] == 5
+    assert report["inputs"]["weather_source"] == "ha_smart_irrigation_ws90"
+    assert report["automatic_execution"] is False
+    assert "action" not in report
+
+
+def test_zero_weather_et0_is_valid_and_preserved_in_daily_report(irrigation):
+    _, client, _ = irrigation
+    weather = weather_input(eto_mm=0)
+    response = client.put("/api/irrigation/daily", json=payload(
+        eto_mm=None, initial_depletion_mm=0, weather=weather))
+    assert response.status_code == 200
+    assert response.json()["status"] == "hold"
+    stored = client.get(f"/api/irrigation/daily?day={date.today()}").json()["rows"][0]
+    assert stored["inputs"]["weather"]["eto_mm"] == 0
+    assert stored["inputs"]["weather"]["observed_at"]
+    assert stored["automatic_execution"] is False
+
+
+@pytest.mark.parametrize("changes", [
+    {"eto_mm": None}, {"eto_mm": True}, {"eto_mm": "unavailable"},
+    {"eto_mm": "NaN"}, {"eto_mm": "Infinity"}, {"eto_mm": -1}, {"eto_mm": 31},
+    {"unit": "seconds"}, {"unit": "mm/h"}, {"source": "unknown"},
+    {"run_seconds": 60}, {"observed_at": "2026-10-25T10:00:00"},
+    {"calculated_at": "2026-10-25T10:00:00"},
+])
+def test_invalid_normalized_weather_is_rejected(irrigation, changes):
+    _, client, _ = irrigation
+    assert calc(client, eto_mm=None, weather=weather_input(**changes)).status_code == 422
+
+
+@pytest.mark.parametrize("field", ["observed_at", "calculated_at"])
+@pytest.mark.parametrize("age_hours", [-1, 7])
+def test_stale_or_future_weather_does_not_overwrite_daily_report(irrigation, field, age_hours):
+    _, client, _ = irrigation
+    assert client.put("/api/irrigation/daily", json=payload()).status_code == 200
+    before = client.get(f"/api/irrigation/daily?day={date.today()}").json()
+    timestamp = (datetime.now(timezone.utc) - timedelta(hours=age_hours)).isoformat()
+    response = client.put("/api/irrigation/daily", json=payload(
+        eto_mm=None, weather=weather_input(**{field: timestamp})))
+    assert response.status_code == 422
+    assert client.get(f"/api/irrigation/daily?day={date.today()}").json() == before
+
+
+def test_weather_day_and_manual_et0_must_match(irrigation):
+    _, client, _ = irrigation
+    assert calc(client, weather=weather_input(eto_mm=4)).status_code == 422
+    assert calc(client, weather=weather_input(day=str(date.today() - timedelta(days=1)))).status_code == 422
+    assert calc(client, weather=weather_input()).status_code == 200
+
+
+def test_weather_freshness_rechecked_when_parsed_payload_is_reused(irrigation, monkeypatch):
+    db, _, _ = irrigation
+    parsed = irrigation_routes.DayInput.model_validate(payload(weather=weather_input()))
+    later = datetime.now(timezone.utc) + timedelta(hours=7)
+    class LaterDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return later
+    monkeypatch.setattr(irrigation_routes, "datetime", LaterDatetime)
+    with pytest.raises(irrigation_routes.HTTPException) as exc:
+        irrigation_routes.report_for(db, parsed)
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize("age_seconds,expected", [(0, 200), (21600, 200), (21601, 422), (-1, 422)])
+def test_weather_freshness_boundaries_with_timezone_offset(irrigation, monkeypatch, age_seconds, expected):
+    _, client, _ = irrigation
+    now = datetime.now(timezone.utc)
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+    monkeypatch.setattr(irrigation_routes, "datetime", FixedDatetime)
+    timestamp = (now - timedelta(seconds=age_seconds)).astimezone(timezone(timedelta(hours=2))).isoformat()
+    response = calc(client, weather=weather_input(observed_at=timestamp, calculated_at=timestamp))
+    assert response.status_code == expected
+
+
+@pytest.mark.parametrize("field", ["eto_mm", "day", "source", "unit", "observed_at", "calculated_at"])
+def test_weather_metadata_is_required(irrigation, field):
+    _, client, _ = irrigation
+    weather = weather_input()
+    del weather[field]
+    assert calc(client, eto_mm=None, weather=weather).status_code == 422
+
 def test_daily_readiness_lists_active_beds_and_missing_inputs(irrigation):
     db,c,_=irrigation
     db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,

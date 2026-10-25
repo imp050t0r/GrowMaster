@@ -81,6 +81,24 @@ class BedProfile(Input):
         return self
 
 
+class WeatherInput(Input):
+    """Normalized ET0 input; never accept Smart Irrigation valve durations."""
+    source: Literal["ha_smart_irrigation_ws90"]
+    day: date
+    eto_mm: float = Field(ge=0, le=30, strict=True)
+    unit: Literal["mm"]
+    calculated_at: datetime
+    observed_at: datetime
+
+    @model_validator(mode="after")
+    def timestamps(self):
+        if self.calculated_at.utcoffset() is None or self.observed_at.utcoffset() is None:
+            raise ValueError("Vremenska časovna žiga morata vsebovati časovni pas.")
+        if self.observed_at > self.calculated_at:
+            raise ValueError("ET0 ne more biti izračunan pred uporabljeno meritvijo WS90.")
+        return self
+
+
 class DayInput(Input):
     bed_id: int = Field(gt=0)
     crop_id: int = Field(gt=0)
@@ -91,6 +109,7 @@ class DayInput(Input):
     effective_rain_mm: float = Field(ge=0, le=500)
     applied_irrigation_mm: float = Field(ge=0, le=100)
     weather_source: str = Field(min_length=1, max_length=500)
+    weather: WeatherInput | None = None
     soil_moisture_pct: float | None = Field(default=None, ge=0, le=100)
     sensor_observed_at: datetime | None = None
 
@@ -102,6 +121,13 @@ class DayInput(Input):
             raise ValueError("Meritev vlage v tleh zahteva tudi čas meritve.")
         if self.sensor_observed_at is not None and self.sensor_observed_at.utcoffset() is None:
             raise ValueError("Čas meritve mora vsebovati časovni pas.")
+        if self.weather is not None:
+            if self.weather.day != self.day:
+                raise ValueError("Vremenski podatki morajo pripadati dnevu bilance.")
+            if self.eto_mm is not None and self.eto_mm != self.weather.eto_mm:
+                raise ValueError("Ročni ET0 se ne ujema z vremenskim vhodom.")
+            self.eto_mm = self.weather.eto_mm
+            self.weather_source = self.weather.source
         return self
 
 
@@ -393,6 +419,13 @@ def save_bed(bed_id: int, payload: BedProfile, db: Session = Depends(get_db)):
 
 
 def calculate(payload: DayInput, bed: Bed, cp: CropProfile | None, bp: BedProfile | None):
+    # Check freshness at calculation time: a previously parsed
+    # payload must not make an old observation fresh again when reused.
+    if payload.weather is not None:
+        now = datetime.now(timezone.utc)
+        if any(not timedelta(0) <= now - timestamp <= timedelta(hours=6)
+               for timestamp in (payload.weather.observed_at, payload.weather.calculated_at)):
+            raise HTTPException(422, "WS90 meritev in izračun ET0 morata biti sveža (največ 6 ur) in ne v prihodnosti.")
     result = {"bed_id": bed.id, "bed": bed.name, "crop_id": payload.crop_id,
               "day": str(payload.day), "inputs": payload.model_dump(mode="json"),
               "status": "missing_data", "confidence": "low", "automatic_execution": False,
@@ -419,7 +452,10 @@ def calculate(payload: DayInput, bed: Bed, cp: CropProfile | None, bp: BedProfil
     result.update(taw_mm=round(capacity, 3), raw_mm=round(threshold, 3), kc=kc,
                   etc_mm=round(etc, 3), depletion_mm=round(deficit, 3), area_m2=bed.area_m2,
                   status="irrigate" if required else "hold", confidence="low")
-    result["warnings"].append("Ročni ET₀, faza rasti in začetna bilanca; profili zahtevajo lokalno preverjanje. WH52 ne predstavlja cele grede.")
+    if payload.weather is None:
+        result["warnings"].append("Ročni ET₀, faza rasti in začetna bilanca; profili zahtevajo lokalno preverjanje. WH52 ne predstavlja cele grede.")
+    else:
+        result["warnings"].append("ET₀ iz normaliziranega vhoda HA/WS90; faza rasti, začetna bilanca in efektivni dež so ročni. Izvor podatkov ni neodvisno preverjen.")
     if raw_balance > capacity:
         result["warnings"].append("Ocenjeno izsuševanje presega kapaciteto; možen vodni stres. ETc ni popravljena za stres.")
     if payload.soil_moisture_pct is not None:

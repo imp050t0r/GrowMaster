@@ -38,7 +38,9 @@ Timing and pump protection must execute locally, independently of cloud availabi
 - Replace the legacy Smart Irrigation duration/Kc synchronization path in
   `irrigation_routes.py` with GrowMaster-owned decisions from weather/ET0 inputs.
   The existing automatic runner is not the shared-pump executor described here.
-- Integrate WS90/ET0 freshness validation, estimated delivery and local handoff.
+- Integrate estimated delivery and local handoff.
+- Connect actual HA entities to the normalized weather input below; their entity
+  IDs and ET0 period/attribute mapping have not yet been configured or verified.
 - Implement local acknowledgements, timeout/abort handling, restart recovery and
   independent pump protection before connecting the preview to hardware.
 - Add integration tests and hardware-in-the-loop safety acceptance tests.
@@ -79,3 +81,49 @@ enabled by importing or calling this function.
 Run the focused tests from the repository root with `PYTHONPATH=backend python -m
 pytest -q backend/tests/test_irrigation_sequence.py` (set `PYTHONPATH` using the
 shell's environment syntax on Windows).
+
+## Normalized weather input (advisory calculation only)
+
+`POST /api/irrigation/calculate` and `PUT /api/irrigation/daily` accept an optional
+`weather` object alongside the existing bed, crop, stage and water-balance fields:
+
+```json
+{
+  "source": "ha_smart_irrigation_ws90",
+  "day": "2026-10-25",
+  "eto_mm": 3.2,
+  "unit": "mm",
+  "observed_at": "2026-10-25T08:00:00+01:00",
+  "calculated_at": "2026-10-25T08:05:00+01:00"
+}
+```
+
+The example timestamps must be replaced with actual current source timestamps.
+`day` declares the daily ET0 accumulation period and must equal the requested
+balance day. `observed_at` is the timestamp of the WS90 observation used in the
+ET0 calculation; `calculated_at` is the Smart Irrigation calculation timestamp.
+Do not substitute an HA fetch/update timestamp or a watering-duration sensor.
+This API accepts a normalized daily depth in millimetres, not an hourly rate,
+instantaneous reading, crop ETc, or seconds of watering. A future HA adapter must
+verify these source semantics rather than infer them from an entity name.
+
+Both timestamps require an explicit timezone and must be between now and six
+hours ago, inclusive, at calculation time. Observation cannot follow calculation.
+The whole weather object is mandatory when supplied; missing/unavailable ET0 is
+rejected, while numeric zero is valid. ET0 must be a finite JSON number in 0–30 mm.
+Unknown fields (including watering commands/durations) and other units are rejected.
+Failures return HTTP 422 and do not overwrite a stored daily report.
+
+Top-level `eto_mm` may be omitted/null or must match the weather ET0. The existing
+required `weather_source` field is replaced in the report with the normalized
+source identifier. Reports retain the complete weather object for inspection.
+GrowMaster applies its own crop Kc and computes demand using the existing balance;
+stage, opening depletion, effective rain and applied irrigation remain explicit
+caller inputs. WS90 rainfall is not automatically treated as effective rain.
+
+This is ingestion and freshness validation, not independent source authentication
+or automatic HA polling. No sensor configuration, live command, scheduler setting
+or water-ledger application is created. Reports remain advisory with
+`automatic_execution: false`. Existing requests without `weather` retain manual
+input behavior; the legacy automatic runner remains separate and still needs the
+architecture migration described above.
