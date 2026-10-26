@@ -1147,3 +1147,155 @@ def test_sequence_api_rejects_incomplete_or_unsupported_mapping(sequence_mapping
         zone.station_number = 72
     db.commit()
     assert sequence_request(client, [{"bed_id": 1, "run_seconds": 10}]).status_code == 409
+
+
+@pytest.fixture
+def daily_sequence(sequence_mapping):
+    db, client = sequence_mapping
+    today = date.today()
+    db.add(Variety(id=1, crop_id=1, name="Test", days_to_harvest=40,
+                   days_spring=40, days_summer=40, days_autumn=40, days_winter=40))
+    db.flush()
+    for bed_id in (1, 3):
+        db.add(Planting(farm_id=1, bed_id=bed_id, crop_id=1, variety_id=1,
+                       sowing_date=today-timedelta(days=10), expected_harvest_date=today+timedelta(days=30), status="active"))
+    db.commit()
+    for bed_id in (1, 3):
+        assert client.put(f"/api/irrigation/beds/{bed_id}", json={**BP, "flow_l_min":20}).status_code == 200
+        assert client.put("/api/irrigation/daily", json=payload(bed_id=bed_id, weather=weather_input())).status_code == 200
+    return db, client
+
+
+def daily_sequence_request(client):
+    return client.get("/api/irrigation/daily-sequence-preview", params={"day":str(date.today())})
+
+
+def test_daily_sequence_uses_growmaster_demand_and_accounts_for_overlap(daily_sequence):
+    db, client = daily_sequence
+    before = client.get(f"/api/irrigation/daily?day={date.today()}").json()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert result["simulation_only"] and not result["automatic_execution"] and result["requires_manual_review"]
+    assert [(r["bed_id"],r["run_seconds"]) for r in result["runs"]] == [(1,557),(3,557)]
+    assert all(r["pump_active_seconds"] == 562 for r in result["rows"])
+    assert all(r["valve_open_seconds"] == 567 for r in result["rows"])
+    assert all(r["estimated_litres"] <= r["requested_litres"] for r in result["rows"])
+    assert result["total_seconds"] == 1129
+    assert not any(r["valve_enabled"] for r in result["runs"])
+    assert client.get(f"/api/irrigation/daily?day={date.today()}").json() == before
+    assert not db.dirty and not db.new
+
+
+def test_daily_sequence_hold_bed_is_excluded_and_single_run_has_no_overlap(daily_sequence):
+    _, client = daily_sequence
+    client.put("/api/irrigation/daily", json=payload(bed_id=3, initial_depletion_mm=0,
+               eto_mm=0, weather=weather_input(eto_mm=0)))
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert [r["run_seconds"] for r in result["runs"]] == [562]
+    assert result["rows"][1]["status"] == "hold"
+    assert result["total_seconds"] == 572
+
+
+def test_daily_sequence_no_demand_has_no_pump_events(daily_sequence):
+    _, client = daily_sequence
+    for bed_id in (1,3):
+        client.put("/api/irrigation/daily", json=payload(bed_id=bed_id, initial_depletion_mm=0,
+                   eto_mm=0, weather=weather_input(eto_mm=0)))
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "no_irrigation" and result["events"] == []
+
+
+@pytest.mark.parametrize("fault", ["missing", "manual", "stale", "future", "naive", "weather_stale", "malformed", "wrong_bed", "wrong_crop", "stage", "profile", "area", "multiple", "no_flow", "soil_mode", "too_long", "too_short", "mapping"])
+def test_daily_sequence_blocks_whole_plan_when_one_bed_is_unsafe(daily_sequence, fault):
+    from app.models import IrrigationBedProfile, IrrigationValveZone
+    db, client = daily_sequence
+    row = db.scalar(select(IrrigationDailyReport).where(IrrigationDailyReport.bed_id == 1))
+    saved = json.loads(row.report)
+    if fault == "missing": db.delete(row)
+    elif fault == "malformed": row.report = '[]'
+    elif fault in ("manual", "weather_stale", "wrong_bed", "wrong_crop", "stage"):
+        if fault == "manual": saved["inputs"]["weather"] = None
+        elif fault == "weather_stale": saved["inputs"]["weather"]["observed_at"] = (datetime.now(timezone.utc)-timedelta(hours=7)).isoformat()
+        elif fault == "wrong_bed": saved["inputs"]["bed_id"] = 3
+        elif fault == "wrong_crop": saved["inputs"]["crop_id"] = 999
+        else: saved["inputs"]["stage"] = "late"
+        row.report = json.dumps(saved)
+    elif fault in ("stale", "future", "naive"):
+        stamp = datetime.now(timezone.utc) + timedelta(hours=1 if fault == "future" else -7)
+        saved["calculated_at"] = (stamp.replace(tzinfo=None) if fault == "naive" else stamp).isoformat()
+        row.report = json.dumps(saved)
+    elif fault == "area": db.get(Bed,1).length_m = 20
+    elif fault == "multiple":
+        db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
+                       expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    elif fault == "mapping": db.get(IrrigationValveZone,1).controller_id = "invalid"
+    else:
+        profile = {**BP, "flow_l_min":20}
+        if fault == "profile": profile["efficiency_pct"] = 90
+        elif fault == "no_flow": profile["flow_l_min"] = None
+        elif fault == "soil_mode": profile["mode"] = "soil_sensor"
+        elif fault == "too_long": profile["max_run_seconds"] = 566
+        else: profile["flow_l_min"] = 10000
+        client.put("/api/irrigation/beds/1",json=profile)
+        if fault != "profile":
+            # Keep report/profile snapshots aligned to isolate the relevant guard.
+            saved["bed_profile"] = irrigation_routes.BedProfile.model_validate(profile).model_dump()
+            row.report = json.dumps(saved)
+    db.commit()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "blocked"
+    assert result["events"] == [] and result["runs"] == []
+    assert result["reasons"] or any(r["reasons"] for r in result["rows"])
+
+
+def test_daily_sequence_does_not_trust_saved_duration_or_include_foreign_farm(daily_sequence):
+    db, client = daily_sequence
+    row = db.scalar(select(IrrigationDailyReport).where(IrrigationDailyReport.bed_id == 1))
+    saved = json.loads(row.report)
+    saved.update(minutes=99999, litres=999999, estimated_run_seconds=999999)
+    row.report = json.dumps(saved)
+    db.add(Planting(farm_id=2,bed_id=2,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
+                   expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.commit()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert [r["bed_id"] for r in result["rows"]] == [1,3]
+    assert result["runs"][0]["run_seconds"] == 557
+
+
+def test_daily_sequence_only_today(irrigation):
+    _, client, _ = irrigation
+    for offset in (-1,1):
+        assert client.get("/api/irrigation/daily-sequence-preview",params={"day":str(date.today()+timedelta(days=offset))}).status_code == 422
+
+
+def test_daily_sequence_blocks_replanting_same_crop(daily_sequence):
+    db, client = daily_sequence
+    old = db.scalar(select(Planting).where(Planting.bed_id == 1))
+    old.status = "finished"
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=old.sowing_date,
+                   expected_harvest_date=old.expected_harvest_date,status="active"))
+    db.commit()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "blocked" and result["events"] == []
+    client.put("/api/irrigation/daily",json=payload(weather=weather_input()))
+    assert daily_sequence_request(client).json()["status"] == "draft"
+
+
+def test_daily_sequence_middle_valve_accounts_for_both_overlaps(daily_sequence):
+    from app.models import IrrigationValveBed, IrrigationValveZone
+    db, client = daily_sequence
+    db.add(Bed(id=4,farm_id=1,name="A3",width_m=1,length_m=10,status="empty"))
+    db.add(IrrigationValveZone(id=3,farm_id=1,name="A3",controller_id="opensprinkler-2",station_number=70))
+    db.flush()
+    db.add(IrrigationValveBed(zone_id=3,bed_id=4))
+    db.add(Planting(farm_id=1,bed_id=4,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
+                   expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.commit()
+    client.put("/api/irrigation/beds/4",json={**BP,"flow_l_min":20})
+    client.put("/api/irrigation/daily",json=payload(bed_id=4,weather=weather_input()))
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert [r["run_seconds"] for r in result["runs"]] == [557,552,557]
+    assert [r["pump_active_seconds"] for r in result["rows"]] == [562,562,562]

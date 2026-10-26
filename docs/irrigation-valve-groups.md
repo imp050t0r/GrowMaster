@@ -218,3 +218,45 @@ time including delays. Editing the plan clears the old preview. Refreshing valve
 mappings clears the plan and ignores an outstanding response for the old mappings.
 No execution button is provided. Weather inputs are not required for this manual
 engineering simulation; it is not a watering recommendation.
+
+## GrowMaster daily sequence draft
+
+`GET /api/irrigation/daily-sequence-preview?day=2026-10-26` assembles today's
+advisory plan for all active beds on the current farm, ordered by bed ID. It
+recalculates demand with GrowMaster's existing water-balance/Kc calculation;
+Smart Irrigation watering durations are not read. This endpoint requires no HA
+connection and performs no network calls or database writes.
+
+Every active bed requires exactly one active planting and a saved daily report
+no older than six hours with matching bed, crop, day and current growth stage.
+The report must also identify the same active planting; saving `/daily` now
+records `active_planting_id`. Older reports without this identity require a fresh
+save. Current crop/bed profiles and bed area must match the saved snapshot, and
+the normalized ET0/WS90 observation and calculation must still be fresh. Soil
+sensor mode is blocked until that mode has its own validated daily handoff.
+Opening depletion, effective rain and already applied water remain explicit
+report inputs; this does not implement automatic weather collection or water-ledger
+carry-forward. A dry-run draft remains subject to manual review.
+
+Beds whose recalculated decision is `hold` do not enter the sequence. For beds
+requiring irrigation, `estimated_run_seconds` is computed from unrounded demand
+and configured emitter flow, rounded down to whole seconds. The planner subtracts
+five seconds for each adjacent transition, so a middle valve accounts for both
+overlaps. The supplied dwell must remain positive. The full valve-open interval
+(dwell plus ten seconds, including startup/shutdown delays) must fit the configured
+`max_run_seconds`. Any impossible duration blocks the complete plan rather than
+silently trimming a dose or dropping a bed.
+
+The response has `status` (`draft`, `no_irrigation` or `blocked`), per-bed `rows`
+with decisions/reasons, and resolved `runs`, `events`, and `total_seconds`.
+Mapping validation reuses the manual preview's one-bed-per-valve and farm checks.
+If any bed or mapping is blocked, `runs` and `events` are empty. A draft can include
+disabled valves for inspection and is always `simulation_only: true`,
+`automatic_execution: false`, `requires_manual_review: true`.
+
+`estimated_litres` models time with the pump on, including overlap. Actual flow
+while two valves are open and water during VFD ramp-down are not measured and
+require hardware calibration. The draft is not an execution record, cannot
+prevent repeat watering, does not change the legacy runner and is not sent to
+OpenSprinkler. Its API is implemented; a daily-plan UI and local execution remain
+separate integration steps.
