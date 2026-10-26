@@ -308,3 +308,20 @@ VFD fault handling. The five-second ramp-down allowance still requires hardware
 validation. If communication loss also disables the local pump-stop path, the
 simulation must use no stop confirmation; it must not claim a safe stop.
 The fault simulator is not wired to the live runner, API or UI.
+
+
+### Loss of the local pump-stop path
+
+The fault simulator also accepts `local_stop_available` (strict boolean, default
+`true` to preserve existing simulations). This is an injected assumption, not a
+hardware capability check. With `false`, it produces no abort `pump_off` command,
+rejects any injected pump-stop confirmation, and keeps status
+`pump_stop_unconfirmed`. Valve communication recovery alone cannot permit cleanup:
+all potentially open valves remain unresolved and manual reset is still required.
+The result exposes `local_stop_available` so callers can distinguish an unavailable
+stop path from an issued but unconfirmed stop request.
+
+No independent local pump-stop implementation has been validated by these tests.
+Before live execution, loss of the HA/OpenSprinkler connection must be tested
+against the actual local stop mechanism and VFD feedback. An available command
+path alone remains insufficient evidence that the pump has physically stopped.

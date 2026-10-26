@@ -87,6 +87,7 @@ class FaultSimulation:
     status: Literal["pump_stop_unconfirmed", "valves_unconfirmed", "stopped"]
     simulation_only: bool = True
     manual_reset_required: bool = True
+    local_stop_available: bool = True
 
 
 def simulate_sequence_fault(
@@ -97,6 +98,7 @@ def simulate_sequence_fault(
     pump_stop_confirmed_after_seconds: int | None = None,
     valve_link_available: bool = False,
     valve_close_confirmed: bool = False,
+    local_stop_available: bool = True,
 ) -> FaultSimulation:
     """Inject one fault into the ideal timeline and preview conservative abort.
 
@@ -117,6 +119,10 @@ def simulate_sequence_fault(
         raise ValueError("Simulated link and confirmation flags must be booleans.")
     if valve_close_confirmed and (not valve_link_available or pump_stop_confirmed_after_seconds is None):
         raise ValueError("Valve closure cannot be confirmed without pump-stop confirmation and valve control.")
+    if type(local_stop_available) is not bool:
+        raise ValueError("Local stop availability must be a boolean.")
+    if not local_stop_available and pump_stop_confirmed_after_seconds is not None:
+        raise ValueError("Unavailable local stop cannot produce a simulated stop confirmation.")
     uncertain = next((event for event in events if event.at_seconds == fault_at_seconds), None)
     if fault_kind == "valve_open_unconfirmed" and (uncertain is None or uncertain.action != "valve_open"):
         raise ValueError("An unconfirmed opening must coincide with a valve-open command.")
@@ -138,7 +144,8 @@ def simulate_sequence_fault(
 
     # Discard the remaining watering schedule; never retry the uncertain command.
     # This is a request for an independent local stop, not a successful stop.
-    history.append(SequenceEvent(fault_at_seconds, "pump_off"))
+    if local_stop_available:
+        history.append(SequenceEvent(fault_at_seconds, "pump_off"))
     confirmed_at = None
     status = "pump_stop_unconfirmed"
     if pump_stop_confirmed_after_seconds is not None:
@@ -150,4 +157,5 @@ def simulate_sequence_fault(
                 possible_open.clear()
         status = "valves_unconfirmed" if possible_open else "stopped"
     return FaultSimulation(tuple(history), fault_kind, fault_at_seconds, uncertain,
-                           confirmed_at, tuple(sorted(possible_open)), status)
+                           confirmed_at, tuple(sorted(possible_open)), status,
+                           local_stop_available=local_stop_available)

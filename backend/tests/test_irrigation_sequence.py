@@ -182,3 +182,32 @@ def test_empty_and_invalid_plans_are_rejected_before_fault_simulation():
     for runs in ([], [ValveRun(1,"opensprinkler-3",0,10)]):
         with pytest.raises(ValueError):
             simulate_sequence_fault(runs, fault_kind="connection_lost", fault_at_seconds=0)
+
+
+@pytest.mark.parametrize("fault_time", [0, 5, 15, 17, 20, 45])
+@pytest.mark.parametrize("valve_link_available", [False, True])
+def test_unavailable_local_stop_never_claims_shutdown_or_closes_valves(fault_time, valve_link_available):
+    result = simulate_sequence_fault(FAULT_RUNS, fault_kind="connection_lost",
+        fault_at_seconds=fault_time, local_stop_available=False,
+        valve_link_available=valve_link_available)
+    assert not result.local_stop_available
+    assert result.status == "pump_stop_unconfirmed"
+    assert result.pump_stop_confirmed_at_seconds is None
+    assert result.unresolved_valves
+    assert all(e.at_seconds < fault_time for e in result.events)
+    assert result.manual_reset_required and result.simulation_only
+
+
+@pytest.mark.parametrize("availability", [None, 0, 1, "false"])
+def test_local_stop_availability_requires_boolean(availability):
+    with pytest.raises(ValueError, match="availability"):
+        simulate_sequence_fault(FAULT_RUNS, fault_kind="connection_lost",
+            fault_at_seconds=17, local_stop_available=availability)
+
+
+@pytest.mark.parametrize("delay", [0, 7])
+def test_unavailable_local_stop_rejects_injected_stop_confirmation(delay):
+    with pytest.raises(ValueError, match="Unavailable local stop"):
+        simulate_sequence_fault(FAULT_RUNS, fault_kind="connection_lost",
+            fault_at_seconds=17, local_stop_available=False,
+            pump_stop_confirmed_after_seconds=delay)
