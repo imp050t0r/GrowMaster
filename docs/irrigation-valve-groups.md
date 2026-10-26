@@ -260,3 +260,51 @@ require hardware calibration. The draft is not an execution record, cannot
 prevent repeat watering, does not change the legacy runner and is not sent to
 OpenSprinkler. Its API is implemented; a daily-plan UI and local execution remain
 separate integration steps.
+
+## Fault injection for the local-sequencer simulation
+
+`backend/app/irrigation_sequence.py::simulate_sequence_fault` previews abort
+behavior without timers, network access, database writes or hardware commands.
+It accepts the same validated `ValveRun` plan as the ideal preview, plus:
+
+- `fault_kind`: `valve_open_unconfirmed` or `connection_lost`.
+- `fault_at_seconds`: an integer inside the nonempty ideal timeline. An unconfirmed
+  opening must coincide with an opening event; connection loss may occur during
+  a dwell, during overlap, or exactly when any command is attempted.
+- `pump_stop_confirmed_after_seconds`: explicit simulated confirmation delay after
+  the fault, or `None` (default) when stopping is not confirmed.
+- `valve_link_available`: whether valve control is available during cleanup,
+  default false. After connection loss this requires an explicit simulated recovery.
+- `valve_close_confirmed`: whether the cleanup close requests are all confirmed,
+  default false. It requires a confirmed pump stop and available valve control.
+
+Events strictly before the fault are assumed acknowledged. A command exactly at
+fault time is returned separately as `uncertain_event`: it may have reached the
+device. An uncertain opening therefore adds that valve to the potentially open
+set. An uncertain close never removes it. No uncertain watering command is retried,
+no later opening/start is issued, and the remaining watering schedule is discarded.
+
+At fault time the trace requests `pump_off`, representing the requirement for an
+independent local stop path. Sending this request is **not** stop confirmation.
+Without explicit confirmation, status is `pump_stop_unconfirmed` and no cleanup
+valve-close requests are produced, even if valve communication is available.
+After confirmation, cleanup waits five seconds **from confirmation**, not from the
+stop request. With valve control available it requests closure of all potentially
+open valves. Without valve control it preserves them and reports
+`valves_unconfirmed`. A close request alone also leaves valves unresolved.
+Only explicit simulated close confirmation produces `stopped` with no unresolved
+valves. Every result retains `simulation_only: true` and
+`manual_reset_required: true`; successful cleanup never resumes watering.
+
+Example: if the second valve's opening at 15 seconds is unconfirmed and the pump
+stop is confirmed seven seconds later, closure requests can occur no earlier than
+27 seconds. Both the previous valve and possibly opened new valve remain unresolved
+until cleanup is confirmed. A missing pump-stop confirmation leaves both untouched.
+
+These are injected test outcomes, not observed physical state or an assurance of
+safe pressure. The simulator does not implement acknowledgement deadlines,
+watchdog hardware, persistent restart recovery, partial close acknowledgements or
+VFD fault handling. The five-second ramp-down allowance still requires hardware
+validation. If communication loss also disables the local pump-stop path, the
+simulation must use no stop confirmation; it must not claim a safe stop.
+The fault simulator is not wired to the live runner, API or UI.
