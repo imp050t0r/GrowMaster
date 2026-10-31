@@ -259,6 +259,12 @@ def add_permanent_irrigation_valve_groups(connection: Connection) -> None:
     app.models.IrrigationValveBed.__table__.create(bind=connection, checkfirst=True)
 
 
+def add_fertilization_schema(connection: Connection) -> None:
+    for model in (app.models.FertilizationSoilTest, app.models.FertilizationPlan,
+                  app.models.FertilizationApplication):
+        model.__table__.create(bind=connection, checkfirst=True)
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -279,6 +285,7 @@ MIGRATIONS = (
     Migration("0017_irrigation_water_ledger", add_irrigation_water_ledger),
     Migration("0018_irrigation_sensor_groups", add_irrigation_sensor_groups),
     Migration("0019_permanent_irrigation_valve_groups", add_permanent_irrigation_valve_groups),
+    Migration("0020_fertilization", add_fertilization_schema),
 )
 
 

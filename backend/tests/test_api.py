@@ -111,12 +111,12 @@ def test_bed_planting_and_task_workflow() -> None:
             },
         ).status_code == 409
 
-        assert run_migrations() == "0019_permanent_irrigation_valve_groups"
-        assert run_migrations() == "0019_permanent_irrigation_valve_groups"
+        assert run_migrations() == "0020_fertilization"
+        assert run_migrations() == "0020_fertilization"
         with engine.connect() as connection:
             assert connection.scalar(
                 select(func.count()).select_from(schema_migrations)
-            ) == 19
+            ) == 20
         initial_profile = client.get("/api/farm-profile")
         assert initial_profile.status_code == 200
         assert initial_profile.json()["farm_name"] == "Testna kmetija"
@@ -2465,11 +2465,11 @@ def test_bed_planting_and_task_workflow() -> None:
         data_safety = client.get("/api/system/data-safety")
         assert data_safety.status_code == 200
         data_safety_summary = data_safety.json()
-        assert data_safety_summary["schema_revision"] == "0019_permanent_irrigation_valve_groups"
+        assert data_safety_summary["schema_revision"] == "0020_fertilization"
         assert data_safety_summary["backup_format_version"] == 1
         assert data_safety_summary["storage_location"] is None
         assert data_safety_summary["storage_move_supported"] is False
-        assert data_safety_summary["table_count"] == 49
+        assert data_safety_summary["table_count"] == 52
         assert data_safety_summary["record_count"] > 0
         assert data_safety_summary["daily_backup_retention"] == 14
         assert len(data_safety_summary["daily_backups"]) == 1
@@ -2540,7 +2540,7 @@ def test_bed_planting_and_task_workflow() -> None:
             data_safety_summary["record_count"]
         )
         assert backup_document["payload"]["schema_revision"] == "0001_current_schema"
-        assert len(backup_document["payload"]["tables"]) == 49
+        assert len(backup_document["payload"]["tables"]) == 52
         assert "admin_credentials" not in backup_document["payload"]["tables"]
         assert "auth_sessions" not in backup_document["payload"]["tables"]
         backup_variety = backup_document["payload"]["tables"]["varieties"][0]

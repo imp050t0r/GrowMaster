@@ -269,6 +269,7 @@ def parse_backup(content: bytes) -> ParsedBackup:
 
     known_tables = {table.name: table for table in backup_tables()}
     optional_tables = {"irrigation_crop_profiles", "irrigation_bed_profiles", "irrigation_daily_reports", "irrigation_water_ledger", "irrigation_sensor_groups"}
+    optional_tables.update({"fertilization_soil_tests", "fertilization_plans", "fertilization_applications"})
     if set(tables_payload) - set(known_tables) or set(known_tables) - set(tables_payload) - optional_tables:
         raise BackupValidationError(
             "Varnostna kopija nima vseh pričakovanih podatkovnih tabel."

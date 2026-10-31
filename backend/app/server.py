@@ -19,6 +19,7 @@ from app.seed_supplier_search_routes import router as seed_supplier_search_route
 from app.seeding_data_routes import router as seeding_data_router
 from app.successor_routes import router as successor_router
 from app.irrigation_routes import router as irrigation_router
+from app.fertilization_routes import router as fertilization_router
 
 
 APP_VERSION = "1.25.12"
@@ -95,3 +96,5 @@ app.include_router(seed_supplier_search_router)
 app.include_router(seed_actuals_router)
 app.include_router(agronomy_admin_router)
 app.include_router(irrigation_router)
+
+app.include_router(fertilization_router)
