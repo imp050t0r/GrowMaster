@@ -1,5 +1,6 @@
 """Irrigation planning, Home Assistant integration, and guarded optional automation."""
 import json
+from dataclasses import asdict
 import math
 import os
 import re
@@ -10,15 +11,16 @@ import logging
 from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
+from app.irrigation_sequence import DELAY_SECONDS, ValveRun, preview_sequence
 from app.ha_credentials import delete_config as delete_home_assistant_config, read_config as read_stored_home_assistant_config, write_config as write_home_assistant_config
-from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, Planting, Variety
+from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, IrrigationValveBed, IrrigationValveZone, Planting, Variety
 
 router = APIRouter(prefix="/api/irrigation")
 logger = logging.getLogger(__name__)
@@ -27,6 +29,15 @@ FARM_ID = 1
 
 class Input(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, str_strip_whitespace=True)
+
+
+class SequenceRunInput(Input):
+    bed_id: int = Field(gt=0, strict=True)
+    run_seconds: int = Field(ge=1, le=86400, strict=True)
+
+
+class SequencePreviewInput(Input):
+    runs: list[SequenceRunInput] = Field(max_length=144)
 
 
 class CropProfile(Input):
@@ -81,6 +92,29 @@ class BedProfile(Input):
         return self
 
 
+class WeatherInput(Input):
+    """Normalized ET0 input; never accept Smart Irrigation valve durations."""
+    source: Literal["ha_smart_irrigation_ws90"]
+    day: date
+    eto_mm: float = Field(ge=0, le=30, strict=True)
+    unit: Literal["mm"]
+    calculated_at: datetime
+    observed_at: datetime
+
+    @model_validator(mode="after")
+    def timestamps(self):
+        if self.calculated_at.utcoffset() is None or self.observed_at.utcoffset() is None:
+            raise ValueError("Vremenska časovna žiga morata vsebovati časovni pas.")
+        if self.observed_at > self.calculated_at:
+            raise ValueError("ET0 ne more biti izračunan pred uporabljeno meritvijo WS90.")
+        return self
+
+    def require_fresh(self, now: datetime) -> None:
+        if any(not timedelta(0) <= now - timestamp <= timedelta(hours=6)
+               for timestamp in (self.observed_at, self.calculated_at)):
+            raise ValueError("WS90 meritev in izračun ET0 morata biti sveža (največ 6 ur) in ne v prihodnosti.")
+
+
 class DayInput(Input):
     bed_id: int = Field(gt=0)
     crop_id: int = Field(gt=0)
@@ -91,6 +125,7 @@ class DayInput(Input):
     effective_rain_mm: float = Field(ge=0, le=500)
     applied_irrigation_mm: float = Field(ge=0, le=100)
     weather_source: str = Field(min_length=1, max_length=500)
+    weather: WeatherInput | None = None
     soil_moisture_pct: float | None = Field(default=None, ge=0, le=100)
     sensor_observed_at: datetime | None = None
 
@@ -102,6 +137,13 @@ class DayInput(Input):
             raise ValueError("Meritev vlage v tleh zahteva tudi čas meritve.")
         if self.sensor_observed_at is not None and self.sensor_observed_at.utcoffset() is None:
             raise ValueError("Čas meritve mora vsebovati časovni pas.")
+        if self.weather is not None:
+            if self.weather.day != self.day:
+                raise ValueError("Vremenski podatki morajo pripadati dnevu bilance.")
+            if self.eto_mm is not None and self.eto_mm != self.weather.eto_mm:
+                raise ValueError("Ročni ET0 se ne ujema z vremenskim vhodom.")
+            self.eto_mm = self.weather.eto_mm
+            self.weather_source = self.weather.source
         return self
 
 
@@ -393,6 +435,13 @@ def save_bed(bed_id: int, payload: BedProfile, db: Session = Depends(get_db)):
 
 
 def calculate(payload: DayInput, bed: Bed, cp: CropProfile | None, bp: BedProfile | None):
+    # Check freshness at calculation time: a previously parsed
+    # payload must not make an old observation fresh again when reused.
+    if payload.weather is not None:
+        try:
+            payload.weather.require_fresh(datetime.now(timezone.utc))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     result = {"bed_id": bed.id, "bed": bed.name, "crop_id": payload.crop_id,
               "day": str(payload.day), "inputs": payload.model_dump(mode="json"),
               "status": "missing_data", "confidence": "low", "automatic_execution": False,
@@ -419,7 +468,10 @@ def calculate(payload: DayInput, bed: Bed, cp: CropProfile | None, bp: BedProfil
     result.update(taw_mm=round(capacity, 3), raw_mm=round(threshold, 3), kc=kc,
                   etc_mm=round(etc, 3), depletion_mm=round(deficit, 3), area_m2=bed.area_m2,
                   status="irrigate" if required else "hold", confidence="low")
-    result["warnings"].append("Ročni ET₀, faza rasti in začetna bilanca; profili zahtevajo lokalno preverjanje. WH52 ne predstavlja cele grede.")
+    if payload.weather is None:
+        result["warnings"].append("Ročni ET₀, faza rasti in začetna bilanca; profili zahtevajo lokalno preverjanje. WH52 ne predstavlja cele grede.")
+    else:
+        result["warnings"].append("ET₀ iz normaliziranega vhoda HA/WS90; faza rasti, začetna bilanca in efektivni dež so ročni. Izvor podatkov ni neodvisno preverjen.")
     if raw_balance > capacity:
         result["warnings"].append("Ocenjeno izsuševanje presega kapaciteto; možen vodni stres. ETc ni popravljena za stres.")
     if payload.soil_moisture_pct is not None:
@@ -447,6 +499,7 @@ def calculate(payload: DayInput, bed: Bed, cp: CropProfile | None, bp: BedProfil
     litres = gross * bed.area_m2
     result.update(gross_mm=round(gross, 3), litres=round(litres, 2),
                   minutes=round(litres / bp.flow_l_min, 2) if bp.flow_l_min else None,
+                  estimated_run_seconds=math.floor(litres / bp.flow_l_min * 60) if bp.flow_l_min else None,
                   remaining_depletion_mm=round(max(0, deficit - gross * bp.efficiency_pct / 100), 3))
     if bp.flow_l_min is None:
         result["warnings"].append("Pretok ni določen; časa zalivanja ni mogoče oceniti.")
@@ -523,6 +576,41 @@ def apply_wh51_reading(db, payload: DayInput, report: dict):
     return report
 
 
+@router.post("/sequence-preview")
+def sequence_preview(payload: SequencePreviewInput, db: Session = Depends(get_db)):
+    """Simulate caller-supplied dwell times using stored, farm-scoped mappings."""
+    bed_ids = [run.bed_id for run in payload.runs]
+    if len(bed_ids) != len(set(bed_ids)):
+        raise HTTPException(422, "Gredica se lahko v predogledu pojavi samo enkrat.")
+    rows = db.execute(select(Bed.id, IrrigationValveZone).join(
+        IrrigationValveBed, IrrigationValveBed.bed_id == Bed.id).join(
+        IrrigationValveZone, IrrigationValveZone.id == IrrigationValveBed.zone_id).where(
+        Bed.farm_id == FARM_ID, IrrigationValveZone.farm_id == FARM_ID,
+        Bed.id.in_(bed_ids))).all()
+    zones = {bed_id: zone for bed_id, zone in rows}
+    if len(zones) != len(bed_ids):
+        raise HTTPException(409, "Vsaka izbrana gredica mora imeti ventil na tej kmetiji.")
+    zone_ids = [zone.id for zone in zones.values()]
+    shared = db.scalar(select(IrrigationValveBed.zone_id).where(
+        IrrigationValveBed.zone_id.in_(zone_ids)).group_by(
+        IrrigationValveBed.zone_id).having(func.count(IrrigationValveBed.id) != 1).limit(1))
+    if shared is not None:
+        raise HTTPException(409, "Predogled zahteva eno gredico na ventil; skupni ventili niso podprti.")
+    runs = [ValveRun(run.bed_id, zones[run.bed_id].controller_id,
+                    zones[run.bed_id].station_number, run.run_seconds) for run in payload.runs]
+    try:
+        events = preview_sequence(runs)
+    except ValueError as exc:
+        raise HTTPException(409, "Shranjena preslikava ventilov ni veljavna za predogled.") from exc
+    return {"simulation_only": True, "automatic_execution": False,
+            "runs": [{**asdict(run), "valve_enabled": zones[run.bed_id].enabled} for run in runs],
+            "events": [asdict(event) for event in events],
+            "total_seconds": events[-1].at_seconds if events else 0,
+            "note": "Simulacija z ročno podanimi časi; ni odobritev zalivanja. "
+                    "Podana trajanja ne vključujejo dodatnega prekrivanja in zakasnitve zapiranja. "
+                    "Predpostavlja izključeno črpalko in zaprte ventile; strojna oprema ni preverjena."}
+
+
 @router.post("/calculate")
 def preview(payload: DayInput, db: Session = Depends(get_db)):
     return apply_wh51_reading(db, payload, report_for(db, payload))
@@ -531,6 +619,10 @@ def preview(payload: DayInput, db: Session = Depends(get_db)):
 @router.put("/daily")
 def save_daily(payload: DayInput, db: Session = Depends(get_db)):
     report = apply_wh51_reading(db, payload, report_for(db, payload))
+    active_ids = list(db.scalars(select(Planting.id).where(
+        Planting.farm_id == FARM_ID, Planting.bed_id == payload.bed_id,
+        Planting.status == "active").limit(2)))
+    report["active_planting_id"] = active_ids[0] if len(active_ids) == 1 else None
     row = db.scalar(select(IrrigationDailyReport).where(IrrigationDailyReport.farm_id == FARM_ID,
                     IrrigationDailyReport.bed_id == payload.bed_id, IrrigationDailyReport.day == payload.day))
     if row is None:
@@ -623,6 +715,100 @@ def planting_growth_stage(planting, day: date):
     stage = "initial" if progress < 0.2 else "mid" if progress < 0.8 else "late"
     source = "predicted_harvest_start" if planting.predicted_harvest_start else "expected_harvest_date"
     return stage, round(progress * 100, 1), source
+
+@router.get("/daily-sequence-preview")
+def daily_sequence_preview(day: date, db: Session = Depends(get_db)):
+    """Build an all-or-nothing advisory sequence from GrowMaster water balances."""
+    from zoneinfo import ZoneInfo
+    now = datetime.now(timezone.utc)
+    if day != now.astimezone(ZoneInfo("Europe/Ljubljana")).date():
+        raise HTTPException(422, "Dnevni predogled je na voljo samo za današnji dan.")
+    active = db.execute(select(Bed, Planting).join(Planting, Planting.bed_id == Bed.id).where(
+        Bed.farm_id == FARM_ID, Planting.farm_id == FARM_ID, Planting.status == "active"
+    ).order_by(Bed.id, Planting.id)).all()
+    plantings = {}
+    for bed, planting in active:
+        plantings.setdefault(bed.id, []).append((bed, planting))
+    reports = {row.bed_id: row for row in db.scalars(select(IrrigationDailyReport).where(
+        IrrigationDailyReport.farm_id == FARM_ID, IrrigationDailyReport.day == day))}
+    rows, candidates = [], []
+    for bed_id, entries in plantings.items():
+        bed, planting = entries[0]
+        item = {"bed_id": bed_id, "bed": bed.name, "status": "blocked", "reasons": []}
+        rows.append(item)
+        try:
+            if len(entries) != 1 or planting.sowing_date > day:
+                raise HTTPException(409, "Gredica nima ene nedvoumne aktivne zasaditve.")
+            if bed_id not in reports:
+                raise HTTPException(409, "Manjka shranjena dnevna bilanca.")
+            saved = json.loads(reports[bed_id].report)
+            if not isinstance(saved, dict):
+                raise ValueError("Invalid report")
+            if saved.get("active_planting_id") != planting.id:
+                raise HTTPException(409, "Bilanca ne pripada trenutni zasaditvi; ponovno shrani dan.")
+            stamp = datetime.fromisoformat(saved["calculated_at"])
+            if stamp.utcoffset() is None or not timedelta(0) <= now - stamp <= timedelta(hours=6):
+                raise HTTPException(409, "Dnevna bilanca ni sveža (največ 6 ur).")
+            payload = DayInput.model_validate(saved["inputs"])
+            if payload.bed_id != bed_id or payload.day != day or payload.crop_id != planting.crop_id:
+                raise HTTPException(409, "Bilanca se ne ujema z gredico, dnevom ali aktivno kulturo.")
+            stage, _, _ = planting_growth_stage(planting, day)
+            if stage is None or payload.stage != stage:
+                raise HTTPException(409, "Faza kulture se je spremenila; ponovno shrani dnevno bilanco.")
+            if payload.weather is None:
+                raise HTTPException(409, "Manjka preverljiv vremenski vhod ET0/WS90.")
+            payload.weather.require_fresh(now)
+            current = report_for(db, payload)
+            bp = BedProfile.model_validate(current.get("bed_profile", {}))
+            cp = CropProfile.model_validate(current.get("crop_profile", {}))
+            if (bp != BedProfile.model_validate(saved.get("bed_profile", {}))
+                    or cp != CropProfile.model_validate(saved.get("crop_profile", {}))
+                    or current["area_m2"] != saved.get("area_m2")):
+                raise HTTPException(409, "Profil ali površina se je spremenila; ponovno shrani dnevno bilanco.")
+            if bp.mode == "soil_sensor":
+                raise HTTPException(409, "Dnevno zaporedje še ne podpira preverjanja načina s senzorjem tal.")
+            if saved.get("status") != current["status"] or current["status"] not in {"hold", "irrigate"}:
+                raise HTTPException(409, "Bilanca zahteva ponoven pregled.")
+            item.update(status=current["status"], crop_id=planting.crop_id, stage=stage,
+                        gross_mm=current["gross_mm"], requested_litres=current["litres"])
+            if current["status"] == "irrigate":
+                if bp.flow_l_min is None:
+                    raise HTTPException(409, "Manjka ocenjeni pretok kapljačev.")
+                # Calculated from unrounded demand, not display litres/minutes.
+                powered_seconds = current["estimated_run_seconds"]
+                candidates.append((item, bp, powered_seconds))
+        except HTTPException as exc:
+            item.update(status="blocked", reasons=[exc.detail])
+        except (ValueError, KeyError, TypeError, OverflowError):
+            item.update(status="blocked", reasons=["Bilanca, profil ali vremenski podatki niso veljavni oziroma sveži."])
+    runs = []
+    for index, (item, bp, powered_seconds) in enumerate(candidates):
+        overlap = DELAY_SECONDS * ((index > 0) + (index < len(candidates) - 1))
+        dwell = powered_seconds - overlap
+        if dwell < 1 or dwell + 2 * DELAY_SECONDS > bp.max_run_seconds or dwell > 86400:
+            item.update(status="blocked", reasons=["Odmerek ne dopušča prekrivanja ali čas odprtega ventila presega omejitev."])
+        else:
+            runs.append(SequenceRunInput(bed_id=item["bed_id"], run_seconds=dwell))
+            item.update(run_seconds=dwell, pump_active_seconds=powered_seconds,
+                        valve_open_seconds=dwell + 2 * DELAY_SECONDS,
+                        estimated_litres=round(powered_seconds * bp.flow_l_min / 60, 3))
+    result = {"day": str(day), "status": "blocked", "simulation_only": True,
+              "automatic_execution": False, "requires_manual_review": True,
+              "rows": rows, "reasons": [], "runs": [], "events": [], "total_seconds": 0,
+              "note": "GrowMasterjev dnevni osnutek, brez ukazov strojni opremi. Količine so ocenjene; "
+                      "prekrivanje je vključeno, voda med ustavljanjem črpalke pa ni izmerjena. "
+                      "Predogled ni evidenca izvedbe in ne preprečuje ponovnega zalivanja."}
+    if any(row["status"] == "blocked" for row in rows):
+        return result
+    try:
+        sequence = sequence_preview(SequencePreviewInput(runs=runs), db)
+    except (HTTPException, ValueError) as exc:
+        result["reasons"] = [exc.detail if isinstance(exc, HTTPException) else "Preveč gredic za dnevno zaporedje."]
+        return result
+    result.update(status="draft" if runs else "no_irrigation", runs=sequence["runs"],
+                  events=sequence["events"], total_seconds=sequence["total_seconds"])
+    return result
+
 
 @router.get("/daily-readiness")
 def daily_readiness(day: date, db: Session = Depends(get_db)):
@@ -1150,6 +1336,53 @@ def home_assistant_test():
     except ValueError as exc:
         raise HTTPException(502, "Home Assistant API ni vrnil veljavnega odgovora.") from exc
     return {"connected": True, "message": info.get("message", "API dosegljiv"), "automatic_execution": False}
+
+
+@router.get("/home-assistant/weather")
+def home_assistant_weather(
+    day: date,
+    entity_id: str = Query(pattern=r"^sensor\.[a-z0-9_]+$", max_length=150),
+):
+    """Read one explicitly normalized ET0 sensor; no service calls or persistence."""
+    if day > date.today():
+        raise HTTPException(422, "Vremenski vhod zahteva današnji ali pretekli dan.")
+    allowed = {item.strip() for item in os.environ.get("HOME_ASSISTANT_WEATHER_ENTITIES", "").split(",") if item.strip()}
+    if entity_id not in allowed:
+        raise HTTPException(422, "Entiteta ni dovoljena v HOME_ASSISTANT_WEATHER_ENTITIES.")
+    base_url, token = home_assistant_config()
+    if not base_url:
+        raise HTTPException(503, "Home Assistant ni nastavljen.")
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=False) as client:
+            response = client.get(f"{base_url}/api/states/{entity_id}", headers=ha_headers(token))
+        if response.status_code != 200:
+            raise HTTPException(502, "Home Assistant ni vrnil vremenske entitete.")
+        data = response.json()
+        if not isinstance(data, dict) or data.get("entity_id") != entity_id:
+            raise ValueError("Unexpected entity response")
+        attributes = data.get("attributes")
+        if not isinstance(attributes, dict) or type(data.get("state")) not in (str, int, float):
+            raise ValueError("Invalid sensor state")
+        # These are GrowMaster adapter attributes, not assumed native Smart
+        # Irrigation attributes. Never fall back to last_updated or a duration.
+        weather = WeatherInput.model_validate({
+            "source": attributes.get("growmaster_source"),
+            "day": attributes.get("growmaster_day"),
+            "eto_mm": float(data["state"]),
+            "unit": attributes.get("unit_of_measurement"),
+            "observed_at": attributes.get("growmaster_observed_at"),
+            "calculated_at": attributes.get("growmaster_calculated_at"),
+        })
+        if weather.day != day:
+            raise ValueError("Weather period does not match requested day")
+        weather.require_fresh(datetime.now(timezone.utc))
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "Home Assistant ni dosegljiv.") from exc
+    except (ValueError, TypeError, OverflowError) as exc:
+        # Do not expose upstream bodies, URLs or credentials in API errors.
+        raise HTTPException(502, "Vremenski vhod HA ni veljaven za zahtevani dan; preveri ET0, enoto, izvor in časovna žiga.") from exc
+    return {"entity_id": entity_id, "weather": weather.model_dump(mode="json"),
+            "automatic_execution": False}
 
 
 @router.get("/home-assistant/states")

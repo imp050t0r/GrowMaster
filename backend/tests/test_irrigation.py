@@ -82,6 +82,109 @@ def test_missing_et0_is_not_zero(irrigation):
     assert r["status"]=="missing_data" and r["litres"] is None
     assert calc(c,eto_mm=0,initial_depletion_mm=0).json()["status"]=="hold"
 
+
+def weather_input(**changes):
+    now = datetime.now(timezone.utc)
+    return {"source": "ha_smart_irrigation_ws90", "day": str(date.today()),
+            "eto_mm": 5, "unit": "mm", "observed_at": (now - timedelta(minutes=10)).isoformat(),
+            "calculated_at": (now - timedelta(minutes=5)).isoformat(), **changes}
+
+
+def test_weather_et0_uses_growmaster_kc_and_never_calls_hardware(irrigation, monkeypatch):
+    _, client, _ = irrigation
+    def no_network(*args, **kwargs):
+        pytest.fail("Weather input calculation must not contact HA or hardware")
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", no_network)
+    response = calc(client, eto_mm=None, stage="initial", weather=weather_input())
+    assert response.status_code == 200
+    report = response.json()
+    assert report["etc_mm"] == 2.5
+    assert report["inputs"]["eto_mm"] == 5
+    assert report["inputs"]["weather_source"] == "ha_smart_irrigation_ws90"
+    assert report["automatic_execution"] is False
+    assert "action" not in report
+
+
+def test_zero_weather_et0_is_valid_and_preserved_in_daily_report(irrigation):
+    _, client, _ = irrigation
+    weather = weather_input(eto_mm=0)
+    response = client.put("/api/irrigation/daily", json=payload(
+        eto_mm=None, initial_depletion_mm=0, weather=weather))
+    assert response.status_code == 200
+    assert response.json()["status"] == "hold"
+    stored = client.get(f"/api/irrigation/daily?day={date.today()}").json()["rows"][0]
+    assert stored["inputs"]["weather"]["eto_mm"] == 0
+    assert stored["inputs"]["weather"]["observed_at"]
+    assert stored["automatic_execution"] is False
+
+
+@pytest.mark.parametrize("changes", [
+    {"eto_mm": None}, {"eto_mm": True}, {"eto_mm": "unavailable"},
+    {"eto_mm": "NaN"}, {"eto_mm": "Infinity"}, {"eto_mm": -1}, {"eto_mm": 31},
+    {"unit": "seconds"}, {"unit": "mm/h"}, {"source": "unknown"},
+    {"run_seconds": 60}, {"observed_at": "2026-10-25T10:00:00"},
+    {"calculated_at": "2026-10-25T10:00:00"},
+])
+def test_invalid_normalized_weather_is_rejected(irrigation, changes):
+    _, client, _ = irrigation
+    assert calc(client, eto_mm=None, weather=weather_input(**changes)).status_code == 422
+
+
+@pytest.mark.parametrize("field", ["observed_at", "calculated_at"])
+@pytest.mark.parametrize("age_hours", [-1, 7])
+def test_stale_or_future_weather_does_not_overwrite_daily_report(irrigation, field, age_hours):
+    _, client, _ = irrigation
+    assert client.put("/api/irrigation/daily", json=payload()).status_code == 200
+    before = client.get(f"/api/irrigation/daily?day={date.today()}").json()
+    timestamp = (datetime.now(timezone.utc) - timedelta(hours=age_hours)).isoformat()
+    response = client.put("/api/irrigation/daily", json=payload(
+        eto_mm=None, weather=weather_input(**{field: timestamp})))
+    assert response.status_code == 422
+    assert client.get(f"/api/irrigation/daily?day={date.today()}").json() == before
+
+
+def test_weather_day_and_manual_et0_must_match(irrigation):
+    _, client, _ = irrigation
+    assert calc(client, weather=weather_input(eto_mm=4)).status_code == 422
+    assert calc(client, weather=weather_input(day=str(date.today() - timedelta(days=1)))).status_code == 422
+    assert calc(client, weather=weather_input()).status_code == 200
+
+
+def test_weather_freshness_rechecked_when_parsed_payload_is_reused(irrigation, monkeypatch):
+    db, _, _ = irrigation
+    parsed = irrigation_routes.DayInput.model_validate(payload(weather=weather_input()))
+    later = datetime.now(timezone.utc) + timedelta(hours=7)
+    class LaterDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return later
+    monkeypatch.setattr(irrigation_routes, "datetime", LaterDatetime)
+    with pytest.raises(irrigation_routes.HTTPException) as exc:
+        irrigation_routes.report_for(db, parsed)
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize("age_seconds,expected", [(0, 200), (21600, 200), (21601, 422), (-1, 422)])
+def test_weather_freshness_boundaries_with_timezone_offset(irrigation, monkeypatch, age_seconds, expected):
+    _, client, _ = irrigation
+    now = datetime.now(timezone.utc)
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+    monkeypatch.setattr(irrigation_routes, "datetime", FixedDatetime)
+    timestamp = (now - timedelta(seconds=age_seconds)).astimezone(timezone(timedelta(hours=2))).isoformat()
+    response = calc(client, weather=weather_input(observed_at=timestamp, calculated_at=timestamp))
+    assert response.status_code == expected
+
+
+@pytest.mark.parametrize("field", ["eto_mm", "day", "source", "unit", "observed_at", "calculated_at"])
+def test_weather_metadata_is_required(irrigation, field):
+    _, client, _ = irrigation
+    weather = weather_input()
+    del weather[field]
+    assert calc(client, eto_mm=None, weather=weather).status_code == 422
+
 def test_daily_readiness_lists_active_beds_and_missing_inputs(irrigation):
     db,c,_=irrigation
     db.add(Variety(id=1,crop_id=1,name="Solata",days_to_harvest=40,days_spring=40,
@@ -803,3 +906,396 @@ def test_automatic_irrigation_waits_for_post_kc_recalculation(irrigation,monkeyp
     result=irrigation_routes.automatic_irrigation_tick(db)
     assert result["status"]=="kc_updated_waiting_for_recalculation"
     assert result["started"]==0
+
+
+@pytest.fixture
+def ha_weather(irrigation, monkeypatch):
+    from types import SimpleNamespace
+    _, client, _ = irrigation
+    now = datetime.now(timezone.utc)
+    reply = SimpleNamespace(status_code=200, body={
+        "entity_id": "sensor.growmaster_et0", "state": "3.2",
+        "last_updated": now.isoformat(),
+        "attributes": {"unit_of_measurement": "mm",
+                       "growmaster_source": "ha_smart_irrigation_ws90",
+                       "growmaster_day": str(date.today()),
+                       "growmaster_observed_at": (now - timedelta(minutes=10)).isoformat(),
+                       "growmaster_calculated_at": (now - timedelta(minutes=5)).isoformat()},
+    }, error=None, calls=[])
+    monkeypatch.setenv("HOME_ASSISTANT_WEATHER_ENTITIES", " sensor.growmaster_et0 ,sensor.other")
+    monkeypatch.setattr(irrigation_routes, "home_assistant_config", lambda: ("http://ha:8123", "test-secret"))
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs == {"timeout": 8.0, "follow_redirects": False}
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers):
+            reply.calls.append((url, headers))
+            if reply.error:
+                raise reply.error
+            return self
+        @property
+        def status_code(self): return reply.status_code
+        def json(self):
+            if isinstance(reply.body, Exception):
+                raise reply.body
+            return reply.body
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", Client)
+    return client, reply
+
+
+def fetch_weather(client, **changes):
+    return client.get("/api/irrigation/home-assistant/weather", params={
+        "entity_id": "sensor.growmaster_et0", "day": str(date.today()), **changes})
+
+
+@pytest.mark.parametrize("state", ["0", "3.2", "30"])
+def test_ha_weather_reads_only_and_feeds_existing_calculation(ha_weather, state):
+    client, reply = ha_weather
+    reply.body["state"] = state
+    before = client.get(f"/api/irrigation/daily?day={date.today()}").json()
+    response = fetch_weather(client)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["weather"]["eto_mm"] == float(state)
+    assert data["automatic_execution"] is False
+    assert reply.calls == [("http://ha:8123/api/states/sensor.growmaster_et0",
+                            irrigation_routes.ha_headers("test-secret"))]
+    report = calc(client, eto_mm=None, stage="initial", weather=data["weather"])
+    assert report.status_code == 200
+    assert report.json()["etc_mm"] == float(state) * 0.5
+    assert report.json()["automatic_execution"] is False
+    assert client.get(f"/api/irrigation/daily?day={date.today()}").json() == before
+    assert len(reply.calls) == 1
+
+
+@pytest.mark.parametrize("entity", ["sensor.not_allowed", "switch.pump", "sensor.x/../../services", "https://other/", "sensor." + "x" * 150])
+def test_ha_weather_rejects_unapproved_entities_without_network(ha_weather, entity):
+    client, reply = ha_weather
+    assert fetch_weather(client, entity_id=entity).status_code == 422
+    assert reply.calls == []
+
+
+def test_ha_weather_requires_config_and_nonfuture_day(ha_weather, monkeypatch):
+    client, reply = ha_weather
+    assert fetch_weather(client, day=str(date.today() + timedelta(days=1))).status_code == 422
+    monkeypatch.setattr(irrigation_routes, "home_assistant_config", lambda: (None, None))
+    assert fetch_weather(client).status_code == 503
+    assert reply.calls == []
+
+
+@pytest.mark.parametrize("state", ["unknown", "unavailable", "nan", "inf", "-1", "31", True, None, [], {}])
+def test_ha_weather_rejects_invalid_et0(ha_weather, state):
+    client, reply = ha_weather
+    reply.body["state"] = state
+    assert fetch_weather(client).status_code == 502
+
+
+@pytest.mark.parametrize("attribute", ["unit_of_measurement", "growmaster_source", "growmaster_day", "growmaster_observed_at", "growmaster_calculated_at"])
+def test_ha_weather_requires_metadata_despite_fresh_ha_update(ha_weather, attribute):
+    client, reply = ha_weather
+    del reply.body["attributes"][attribute]
+    assert fetch_weather(client).status_code == 502
+
+
+@pytest.mark.parametrize("attribute,value", [
+    ("unit_of_measurement", "seconds"), ("unit_of_measurement", "mm/h"),
+    ("growmaster_source", "other"), ("growmaster_day", "2000-01-01"),
+    ("growmaster_observed_at", "2026-10-25T10:00:00"),
+    ("growmaster_calculated_at", "2026-10-25T10:00:00"),
+])
+def test_ha_weather_rejects_wrong_metadata(ha_weather, attribute, value):
+    client, reply = ha_weather
+    reply.body["attributes"][attribute] = value
+    assert fetch_weather(client).status_code == 502
+
+
+@pytest.mark.parametrize("age_seconds,expected", [(0, 200), (21600, 200), (21601, 502), (-1, 502)])
+def test_ha_weather_checks_source_freshness_not_fetch_time(ha_weather, monkeypatch, age_seconds, expected):
+    client, reply = ha_weather
+    now = datetime.now(timezone.utc)
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None): return now
+    monkeypatch.setattr(irrigation_routes, "datetime", FixedDatetime)
+    timestamp = (now - timedelta(seconds=age_seconds)).isoformat()
+    reply.body["attributes"].update(growmaster_observed_at=timestamp, growmaster_calculated_at=timestamp)
+    assert fetch_weather(client).status_code == expected
+
+
+@pytest.mark.parametrize("body", [[], None, {}, {"entity_id": "sensor.other"},
+                                  {"entity_id": "sensor.growmaster_et0", "state": "1", "attributes": []},
+                                  ValueError("test-secret upstream body")])
+def test_ha_weather_handles_malformed_response_without_leaking_details(ha_weather, body):
+    client, reply = ha_weather
+    reply.body = body
+    response = fetch_weather(client)
+    assert response.status_code == 502
+    assert "test-secret" not in response.text
+
+
+@pytest.mark.parametrize("status", [301, 401, 404, 500])
+def test_ha_weather_handles_upstream_http_failures(ha_weather, status):
+    client, reply = ha_weather
+    reply.status_code = status
+    assert fetch_weather(client).status_code == 502
+
+
+def test_ha_weather_handles_timeout(ha_weather):
+    client, reply = ha_weather
+    reply.error = irrigation_routes.httpx.ReadTimeout("test-secret")
+    response = fetch_weather(client)
+    assert response.status_code == 502
+    assert "test-secret" not in response.text
+
+
+@pytest.fixture
+def sequence_mapping(irrigation, monkeypatch):
+    from app.models import IrrigationValveBed, IrrigationValveZone
+    db, client, _ = irrigation
+    db.add(Bed(id=3, farm_id=1, name="A2", width_m=1, length_m=10, status="empty"))
+    db.add_all([
+        IrrigationValveZone(id=1, farm_id=1, name="A1", controller_id="opensprinkler-1", station_number=0, enabled=False),
+        IrrigationValveZone(id=2, farm_id=1, name="A2", controller_id="opensprinkler-2", station_number=71, enabled=False),
+    ])
+    db.flush()
+    db.add_all([IrrigationValveBed(zone_id=1, bed_id=1), IrrigationValveBed(zone_id=2, bed_id=3)])
+    db.commit()
+    def forbidden(*args, **kwargs):
+        pytest.fail("Sequence preview must not contact hardware or change automation state")
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", forbidden)
+    monkeypatch.setattr(irrigation_routes, "_write_automatic_state", forbidden)
+    return db, client
+
+
+def sequence_request(client, runs):
+    return client.post("/api/irrigation/sequence-preview", json={"runs": runs})
+
+
+def test_sequence_api_resolves_disabled_valves_preserves_order_and_has_no_side_effects(sequence_mapping):
+    from app.models import IrrigationValveZone
+    db, client = sequence_mapping
+    response = sequence_request(client, [{"bed_id": 3, "run_seconds": 10}, {"bed_id": 1, "run_seconds": 20}])
+    assert response.status_code == 200
+    result = response.json()
+    assert result["simulation_only"] is True
+    assert result["automatic_execution"] is False
+    assert result["total_seconds"] == 45
+    assert [r["bed_id"] for r in result["runs"]] == [3, 1]
+    assert all(r["valve_enabled"] is False for r in result["runs"])
+    assert [(e["at_seconds"], e["action"], e["controller_id"], e["station_number"]) for e in result["events"]] == [
+        (0, "valve_open", "opensprinkler-2", 71), (5, "pump_on", None, None),
+        (15, "valve_open", "opensprinkler-1", 0), (20, "valve_close", "opensprinkler-2", 71),
+        (40, "pump_off", None, None), (45, "valve_close", "opensprinkler-1", 0),
+    ]
+    assert list(db.scalars(select(IrrigationValveZone.enabled))) == [False, False]
+    assert list(db.scalars(select(IrrigationDailyReport))) == []
+    assert not db.new and not db.dirty and not db.deleted
+
+
+def test_sequence_api_empty_plan_has_no_pump_events(sequence_mapping):
+    _, client = sequence_mapping
+    result = sequence_request(client, []).json()
+    assert result["events"] == [] and result["runs"] == []
+    assert result["total_seconds"] == 0
+    assert result["automatic_execution"] is False
+
+
+@pytest.mark.parametrize("run", [
+    {"bed_id": True, "run_seconds": 10}, {"bed_id": "1", "run_seconds": 10},
+    {"bed_id": 0, "run_seconds": 10}, {"bed_id": 1, "run_seconds": 0},
+    {"bed_id": 1, "run_seconds": 86401}, {"bed_id": 1, "run_seconds": True},
+    {"bed_id": 1, "run_seconds": 1.5}, {"bed_id": 1, "run_seconds": "10"},
+    {"bed_id": 1, "run_seconds": 10, "controller_id": "opensprinkler-2"},
+    {"bed_id": 1, "run_seconds": 10, "station_number": 5},
+])
+def test_sequence_api_rejects_invalid_or_injected_inputs(sequence_mapping, run):
+    _, client = sequence_mapping
+    assert sequence_request(client, [run]).status_code == 422
+
+
+def test_sequence_api_rejects_duplicate_beds_and_oversized_plan(sequence_mapping):
+    _, client = sequence_mapping
+    run = {"bed_id": 1, "run_seconds": 10}
+    assert sequence_request(client, [run, run]).status_code == 422
+    assert sequence_request(client, [run] * 145).status_code == 422
+    assert client.post("/api/irrigation/sequence-preview", json={"runs": [run], "execute": True}).status_code == 422
+
+
+@pytest.mark.parametrize("bed_id", [2, 999])
+def test_sequence_api_rejects_foreign_or_missing_beds(sequence_mapping, bed_id):
+    _, client = sequence_mapping
+    assert sequence_request(client, [{"bed_id": bed_id, "run_seconds": 10}]).status_code == 409
+
+
+@pytest.mark.parametrize("fault", ["missing", "foreign_zone", "shared", "bad_controller", "bad_station"])
+def test_sequence_api_rejects_incomplete_or_unsupported_mapping(sequence_mapping, fault):
+    from app.models import IrrigationValveBed, IrrigationValveZone
+    db, client = sequence_mapping
+    zone = db.get(IrrigationValveZone, 1)
+    if fault == "missing":
+        db.delete(db.scalar(select(IrrigationValveBed).where(IrrigationValveBed.bed_id == 1)))
+    elif fault == "foreign_zone":
+        zone.farm_id = 2
+    elif fault == "shared":
+        db.add(Bed(id=4, farm_id=1, name="A3", width_m=1, length_m=10, status="empty"))
+        db.flush()
+        db.add(IrrigationValveBed(zone_id=1, bed_id=4))
+    elif fault == "bad_controller":
+        zone.controller_id = "opensprinkler-3"
+    else:
+        zone.station_number = 72
+    db.commit()
+    assert sequence_request(client, [{"bed_id": 1, "run_seconds": 10}]).status_code == 409
+
+
+@pytest.fixture
+def daily_sequence(sequence_mapping):
+    db, client = sequence_mapping
+    today = date.today()
+    db.add(Variety(id=1, crop_id=1, name="Test", days_to_harvest=40,
+                   days_spring=40, days_summer=40, days_autumn=40, days_winter=40))
+    db.flush()
+    for bed_id in (1, 3):
+        db.add(Planting(farm_id=1, bed_id=bed_id, crop_id=1, variety_id=1,
+                       sowing_date=today-timedelta(days=10), expected_harvest_date=today+timedelta(days=30), status="active"))
+    db.commit()
+    for bed_id in (1, 3):
+        assert client.put(f"/api/irrigation/beds/{bed_id}", json={**BP, "flow_l_min":20}).status_code == 200
+        assert client.put("/api/irrigation/daily", json=payload(bed_id=bed_id, weather=weather_input())).status_code == 200
+    return db, client
+
+
+def daily_sequence_request(client):
+    return client.get("/api/irrigation/daily-sequence-preview", params={"day":str(date.today())})
+
+
+def test_daily_sequence_uses_growmaster_demand_and_accounts_for_overlap(daily_sequence):
+    db, client = daily_sequence
+    before = client.get(f"/api/irrigation/daily?day={date.today()}").json()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert result["simulation_only"] and not result["automatic_execution"] and result["requires_manual_review"]
+    assert [(r["bed_id"],r["run_seconds"]) for r in result["runs"]] == [(1,557),(3,557)]
+    assert all(r["pump_active_seconds"] == 562 for r in result["rows"])
+    assert all(r["valve_open_seconds"] == 567 for r in result["rows"])
+    assert all(r["estimated_litres"] <= r["requested_litres"] for r in result["rows"])
+    assert result["total_seconds"] == 1129
+    assert not any(r["valve_enabled"] for r in result["runs"])
+    assert client.get(f"/api/irrigation/daily?day={date.today()}").json() == before
+    assert not db.dirty and not db.new
+
+
+def test_daily_sequence_hold_bed_is_excluded_and_single_run_has_no_overlap(daily_sequence):
+    _, client = daily_sequence
+    client.put("/api/irrigation/daily", json=payload(bed_id=3, initial_depletion_mm=0,
+               eto_mm=0, weather=weather_input(eto_mm=0)))
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert [r["run_seconds"] for r in result["runs"]] == [562]
+    assert result["rows"][1]["status"] == "hold"
+    assert result["total_seconds"] == 572
+
+
+def test_daily_sequence_no_demand_has_no_pump_events(daily_sequence):
+    _, client = daily_sequence
+    for bed_id in (1,3):
+        client.put("/api/irrigation/daily", json=payload(bed_id=bed_id, initial_depletion_mm=0,
+                   eto_mm=0, weather=weather_input(eto_mm=0)))
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "no_irrigation" and result["events"] == []
+
+
+@pytest.mark.parametrize("fault", ["missing", "manual", "stale", "future", "naive", "weather_stale", "malformed", "wrong_bed", "wrong_crop", "stage", "profile", "area", "multiple", "no_flow", "soil_mode", "too_long", "too_short", "mapping"])
+def test_daily_sequence_blocks_whole_plan_when_one_bed_is_unsafe(daily_sequence, fault):
+    from app.models import IrrigationBedProfile, IrrigationValveZone
+    db, client = daily_sequence
+    row = db.scalar(select(IrrigationDailyReport).where(IrrigationDailyReport.bed_id == 1))
+    saved = json.loads(row.report)
+    if fault == "missing": db.delete(row)
+    elif fault == "malformed": row.report = '[]'
+    elif fault in ("manual", "weather_stale", "wrong_bed", "wrong_crop", "stage"):
+        if fault == "manual": saved["inputs"]["weather"] = None
+        elif fault == "weather_stale": saved["inputs"]["weather"]["observed_at"] = (datetime.now(timezone.utc)-timedelta(hours=7)).isoformat()
+        elif fault == "wrong_bed": saved["inputs"]["bed_id"] = 3
+        elif fault == "wrong_crop": saved["inputs"]["crop_id"] = 999
+        else: saved["inputs"]["stage"] = "late"
+        row.report = json.dumps(saved)
+    elif fault in ("stale", "future", "naive"):
+        stamp = datetime.now(timezone.utc) + timedelta(hours=1 if fault == "future" else -7)
+        saved["calculated_at"] = (stamp.replace(tzinfo=None) if fault == "naive" else stamp).isoformat()
+        row.report = json.dumps(saved)
+    elif fault == "area": db.get(Bed,1).length_m = 20
+    elif fault == "multiple":
+        db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
+                       expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    elif fault == "mapping": db.get(IrrigationValveZone,1).controller_id = "invalid"
+    else:
+        profile = {**BP, "flow_l_min":20}
+        if fault == "profile": profile["efficiency_pct"] = 90
+        elif fault == "no_flow": profile["flow_l_min"] = None
+        elif fault == "soil_mode": profile["mode"] = "soil_sensor"
+        elif fault == "too_long": profile["max_run_seconds"] = 566
+        else: profile["flow_l_min"] = 10000
+        client.put("/api/irrigation/beds/1",json=profile)
+        if fault != "profile":
+            # Keep report/profile snapshots aligned to isolate the relevant guard.
+            saved["bed_profile"] = irrigation_routes.BedProfile.model_validate(profile).model_dump()
+            row.report = json.dumps(saved)
+    db.commit()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "blocked"
+    assert result["events"] == [] and result["runs"] == []
+    assert result["reasons"] or any(r["reasons"] for r in result["rows"])
+
+
+def test_daily_sequence_does_not_trust_saved_duration_or_include_foreign_farm(daily_sequence):
+    db, client = daily_sequence
+    row = db.scalar(select(IrrigationDailyReport).where(IrrigationDailyReport.bed_id == 1))
+    saved = json.loads(row.report)
+    saved.update(minutes=99999, litres=999999, estimated_run_seconds=999999)
+    row.report = json.dumps(saved)
+    db.add(Planting(farm_id=2,bed_id=2,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
+                   expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.commit()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert [r["bed_id"] for r in result["rows"]] == [1,3]
+    assert result["runs"][0]["run_seconds"] == 557
+
+
+def test_daily_sequence_only_today(irrigation):
+    _, client, _ = irrigation
+    for offset in (-1,1):
+        assert client.get("/api/irrigation/daily-sequence-preview",params={"day":str(date.today()+timedelta(days=offset))}).status_code == 422
+
+
+def test_daily_sequence_blocks_replanting_same_crop(daily_sequence):
+    db, client = daily_sequence
+    old = db.scalar(select(Planting).where(Planting.bed_id == 1))
+    old.status = "finished"
+    db.add(Planting(farm_id=1,bed_id=1,crop_id=1,variety_id=1,sowing_date=old.sowing_date,
+                   expected_harvest_date=old.expected_harvest_date,status="active"))
+    db.commit()
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "blocked" and result["events"] == []
+    client.put("/api/irrigation/daily",json=payload(weather=weather_input()))
+    assert daily_sequence_request(client).json()["status"] == "draft"
+
+
+def test_daily_sequence_middle_valve_accounts_for_both_overlaps(daily_sequence):
+    from app.models import IrrigationValveBed, IrrigationValveZone
+    db, client = daily_sequence
+    db.add(Bed(id=4,farm_id=1,name="A3",width_m=1,length_m=10,status="empty"))
+    db.add(IrrigationValveZone(id=3,farm_id=1,name="A3",controller_id="opensprinkler-2",station_number=70))
+    db.flush()
+    db.add(IrrigationValveBed(zone_id=3,bed_id=4))
+    db.add(Planting(farm_id=1,bed_id=4,crop_id=1,variety_id=1,sowing_date=date.today()-timedelta(days=10),
+                   expected_harvest_date=date.today()+timedelta(days=30),status="active"))
+    db.commit()
+    client.put("/api/irrigation/beds/4",json={**BP,"flow_l_min":20})
+    client.put("/api/irrigation/daily",json=payload(bed_id=4,weather=weather_input()))
+    result = daily_sequence_request(client).json()
+    assert result["status"] == "draft"
+    assert [r["run_seconds"] for r in result["runs"]] == [557,552,557]
+    assert [r["pump_active_seconds"] for r in result["rows"]] == [562,562,562]

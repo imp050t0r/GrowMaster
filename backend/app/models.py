@@ -55,6 +55,29 @@ class Farm(Base):
     inventory_write_offs: Mapped[list["InventoryWriteOff"]] = relationship(back_populates="farm")
 
 
+class IrrigationValveZone(Base):
+    """Permanent physical OpenSprinkler valve; independent of crop rotation."""
+    __tablename__ = "irrigation_valve_zones"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "controller_id", "station_number", name="uq_irrigation_physical_valve"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    controller_id: Mapped[str] = mapped_column(String(80))
+    station_number: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(100))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class IrrigationValveBed(Base):
+    """One permanent valve assignment per bed, including grouped beds."""
+    __tablename__ = "irrigation_valve_beds"
+    __table_args__ = (UniqueConstraint("bed_id", name="uq_irrigation_bed_single_valve"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    zone_id: Mapped[int] = mapped_column(ForeignKey("irrigation_valve_zones.id", ondelete="RESTRICT"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"))
+
+
 class IrrigationCropProfile(Base):
     __tablename__ = "irrigation_crop_profiles"
     __table_args__ = (UniqueConstraint("farm_id", "crop_id", name="uq_irrigation_crop"),)
@@ -1135,3 +1158,37 @@ class AuthSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class FertilizationSoilTest(Base):
+    __tablename__ = "fertilization_soil_tests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"), index=True)
+    sampled_on: Mapped[date] = mapped_column(Date)
+    parameters: Mapped[str] = mapped_column(Text)
+
+
+class FertilizationPlan(Base):
+    __tablename__ = "fertilization_plans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"), index=True)
+    planting_id: Mapped[int] = mapped_column(ForeignKey("plantings.id", ondelete="RESTRICT"))
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    parameters: Mapped[str] = mapped_column(Text)
+    context: Mapped[str] = mapped_column(Text)
+    reviewer: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class FertilizationApplication(Base):
+    __tablename__ = "fertilization_applications"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), index=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="RESTRICT"), index=True)
+    planting_id: Mapped[int | None] = mapped_column(ForeignKey("plantings.id", ondelete="RESTRICT"), nullable=True)
+    plan_id: Mapped[int | None] = mapped_column(ForeignKey("fertilization_plans.id", ondelete="RESTRICT"), nullable=True, unique=True)
+    applied_on: Mapped[date] = mapped_column(Date)
+    parameters: Mapped[str] = mapped_column(Text)
+    void_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
