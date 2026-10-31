@@ -211,3 +211,56 @@ def test_unavailable_local_stop_rejects_injected_stop_confirmation(delay):
         simulate_sequence_fault(FAULT_RUNS, fault_kind="connection_lost",
             fault_at_seconds=17, local_stop_available=False,
             pump_stop_confirmed_after_seconds=delay)
+
+
+@pytest.mark.parametrize("opening_time", [0, 15])
+@pytest.mark.parametrize("timeout", [1, 5, 6, 60, 86400])
+def test_open_timeout_suspends_normal_schedule_until_abort(opening_time, timeout):
+    result = simulate_sequence_fault(FAULT_RUNS, fault_kind="valve_open_unconfirmed",
+        fault_at_seconds=opening_time, valve_open_timeout_seconds=timeout)
+    deadline = opening_time + timeout
+    assert result.fault_at_seconds == deadline
+    assert result.uncertain_event.at_seconds == opening_time
+    assert result.events[-1] == SequenceEvent(deadline, "pump_off")
+    assert all(e.at_seconds < opening_time for e in result.events[:-1])
+    assert result.unresolved_valves == tuple(
+        (r.controller_id, r.station_number) for r in FAULT_RUNS[:1 if opening_time == 0 else 2])
+    assert result.status == "pump_stop_unconfirmed"
+    assert result.manual_reset_required and result.simulation_only
+
+
+def test_timeout_cleanup_delays_are_relative_to_expiry_and_stop_confirmation():
+    result = simulate_sequence_fault(FAULT_RUNS, fault_kind="valve_open_unconfirmed",
+        fault_at_seconds=15, valve_open_timeout_seconds=10,
+        pump_stop_confirmed_after_seconds=7, valve_link_available=True,
+        valve_close_confirmed=True)
+    assert result.fault_at_seconds == 25
+    assert result.pump_stop_confirmed_at_seconds == 32
+    assert result.events[-3:] == (SequenceEvent(25, "pump_off"),
+        SequenceEvent(37, "valve_close", "opensprinkler-1", 0),
+        SequenceEvent(37, "valve_close", "opensprinkler-2", 71))
+    assert result.status == "stopped" and not result.unresolved_valves
+    assert result.manual_reset_required
+
+
+def test_timeout_with_unavailable_local_stop_keeps_valves_unresolved():
+    result = simulate_sequence_fault(FAULT_RUNS, fault_kind="valve_open_unconfirmed",
+        fault_at_seconds=15, valve_open_timeout_seconds=60,
+        local_stop_available=False, valve_link_available=True)
+    assert result.fault_at_seconds == 75
+    assert all(e.at_seconds < 15 for e in result.events)
+    assert len(result.unresolved_valves) == 2
+    assert result.status == "pump_stop_unconfirmed"
+
+
+@pytest.mark.parametrize("timeout", [-1, True, 1.5, "5", None, 86401])
+def test_invalid_open_timeout_is_rejected(timeout):
+    with pytest.raises(ValueError, match="timeout"):
+        simulate_sequence_fault(FAULT_RUNS, fault_kind="valve_open_unconfirmed",
+            fault_at_seconds=0, valve_open_timeout_seconds=timeout)
+
+
+def test_connection_loss_cannot_be_delayed_by_open_timeout():
+    with pytest.raises(ValueError, match="only to an unconfirmed opening"):
+        simulate_sequence_fault(FAULT_RUNS, fault_kind="connection_lost",
+            fault_at_seconds=15, valve_open_timeout_seconds=5)

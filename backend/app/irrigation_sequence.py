@@ -99,6 +99,7 @@ def simulate_sequence_fault(
     valve_link_available: bool = False,
     valve_close_confirmed: bool = False,
     local_stop_available: bool = True,
+    valve_open_timeout_seconds: int = 0,
 ) -> FaultSimulation:
     """Inject one fault into the ideal timeline and preview conservative abort.
 
@@ -123,6 +124,10 @@ def simulate_sequence_fault(
         raise ValueError("Local stop availability must be a boolean.")
     if not local_stop_available and pump_stop_confirmed_after_seconds is not None:
         raise ValueError("Unavailable local stop cannot produce a simulated stop confirmation.")
+    if type(valve_open_timeout_seconds) is not int or not 0 <= valve_open_timeout_seconds <= 86400:
+        raise ValueError("Valve-open timeout must be an integer from 0 to 86400 seconds.")
+    if fault_kind != "valve_open_unconfirmed" and valve_open_timeout_seconds:
+        raise ValueError("Valve-open timeout applies only to an unconfirmed opening.")
     uncertain = next((event for event in events if event.at_seconds == fault_at_seconds), None)
     if fault_kind == "valve_open_unconfirmed" and (uncertain is None or uncertain.action != "valve_open"):
         raise ValueError("An unconfirmed opening must coincide with a valve-open command.")
@@ -142,20 +147,23 @@ def simulate_sequence_fault(
         # The request may have arrived even though its acknowledgement did not.
         possible_open.add((uncertain.controller_id, uncertain.station_number))
 
+    # No normal commands run while the opening is awaiting acknowledgement.
+    # fault_at_seconds selects the opening request; abort starts at its deadline.
+    abort_at = fault_at_seconds + valve_open_timeout_seconds
     # Discard the remaining watering schedule; never retry the uncertain command.
     # This is a request for an independent local stop, not a successful stop.
     if local_stop_available:
-        history.append(SequenceEvent(fault_at_seconds, "pump_off"))
+        history.append(SequenceEvent(abort_at, "pump_off"))
     confirmed_at = None
     status = "pump_stop_unconfirmed"
     if pump_stop_confirmed_after_seconds is not None:
-        confirmed_at = fault_at_seconds + pump_stop_confirmed_after_seconds
+        confirmed_at = abort_at + pump_stop_confirmed_after_seconds
         if valve_link_available:
             for controller_id, station_number in sorted(possible_open):
                 history.append(SequenceEvent(confirmed_at + DELAY_SECONDS, "valve_close", controller_id, station_number))
             if valve_close_confirmed:
                 possible_open.clear()
         status = "valves_unconfirmed" if possible_open else "stopped"
-    return FaultSimulation(tuple(history), fault_kind, fault_at_seconds, uncertain,
+    return FaultSimulation(tuple(history), fault_kind, abort_at, uncertain,
                            confirmed_at, tuple(sorted(possible_open)), status,
                            local_stop_available=local_stop_available)

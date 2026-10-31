@@ -325,3 +325,26 @@ No independent local pump-stop implementation has been validated by these tests.
 Before live execution, loss of the HA/OpenSprinkler connection must be tested
 against the actual local stop mechanism and VFD feedback. An available command
 path alone remains insufficient evidence that the pump has physically stopped.
+
+
+### Simulated opening acknowledgement timeout
+
+For `valve_open_unconfirmed`, `valve_open_timeout_seconds` sets the injected wait
+for an acknowledgement that never arrives (integer 0..86400; default 0 preserves
+immediate-fault previews). This is a simulation range, not a recommended hardware
+timeout. The input `fault_at_seconds` still selects the opening request in the
+ideal timeline. The result's `fault_at_seconds` records the abort deadline:
+request time plus timeout. `uncertain_event.at_seconds` preserves request time.
+
+During this wait no subsequent normal commands are emitted. At the first valve,
+the pump never starts. At a transition the previous valve stays potentially open;
+the simulator never executes its scheduled close while waiting for the new valve.
+The deadline may exceed the ideal timeline because that timeline is suspended.
+Pump-stop confirmation delay starts at timeout expiry; the five-second cleanup
+wait starts at stop confirmation. For example, opening at 15, timeout 10 and stop
+confirmation delay 7 yield stop request at 25, confirmation at 32 and closes at 37.
+Loss of the local stop path still leaves valves unresolved without cleanup.
+
+Connection loss is handled immediately and rejects a nonzero opening timeout.
+This models only missing acknowledgements: no real timer, timely/late response
+processing, physical-position feedback or live executor is introduced.
