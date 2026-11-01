@@ -3669,6 +3669,31 @@ def planning_calendar(
                         "plan_id": plan.id,
                     }
                 )
+    # Activated plans are represented by their live planting, including direct sowings.
+    plantings = db.scalars(
+        select(Planting)
+        .where(
+            Planting.farm_id == DEFAULT_FARM_ID,
+            Planting.status == "active",
+            Planting.expected_harvest_date >= range_start,
+            Planting.expected_harvest_date <= range_end,
+        )
+        .options(
+            selectinload(Planting.bed),
+            selectinload(Planting.crop),
+            selectinload(Planting.variety),
+        )
+    ).all()
+    events.extend(
+        {
+            "date": planting.expected_harvest_date,
+            "type": "planned_harvest",
+            "title": f"Predvidena žetev: {planting.crop.name} {planting.variety.name}",
+            "bed": planting.bed.name,
+            "planting_id": planting.id,
+        }
+        for planting in plantings
+    )
     tasks = db.scalars(
         select(Task)
         .where(
