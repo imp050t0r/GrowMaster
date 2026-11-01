@@ -348,3 +348,21 @@ Loss of the local stop path still leaves valves unresolved without cleanup.
 Connection loss is handled immediately and rejects a nonzero opening timeout.
 This models only missing acknowledgements: no real timer, timely/late response
 processing, physical-position feedback or live executor is introduced.
+
+
+## Daily OpenSprinkler preview in Planning
+
+The irrigation panel now exposes **Dnevni načrt za OpenSprinkler – samo predogled**.
+The explicit preview button performs only a GET to `/api/irrigation/daily-sequence-preview`
+for the selected daily-balance date. The server accepts only today's date in
+Europe/Ljubljana and rechecks saved balances, planting, weather and valve mappings.
+The UI shows each bed's water estimate, pump-active valve duration (including
+overlap), controller/station mapping, disabled-valve flag and the shared-pump
+sequence. It displays all blocking reasons and no timeline for a blocked plan.
+
+Changing the selected day, beds, profiles or saved balances invalidates the
+visible response and any in-flight response. The preview is an explicit snapshot:
+after mapping changes, external updates or elapsed time, regenerate it. It does
+not include unsaved form changes. Empty/hold plans are distinguished from blocked
+plans. No execution button, automatic refresh, hardware requests or execution
+ledger writes are introduced. Existing manual sequence previews remain available.
