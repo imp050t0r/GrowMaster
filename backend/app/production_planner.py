@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from app.dynamic_dtm import predict
 from app.planting_advisor import ROTATION_RULES, rotation_families, score_candidate, seasonal_assessment
 from app.succession import field_start, release_estimate
+from app.irrigation_planning import assess, crop_cycle, proposal_cycle
 
 
 def _candidate(bed, crop, variety, plans, history, start, end, today):
@@ -72,10 +73,12 @@ def _candidate(bed, crop, variety, plans, history, start, end, today):
             "expected_yield_kg": None, **result}
 
 
-def production_proposals(beds, crops, plans, plantings, start, end, max_beds, *, today=None):
+def production_proposals(beds, crops, plans, plantings, start, end, max_beds, *, today=None, irrigation=None):
     today = today or date.today()
     active_beds = {p.bed_id for p in plantings if p.status == "active"}
     proposals, skipped, counts = [], [], {}
+    cycles = ([crop_cycle(p, today=today) for p in plans if p.status == "planned"] +
+              [crop_cycle(p, today=today) for p in plantings if p.status == "active"]) if irrigation else []
     for bed in sorted(beds, key=lambda b: b.id):
         if len(proposals) >= max_beds:
             break
@@ -86,20 +89,41 @@ def production_proposals(beds, crops, plans, plantings, start, end, max_beds, *,
         history = [p for p in plantings if p.bed_id == bed.id and p.status == "completed"
                    and (not p.completed_on or p.completed_on <= today)]
         candidates = []
+        irrigation_reasons = set()
         for crop in crops:
             for variety in sorted(crop.varieties, key=lambda v: v.id):
-                try:
-                    candidate = _candidate(bed, crop, variety, bed_plans, history, start, end, today)
-                except (OverflowError, TypeError, ValueError):
-                    candidate = None
-                if candidate:
+                # Re-run rotation and seasonal checks for each shifted candidate.
+                for offset in range((end-start).days + 1):
+                    try:
+                        candidate = _candidate(bed, crop, variety, bed_plans, history,
+                                               start + timedelta(days=offset), end, today)
+                    except (OverflowError, TypeError, ValueError):
+                        candidate = None
+                    if candidate is None:
+                        break
+                    check = assess(proposal_cycle(candidate), cycles, irrigation) if irrigation else None
+                    if check and not check["compatible"]:
+                        irrigation_reasons.update(check["reasons"])
+                        if not check["can_shift"]:
+                            break
+                        continue
+                    if check and check["shared"]:
+                        candidate["irrigation"] = check
+                        candidate["reasons"].append("Skupni ventil: vodni profili in napovedane faze so združljivi v celotnem prekrivanju.")
+                        candidate["warnings"].append("Vir: izmerjenih 80 L/min pri 2 bar; načrtovalna meja 75 L/min. Preveri izgube in tlak na kapljičnih ceveh pred zagonom.")
+                        if offset:
+                            candidate["reasons"].append(f"Setev je zamaknjena za {offset} dni zaradi skupnega ventila.")
                     candidates.append(candidate)
+                    break
         if not candidates:
-            skipped.append({"bed_id": bed.id, "bed": bed.name, "reason": "Ni ustrezne kombinacije: preveri kolobar, prosto obdobje, sezono, način vzgoje in podatke sorte. Večkratno pobiranje ni samodejno razporejeno."})
+            skipped.append({"bed_id": bed.id, "bed": bed.name, "reason": "Ni ustrezne kombinacije: preveri kolobar, prosto obdobje, sezono, način vzgoje in podatke sorte. Večkratno pobiranje ni samodejno razporejeno.",
+                            "irrigation_reasons": sorted(irrigation_reasons)[:10]})
             continue
         candidates.sort(key=lambda c: (counts.get(c["crop_id"], 0), -c["score"], c["sowing_date"], c["crop_id"], c["variety_id"]))
         chosen = candidates[0]
         proposals.append(chosen)
+        if irrigation:
+            cycles.append(proposal_cycle(chosen))
         counts[chosen["crop_id"]] = counts.get(chosen["crop_id"], 0)+1
     return {"start": start, "end": end, "as_of": today, "method": "local_rules",
             "proposals": proposals, "skipped_beds": skipped,

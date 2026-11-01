@@ -24,7 +24,7 @@ export function ProductionPlanner({crops,plans,start,end,setStart,setEnd,onChoos
       <label>Največ novih gredic<input type="number" min="1" max="100" step="1" required value={maxBeds} onChange={e=>setMaxBeds(e.target.value)} /></label>
       <button className="primary-button" disabled={busy || !selected.length}>{busy?"PRIPRAVLJAM …":"PRIPRAVI PREDLOG"}</button>
     </form>
-    <p>Lokalna pravila preverijo kolobar, sezono, način vzgoje in prosta obdobja gred. Zunanji AI model ni uporabljen. Količine pridelka, dovolj semena in razpoložljive ure niso zagotovljene.</p>
+    <p>Lokalna pravila preverijo kolobar, sezono, način vzgoje, prosta obdobja in združljivost razvojnih faz na skupnih ventilih. Po potrebi poiščejo poznejši datum setve. Količine pridelka, dovolj semena in razpoložljive ure niso zagotovljene.</p>
     {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
     {report&&<><p>Predlogi: {report.proposals.length} · Obdobje: {report.start} – {report.end}</p>
       {!report.proposals.length&&<p>Ni ustreznega predloga. Preveri izbrane kulture, proste gredice in dolžino obdobja.</p>}
@@ -36,7 +36,7 @@ export function ProductionPlanner({crops,plans,start,end,setStart,setEnd,onChoos
         <button type="button" className="secondary-button" onClick={()=>{onChoose(p);setNotice(`Predlog za gredico ${p.bed} je prenesen v obrazec. Vnesi pričakovane kg, preveri podatke in izberi DODAJ V NAČRT. Predlog še ni shranjen.`);}}>PRENESI V OBRAZEC</button>
       </article>)}
       {report.unassigned_crops.length>0&&<p>Brez predloga: {report.unassigned_crops.map(c=>c.crop).join(", ")}. Povečaj število gred ali preveri omejitve.</p>}
-      {report.skipped_beds.length>0&&<details><summary>Izpuščene gredice ({report.skipped_beds.length})</summary><ul>{report.skipped_beds.map(b=><li key={b.bed_id}>{b.bed}: {b.reason}</li>)}</ul></details>}
+      {report.skipped_beds.length>0&&<details><summary>Izpuščene gredice ({report.skipped_beds.length})</summary><ul>{report.skipped_beds.map(b=><li key={b.bed_id}>{b.bed}: {b.reason}{b.irrigation_reasons?.map((reason,index)=><p key={index}>{reason}</p>)}</li>)}</ul></details>}
       <small>{report.note}</small>
     </>}
   </section>;

@@ -26,6 +26,7 @@ from app.dtm_learning import learning_report, apply_suggestion, save_result, sna
 from app.workload import workload_report
 from app.harvest_forecast import harvest_forecast
 from app.production_planner import production_proposals
+from app.irrigation_planning import load_context, check_succession_irrigation, check_dtm_irrigation, validate_plan, assess, crop_cycle, suggestion_cycle
 
 
 router = APIRouter()
@@ -56,7 +57,8 @@ def get_production_proposals(payload: ProductionProposalRequest, db: Session = D
     plantings = db.scalars(select(Planting).where(
         Planting.farm_id == DEFAULT_FARM_ID, Planting.status.in_(["active", "completed"]),
     ).options(selectinload(Planting.crop), selectinload(Planting.variety))).all()
-    return production_proposals(beds, crops, plans, plantings, payload.start, payload.end, payload.max_beds)
+    return production_proposals(beds, crops, plans, plantings, payload.start, payload.end, payload.max_beds,
+                                irrigation=load_context(db, DEFAULT_FARM_ID))
 
 
 @router.get("/api/planning/harvest-forecast")
@@ -119,7 +121,18 @@ def succession_state(db: Session, *, lock=False):
     beds = list(db.scalars(beds_query).all())
     plans = list(db.scalars(plans_query).all())
     plantings = list(db.scalars(plantings_query).all())
-    return beds, plans, plantings, succession_review(beds, plans, plantings)
+    report = succession_review(beds, plans, plantings)
+    check_succession_irrigation(report, plans, plantings, load_context(db, DEFAULT_FARM_ID))
+    return beds, plans, plantings, report
+
+
+def require_irrigation_compatibility(db, records):
+    with db.no_autoflush:
+        for record in records:
+            check = validate_plan(db, record, DEFAULT_FARM_ID)
+            if not check["compatible"]:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="Skupni ventil: " + "; ".join(check["reasons"]))
 
 
 def checked_succession_state(db: Session, token: str):
@@ -146,6 +159,7 @@ def update_bed_release(record_type: str, record_id: int, payload: BedReleaseUpda
     if payload.expected_bed_release_date and payload.expected_bed_release_date < minimum:
         raise HTTPException(status_code=422, detail=f"Zaključek zasedenosti mora biti {minimum} ali pozneje. Dejansko končan cikel zaključi v gredicah.")
     record.expected_bed_release_date = payload.expected_bed_release_date
+    require_irrigation_compatibility(db, [record])
     db.commit()
     return {"message": "Predvideni zaključek zasedenosti je shranjen."}
 
@@ -171,6 +185,7 @@ def apply_succession(bed_id: int, payload: SuccessionAction, db: Session = Depen
         # The initial snapshot remains intact for planned-versus-actual work.
         store_prediction(plan, plan.variety)
         changed.append({"plan_id": plan.id, "before": before, "after": row["proposed"]})
+    require_irrigation_compatibility(db, [by_id[row["plan_id"]] for row in changed])
     db.commit()
     return {"message": f"Posodobljenih je {len(changed)} načrtov. Razmik med setvijo sadik in presajanjem je ohranjen.", "changes": changed}
 
@@ -185,6 +200,7 @@ def move_succession(plan_id: int, payload: SuccessionMove, db: Session = Depends
         raise HTTPException(status_code=409, detail="Gredica ni več med preverjenimi možnostmi. Osveži pregled.")
     plan = next(p for p in plans if p.id == plan_id)
     plan.bed_id = payload.bed_id
+    require_irrigation_compatibility(db, [plan])
     db.commit()
     return {"message": "Načrt je prestavljen na preverjeno prazno gredico enakih mer; datumi ostanejo ohranjeni."}
 
@@ -294,6 +310,11 @@ def next_crop_suggestions(
         ).all()
     )
     candidates: list[dict] = []
+    irrigation_context = load_context(db, DEFAULT_FARM_ID)
+    peers = list(db.scalars(select(CropPlan).where(CropPlan.farm_id == DEFAULT_FARM_ID, CropPlan.status == "planned")))
+    peers += list(db.scalars(select(Planting).where(Planting.farm_id == DEFAULT_FARM_ID, Planting.status == "active")))
+    peer_cycles = [crop_cycle(record) for record in peers]
+    irrigation_excluded = []
 
     for crop in crops:
         if not crop.varieties:
@@ -304,6 +325,10 @@ def next_crop_suggestions(
         )
         maturity_days = maturity_days_for_date(variety, target_date)
         expected_harvest = target_date + timedelta(days=maturity_days)
+        irrigation = assess(suggestion_cycle(bed.id, crop.id, variety, target_date), peer_cycles, irrigation_context)
+        if not irrigation["compatible"]:
+            irrigation_excluded.append({"crop_id": crop.id, "crop": crop.name, "reasons": irrigation["reasons"]})
+            continue
         families = rotation_families(crop.name, crop.family, variety.name)
 
         overlapping_plans = [
@@ -441,6 +466,7 @@ def next_crop_suggestions(
             for planting in recent_history
         ],
         "suggestions": candidates[:limit],
+        "irrigation_excluded": irrigation_excluded,
         "message": (
             "Naslednje kulture so razvrščene glede na kolobar, termin, DTM, "
             "prosto časovno okno, obstoječe načrte, pridelek, sejalniški profil "
@@ -482,7 +508,12 @@ def dtm_learning_state(db: Session, *, lock=False):
         history_query = history_query.with_for_update()
     plans = list(db.scalars(plans_query).all())
     history = list(db.scalars(history_query).all())
-    return plans, learning_report(plans, history)
+    active = list(db.scalars(select(Planting).where(
+        Planting.farm_id == DEFAULT_FARM_ID, Planting.status == "active").order_by(Planting.id)
+        .options(selectinload(Planting.variety))))
+    report = learning_report(plans, history)
+    check_dtm_irrigation(report, plans, active, load_context(db, DEFAULT_FARM_ID))
+    return plans, report
 
 
 @router.get("/api/planning/dtm-learning")
@@ -513,5 +544,6 @@ def confirm_dtm_learning(plan_id: int, action: str, payload: SuccessionAction,
         baseline = snapshot(plan.dynamic_dtm_explanation)["history_correction"]["baseline"]
         save_result(plan, baseline)
         message = "Obnovljena je napoved pred potrjenim popravkom."
+    require_irrigation_compatibility(db, [plan])
     db.commit()
     return {"message": message}

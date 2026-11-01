@@ -201,12 +201,9 @@ def automatic_irrigation_tick(db: Session):
 
     # Synchronize changed crop Kc first. Never water in the same pass as a Kc change.
     kc_updates = {}
-    zone_counts = {}
     waiting_for_kc = False
     for row in readiness["rows"]:
         zone = row.get("zone_entity")
-        if zone and row.get("mode") == "smart_irrigation":
-            zone_counts[zone] = zone_counts.get(zone, 0) + 1
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "matched" and zone:
             enabled_at_value = state.get("enabled_at")
             if enabled_at_value:
@@ -235,7 +232,11 @@ def automatic_irrigation_tick(db: Session):
         if row.get("mode") == "smart_irrigation" and row.get("kc_sync_status") == "needs_update":
             zone = row.get("zone_entity")
             expected = row.get("kc_expected")
-            if zone and expected is not None and zone_counts.get(zone) == 1:
+            zone_rows = [r for r in readiness["rows"] if r.get("zone_entity") == zone]
+            consistent = all(r.get("kc_update_allowed", True) and r.get("kc_expected") is not None
+                             and math.isclose(r["kc_expected"], expected, rel_tol=0, abs_tol=.001)
+                             for r in zone_rows) if expected is not None else False
+            if zone and expected is not None and consistent:
                 pending = state.setdefault("kc_pending", {}).get(zone)
                 try:
                     pending_age = (local_now - datetime.fromisoformat(pending["sent_at"])).total_seconds() if pending else None
@@ -348,7 +349,9 @@ def profile_row(db, model, key, identifier):
 
 @router.get("/profiles")
 def profiles(db: Session = Depends(get_db)):
-    return {"crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
+    from app.irrigation_planning import planning_conflicts
+    return {"planning_conflicts": planning_conflicts(db, FARM_ID),
+            "crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
                       db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))],
             "beds": [{"bed_id": r.bed_id, **BedProfile.model_validate_json(r.parameters).model_dump()} for r in
                      db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))],
@@ -371,13 +374,16 @@ def save_sensor_group(group_number: int, payload: SensorGroupInput, db: Session 
 
 
 def save_profile(db, model, key, identifier, payload):
+    from app.irrigation_planning import planning_conflicts
     row = profile_row(db, model, key, identifier)
     if row is None:
         row = model(farm_id=FARM_ID, **{key: identifier})
         db.add(row)
     row.parameters = payload.model_dump_json()
+    db.flush()
+    conflicts = planning_conflicts(db, FARM_ID)
     db.commit()
-    return {key: identifier, **payload.model_dump()}
+    return {key: identifier, **payload.model_dump(), "planning_conflicts": conflicts}
 
 
 @router.put("/crops/{crop_id}")
@@ -389,6 +395,12 @@ def save_crop(crop_id: int, payload: CropProfile, db: Session = Depends(get_db))
 @router.put("/beds/{bed_id}")
 def save_bed(bed_id: int, payload: BedProfile, db: Session = Depends(get_db)):
     entity(db, Bed, bed_id)
+    stations = {BedProfile.model_validate_json(r.parameters).opensprinkler_station_entity for r in
+                db.scalars(select(IrrigationBedProfile).where(
+                    IrrigationBedProfile.farm_id == FARM_ID, IrrigationBedProfile.bed_id != bed_id))}
+    stations.add(payload.opensprinkler_station_entity)
+    if len(stations - {None}) > 72:
+        raise HTTPException(422, "OpenSprinkler podpira največ 72 fizičnih con; več gredic lahko uporablja isti ventil.")
     return save_profile(db, IrrigationBedProfile, "bed_id", bed_id, payload)
 
 
@@ -612,6 +624,59 @@ def save_water_ledger(payload: WaterLedgerInput, db: Session = Depends(get_db)):
             "warning": "To potrdiš samo po preverbi dejanskega dežja in izvedenega zalivanja."}
 
 
+def shared_smart_zones(beds, profiles, crop_profiles, plantings, day):
+    """Validate a single SI sensor serving exactly one complete physical valve."""
+    zones = {}
+    for bid, profile in profiles.items():
+        if profile.smart_irrigation_entity:
+            zones.setdefault(profile.smart_irrigation_entity, []).append(bid)
+    result = {}
+    for zone, ids in zones.items():
+        if len(ids) < 2:
+            continue
+        reasons, coefficients = [], []
+        if day != date.today():
+            reasons.append("Skupna SI cona zahteva današnji pregled.")
+        stations = {profiles[bid].opensprinkler_station_entity for bid in ids}
+        station = next(iter(stations)) if len(stations) == 1 else None
+        physical_ids = {bid for bid, p in profiles.items() if station and p.opensprinkler_station_entity == station}
+        if not station or physical_ids != set(ids):
+            reasons.append("Ista Smart Irrigation cona na več gredicah mora pokrivati natanko en celoten fizični ventil.")
+        area, flow = 0.0, 0.0
+        reference = None
+        for bid in ids:
+            bp, bed, planting = profiles[bid], beds.get(bid), plantings.get(bid)
+            if bp.mode != "smart_irrigation" or bp.valve_mode != "shared":
+                reasons.append("Za več gredic na isti SI coni izberi Smart Irrigation in skupni ventil na vseh gredicah.")
+            if bed is None or planting is None:
+                reasons.append(f"Gredica {bid} nima aktivne zasaditve; skupna cona zahteva pregled.")
+                continue
+            cp = crop_profiles.get(planting.crop_id)
+            stage, _, _ = planting_growth_stage(planting, day)
+            if cp is None or stage is None or planting.sowing_date > day:
+                reasons.append(f"Gredica {bid} nima veljavnega profila kulture ali razvojne faze.")
+                continue
+            coefficients.append(getattr(cp, "kc_" + stage))
+            if bp.flow_l_min is None:
+                reasons.append(f"Manjka pretok gredice {bid}.")
+                continue
+            area += bed.area_m2
+            flow += bp.flow_l_min
+            signature = (bed.width_m, bed.length_m, bp.flow_l_min, bp.field_capacity_pct,
+                         bp.wilting_point_pct, bp.efficiency_pct, cp.root_depth_m * cp.depletion_fraction)
+            if reference and any(not math.isclose(a, b, rel_tol=0, abs_tol=.001) for a, b in zip(reference, signature)):
+                reasons.append("Gredice skupne cone nimajo primerljivih mer, pretoka ali vodnih profilov.")
+            reference = signature
+        if coefficients and any(not math.isclose(k, coefficients[0], rel_tol=0, abs_tol=.001) for k in coefficients):
+            reasons.append("Aktivne kulture in razvojne faze zahtevajo različne Kc; skupna cona je blokirana.")
+        if flow > 75:
+            reasons.append("Skupni pretok presega projektno mejo 75 L/min.")
+        result[zone] = {"bed_ids": sorted(ids), "station": station, "area_m2": area,
+                        "flow_l_min": flow, "multiplier": coefficients[0] if coefficients else None,
+                        "reasons": list(dict.fromkeys(reasons))}
+    return result
+
+
 def planting_growth_stage(planting, day: date):
     """Estimate crop coefficient stage from this planting’s recorded growth cycle."""
     harvest_target = planting.predicted_harvest_start or planting.expected_harvest_date
@@ -647,7 +712,9 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
     latest_by_bed = {}
     for planting in active:
         latest_by_bed.setdefault(planting.bed_id, planting)
+    shared_zones = shared_smart_zones({b.id: b for b in beds}, bed_profiles, crop_profiles, latest_by_bed, day)
     ha_state_cache = {}
+    pending_kc = _read_automatic_state().get("kc_pending", {})
     for bed in beds:
         planting = latest_by_bed.get(bed.id)
         if planting is None:
@@ -662,11 +729,9 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
         if profile and profile.mode == "smart_irrigation" and not profile.smart_irrigation_entity:
             reasons.append("Manjka Smart Irrigation cona.")
         if profile and profile.mode == "smart_irrigation" and profile.smart_irrigation_entity:
-            other_beds = [other_id for other_id, other in bed_profiles.items()
-                          if other_id != bed.id and other.mode == "smart_irrigation"
-                          and other.smart_irrigation_entity == profile.smart_irrigation_entity]
-            if other_beds:
-                reasons.append("Ista Smart Irrigation cona je dodeljena več gredicam; Kc posamezne kulture ni mogoče varno uskladiti.")
+            shared = shared_zones.get(profile.smart_irrigation_entity)
+            if shared:
+                reasons.extend(shared["reasons"])
         if profile and profile.mode == "soil_sensor" and not profile.irrigation_zone:
             reasons.append("Izbran je način s senzorjem vlage, vendar namakalna cona ni nastavljena.")
         sensor_group = sensor_groups.get(profile.wh51_group) if profile and profile.wh51_group else None
@@ -750,6 +815,18 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                         reasons.append("Smart Irrigation entity ni dosegljiv v Home Assistantu.")
                     else:
                         smart_irrigation_seconds = float(si_data.get("state"))
+                        shared = shared_zones.get(profile.smart_irrigation_entity)
+                        if shared:
+                            attrs = si_data.get("attributes", {})
+                            if attrs.get("size_unit") not in {"m²", "m2"} or attrs.get("throughput_unit") not in {"l/min", "L/min"}:
+                                reasons.append("Skupna SI cona mora potrditi metrični enoti površine in pretoka.")
+                            if (not math.isclose(float(attrs.get("size", -1)), shared["area_m2"], rel_tol=0, abs_tol=.001)
+                                    or not math.isclose(float(attrs.get("throughput", -1)), shared["flow_l_min"], rel_tol=0, abs_tol=.001)):
+                                reasons.append("SI površina in pretok se morata ujemati z vsoto vseh gredic skupnega ventila.")
+                            if attrs.get("input_method", "throughput") != "throughput":
+                                reasons.append("Skupna SI cona zahteva izračun iz površine in pretoka.")
+                            if not attrs.get("last_calculated"):
+                                reasons.append("Skupna SI cona nima potrjenega časa zadnjega izračuna.")
                         raw_multiplier = si_data.get("attributes", {}).get("multiplier")
                         if raw_multiplier is not None:
                             smart_irrigation_multiplier_current = float(raw_multiplier)
@@ -759,6 +836,11 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                         if si_updated.utcoffset() is None:
                             raise ValueError("Smart Irrigation čas izračuna nima časovnega pasu.")
                         smart_irrigation_calculated_at = si_updated.astimezone(timezone.utc).isoformat()
+                        pending = pending_kc.get(profile.smart_irrigation_entity)
+                        if pending:
+                            sent_at = datetime.fromisoformat(pending["sent_at"])
+                            if sent_at.utcoffset() is None or si_updated <= sent_at:
+                                reasons.append("Po posodobitvi Kc počakaj na nov izračun Smart Irrigation cone.")
                         si_age = (datetime.now(timezone.utc) - si_updated.astimezone(timezone.utc)).total_seconds()
                         if not math.isfinite(smart_irrigation_seconds) or smart_irrigation_seconds < 0:
                             raise ValueError("Trajanje ni veljavno nenegativno število.")
@@ -840,6 +922,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                      "smart_irrigation_multiplier": smart_irrigation_multiplier_current,
                      "smart_irrigation_calculated_at": smart_irrigation_calculated_at,
                      "kc_expected": kc_expected, "kc_sync_status": kc_sync_status,
+                     "kc_update_allowed": not shared_zones.get(profile.smart_irrigation_entity if profile else None, {}).get("reasons"),
                      "estimated_litres": smart_irrigation_litres,
                      "action": smart_action,
                      "decision": (("irrigate" if report_status == "irrigate" else "hold" if report_status == "hold" else "review")
@@ -869,6 +952,15 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
         for member_id, member in members:
             report = reports.get(member_id)
             bed = next((item for item in beds if item.id == member_id), None)
+            shared = shared_zones.get(member.smart_irrigation_entity)
+            if shared and shared["station"] == station:
+                if bed is None or member.flow_l_min is None:
+                    reasons.append("Manjka površina ali pretok gredice skupne SI cone.")
+                    continue
+                safe_limits.append(min(member.max_run_seconds,
+                    math.floor(member.max_application_mm * bed.area_m2 / member.flow_l_min * 60)))
+                group_flows.append((member_id, member.flow_l_min))
+                continue
             if report is None or bed is None or member.flow_l_min is None:
                 reasons.append("Za vsako gredico skupine sta potrebna današnji izračun in izmerjeni pretok.")
                 continue
@@ -898,6 +990,8 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                 row["ready"] = False
                 row["reasons"].extend(reason for reason in reasons if reason not in row["reasons"])
         valve_groups.append({"station": station, "bed_ids": bed_ids, "status": "draft" if action else "blocked",
+                             "area_m2": sum(b.area_m2 for b in beds if b.id in bed_ids),
+                             "flow_l_min": sum(flow for _, flow in group_flows),
                              "action": action, "run_seconds": run_seconds if action else None,
                              "estimated_litres": estimated_litres, "bed_water_estimates": bed_water_estimates,
                              "reasons": reasons})
@@ -979,11 +1073,6 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
                      db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))}
     bed_profiles = {row.bed_id: BedProfile.model_validate_json(row.parameters) for row in
                     db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))}
-    mapped_zones = {}
-    for bed_id, profile in bed_profiles.items():
-        if profile.smart_irrigation_entity:
-            mapped_zones.setdefault(profile.smart_irrigation_entity, []).append(bed_id)
-
     active_plantings = db.scalars(
         select(Planting).where(Planting.farm_id == FARM_ID, Planting.status == "active")
         .order_by(Planting.created_at.desc())
@@ -991,6 +1080,8 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
     latest_by_bed = {}
     for planting in active_plantings:
         latest_by_bed.setdefault(planting.bed_id, planting)
+
+    shared_zones = shared_smart_zones(beds, bed_profiles, crop_profiles, latest_by_bed, day)
 
     rows = []
     for bed_id, planting in latest_by_bed.items():
@@ -1026,8 +1117,8 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
             reasons.append("Gredica je nastavljena na način s talnim senzorjem.")
         if not zone_entity:
             reasons.append("Gredica nima povezane Smart Irrigation cone.")
-        elif len(mapped_zones.get(zone_entity, [])) > 1:
-            reasons.append("Ista Smart Irrigation cona je povezana z več gredicami; Kc mora biti določen enkrat na cono.")
+        elif zone_entity in shared_zones:
+            reasons.extend(shared_zones[zone_entity]["reasons"])
         multiplier = getattr(crop_profile, "kc_" + stage) if crop_profile and stage else None
         if multiplier is None or not math.isfinite(multiplier) or not 0 <= multiplier <= 2:
             reasons.append("Koeficient Kc ni veljaven.")
@@ -1045,9 +1136,22 @@ def smart_irrigation_preview(day: date, db: Session = Depends(get_db)):
             )
         rows.append(item)
 
+    # Keep per-bed diagnostics, but expose only one executable Kc draft per zone.
+    grouped_rows, seen_zones = [], set()
+    for item in rows:
+        action = item.get("action")
+        zone = action["target"]["entity_id"] if action else None
+        if zone in shared_zones and item["status"] == "draft":
+            if zone in seen_zones:
+                continue
+            seen_zones.add(zone)
+            group = shared_zones[zone]
+            item.update(bed_ids=group["bed_ids"], area_m2=group["area_m2"], flow_l_min=group["flow_l_min"])
+            item["bed"] = ", ".join(beds[bid].name for bid in group["bed_ids"])
+        grouped_rows.append(item)
     return {
         "day": str(day), "automatic_execution": False, "requires_manual_review": True,
-        "rows": rows,
+        "rows": grouped_rows,
         "note": "Osnutki Kc izhajajo iz aktivne kulture in profila kulture, ne iz shranjenega dnevnega izračuna. "
                 "Fazo GrowMaster samodejno oceni iz datuma setve in pričakovanega pobiranja; uporabi dinamični datum pobiranja, če je na voljo. "
                 "Pred pošiljanjem preveri kulturo, Kc in HA cono. Pošlje se samo Kc; GrowMaster ne sproži namakanja.",
@@ -1246,11 +1350,10 @@ def send_smart_irrigation(day: date, db: Session = Depends(get_db)):
             for row in ready:
                 action = row["action"]
                 automation_state = _read_automatic_state()
-                if automation_state.get("enabled"):
-                    zone = action["target"]["entity_id"]
-                    automation_state.setdefault("kc_pending", {})[zone] = {
-                        "value": row["multiplier"], "sent_at": datetime.now(timezone.utc).isoformat()}
-                    _write_automatic_state(automation_state)
+                zone = action["target"]["entity_id"]
+                automation_state.setdefault("kc_pending", {})[zone] = {
+                    "value": row["multiplier"], "sent_at": datetime.now(timezone.utc).isoformat()}
+                _write_automatic_state(automation_state)
                 response = client.post(
                     f"{base_url}/api/services/smart_irrigation/set_multiplier",
                     headers=ha_headers(token),
@@ -1261,6 +1364,7 @@ def send_smart_irrigation(day: date, db: Session = Depends(get_db)):
                 if response.status_code not in {200, 201}:
                     raise HTTPException(502, f"Home Assistant je zavrnil posodobitev cone (HTTP {response.status_code}).")
                 sent.append({"bed_id": row["bed_id"], "bed": row["bed"], **action["target"],
+                             "bed_ids": row.get("bed_ids", [row["bed_id"]]),
                              "multiplier": row["multiplier"], "status": "sent"})
     except httpx.RequestError as exc:
         raise HTTPException(502, "Prekinjena je bila povezava s Home Assistantom; preveri stanje con pred ponovitvijo.") from exc
