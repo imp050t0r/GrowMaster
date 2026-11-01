@@ -366,3 +366,29 @@ after mapping changes, external updates or elapsed time, regenerate it. It does
 not include unsaved form changes. Empty/hold plans are distinguished from blocked
 plans. No execution button, automatic refresh, hardware requests or execution
 ledger writes are introduced. Existing manual sequence previews remain available.
+
+
+## Installed Home Assistant action contract (user-verified UI)
+
+The installed integration's Actions YAML editor exposes this station request:
+
+```yaml
+action: opensprinkler.run
+data:
+  entity_id: switch.opensprinkler_s01_station_enabled
+  run_seconds: 10
+```
+
+This is a contract example, not a command executed by GrowMaster. The station
+switch identifies S01 for the `run` service; toggling its enabled state is not a
+watering command. The user's telemetry entities are
+`binary_sensor.opensprinkler_s01_station_running` and
+`sensor.opensprinkler_s01_station_status`; neither proves physical water flow.
+The pump is not yet installed.
+
+All station action previews now use `data.entity_id`, explicit `run_seconds`,
+no `target` block and no `queue_option`. No `continue_running_stations` behavior
+is inferred. Legacy automation refuses these review-only drafts before any
+transport or run-ledger write, including grouped drafts. Its older transport is
+not repurposed as a shared-pump executor. Existing settings are not enabled or
+changed, and the local sequence remains simulation-only.

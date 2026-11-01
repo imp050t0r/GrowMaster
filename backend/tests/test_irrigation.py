@@ -253,8 +253,7 @@ def test_wh51_daily_readiness_prepares_action_for_the_bed_valve(irrigation,monke
     c.put("/api/irrigation/daily",json=payload(soil_moisture_pct=32,sensor_observed_at=datetime.now(timezone.utc).isoformat()))
     row=c.get(f"/api/irrigation/daily-readiness?day={date.today()}").json()["rows"][0]
     assert row["ready"]
-    assert row["action"]=={"action":"opensprinkler.run_station","target":{"entity_id":"switch.bed_1_valve"},
-                            "data":{"run_seconds":5625,"queue_option":"append"}}
+    assert row["action"]=={"action":"opensprinkler.run","data":{"entity_id":"switch.bed_1_valve","run_seconds":5625}}
     assert row["planting_id"] and row["crop"]=="Solata"
 
 @pytest.mark.parametrize("seconds,expected",[(300,"draft"),(0,"blocked")])
@@ -288,7 +287,7 @@ def test_shared_valve_requires_every_active_bed_to_request_water(irrigation,monk
         assert group["run_seconds"]==300 and group["bed_ids"]==[1,3]
         assert group["estimated_litres"]==20
         assert group["bed_water_estimates"]==[{"bed_id":1,"litres":10},{"bed_id":3,"litres":10}]
-        assert group["action"]["target"]["entity_id"]=="switch.shared_valve"
+        assert group["action"]["data"]["entity_id"]=="switch.shared_valve"
     else:
         assert group["action"] is None and any(not row["ready"] for row in result["rows"])
 
@@ -396,7 +395,7 @@ def test_smart_irrigation_daily_plan_reads_seconds_and_prepares_manual_station_d
         assert result["action"] is None
     else:
         assert result["action"]["data"]["run_seconds"]==run_seconds
-        assert result["action"]["action"]=="opensprinkler.run_station"
+        assert result["action"]["action"]=="opensprinkler.run"
 
 def test_daily_readiness_blocks_when_smart_irrigation_kc_is_stale(irrigation,monkeypatch):
     db,c,_=irrigation
@@ -1299,3 +1298,22 @@ def test_daily_sequence_middle_valve_accounts_for_both_overlaps(daily_sequence):
     assert result["status"] == "draft"
     assert [r["run_seconds"] for r in result["runs"]] == [557,552,557]
     assert [r["pump_active_seconds"] for r in result["rows"]] == [562,562,562]
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_confirmed_ha_run_format_is_never_sent_by_legacy_automation(irrigation, monkeypatch, tmp_path, grouped):
+    db, client, _ = irrigation
+    monkeypatch.setenv("GROWMASTER_DATA_ROOT", str(tmp_path))
+    client.put("/api/irrigation/automatic-irrigation", json={"enabled":True,"run_after_local_time":"00:00"})
+    action = {"action":"opensprinkler.run", "data":{
+        "entity_id":"switch.opensprinkler_s01_station_enabled", "run_seconds":10}}
+    monkeypatch.setattr(irrigation_routes, "daily_readiness", lambda *args: {
+        "rows": [] if grouped else [{"ready":True,"action":action}],
+        "valve_groups": [{"status":"draft","action":action}] if grouped else []})
+    def forbidden(*args, **kwargs):
+        pytest.fail("Review-only HA run draft must never reach transport or record execution")
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", forbidden)
+    monkeypatch.setattr(irrigation_routes, "_write_automatic_state", forbidden)
+    result = irrigation_routes.automatic_irrigation_tick(db)
+    assert result["status"] == "blocked" and result["started"] == 0
+    assert "opensprinkler.run" in result["reason"]

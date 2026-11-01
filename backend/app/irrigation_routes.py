@@ -237,6 +237,11 @@ def automatic_irrigation_tick(db: Session):
     runs = state.setdefault("runs", {})
     day_runs = runs.setdefault(day_key, {})
     readiness = daily_readiness(today, db)
+    # New HA run drafts are review-only until the local shared-pump executor is validated.
+    preview_actions = [row.get("action") for row in readiness["rows"]]
+    preview_actions += [group.get("action") for group in readiness.get("valve_groups", [])]
+    if any(action and action.get("action") == "opensprinkler.run" for action in preview_actions):
+        return {"status": "blocked", "reason": "Osnutki opensprinkler.run so samo za pregled; lokalno krmiljenje črpalke še ni potrjeno.", "started": 0}
     base_url, token = home_assistant_config()
     if not base_url or not token:
         return {"status": "blocked", "reason": "Home Assistant ni povezan.", "started": 0}
@@ -966,8 +971,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             elif smart_irrigation_seconds > profile.max_run_seconds:
                 reasons.append("Smart Irrigation trajanje presega omejitev postaje.")
             else:
-                smart_action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
-                                "data": {"run_seconds": math.ceil(smart_irrigation_seconds), "queue_option": "append"}}
+                smart_action = {"action": "opensprinkler.run", "data": {"entity_id": station, "run_seconds": math.ceil(smart_irrigation_seconds)}}
         elif profile and profile.mode == "soil_sensor" and report and report_status == "irrigate":
             station = profile.opensprinkler_station_entity
             if not station:
@@ -985,8 +989,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
                     if run_seconds > profile.max_run_seconds:
                         reasons.append("Izračunano trajanje presega omejitev ventila.")
                     else:
-                        smart_action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
-                                        "data": {"run_seconds": run_seconds, "queue_option": "append"}}
+                        smart_action = {"action": "opensprinkler.run", "data": {"entity_id": station, "run_seconds": run_seconds}}
         if reasons:
             smart_action = None
         smart_irrigation_litres = (
@@ -1072,8 +1075,7 @@ def daily_readiness(day: date, db: Session = Depends(get_db)):
             reasons.append("Skupni čas bi presegel varen odmerek vsaj za eno gredico.")
         action = None
         if not reasons and run_seconds > 0:
-            action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
-                      "data": {"run_seconds": run_seconds, "queue_option": "append"}}
+            action = {"action": "opensprinkler.run", "data": {"entity_id": station, "run_seconds": run_seconds}}
         bed_water_estimates = ([{"bed_id": member_id, "litres": round(flow_l_min * run_seconds / 60, 1)}
                                 for member_id, flow_l_min in group_flows] if action else [])
         estimated_litres = round(sum(item["litres"] for item in bed_water_estimates), 1) if action else None
@@ -1142,11 +1144,10 @@ def opensprinkler_preview(day: date, db: Session = Depends(get_db)):
             elif seconds > bp.max_run_seconds:
                 reasons.append("Trajanje presega največji čas postaje; preveri odmerek in pretok.")
             if not reasons:
-                action = {"action": "opensprinkler.run_station", "target": {"entity_id": station},
-                          "data": {"run_seconds": seconds, "queue_option": "append"}}
+                action = {"action": "opensprinkler.run", "data": {"entity_id": station, "run_seconds": seconds}}
                 item.update(status="draft", action=action, run_seconds=seconds, litres=current["litres"],
                             calculated_at=saved["calculated_at"], warnings=current["warnings"],
-                            yaml=f"action: opensprinkler.run_station\ntarget:\n  entity_id: {station}\ndata:\n  run_seconds: {seconds}\n  queue_option: append\n")
+                            yaml=f"action: opensprinkler.run\ndata:\n  entity_id: {station}\n  run_seconds: {seconds}\n")
         except (ValueError, KeyError, TypeError, HTTPException):
             reasons.append("Izračun ali profil ni več veljaven; ponovno preveri podatke in shrani dan.")
         rows.append(item)
