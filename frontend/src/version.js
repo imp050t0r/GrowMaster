@@ -1,7 +1,7 @@
 import "./backupCenter";
 import "./seedSupplierSearch";
 
-export const APP_VERSION = "1.25.12";
+export const APP_VERSION = "1.25.13";
 
 // Release 1.25.12 adds live daily Smart Irrigation review with an estimated water volume.
 

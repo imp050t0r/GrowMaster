@@ -22,7 +22,7 @@ from app.irrigation_routes import router as irrigation_router
 from app.fertilization_routes import router as fertilization_router
 
 
-APP_VERSION = "1.25.12"
+APP_VERSION = "1.25.13"
 main_module.APP_VERSION = APP_VERSION
 app = main_module.app
 app.version = APP_VERSION
