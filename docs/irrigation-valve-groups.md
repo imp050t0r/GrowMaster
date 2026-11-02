@@ -392,3 +392,16 @@ is inferred. Legacy automation refuses these review-only drafts before any
 transport or run-ledger write, including grouped drafts. Its older transport is
 not repurposed as a shared-pump executor. Existing settings are not enabled or
 changed, and the local sequence remains simulation-only.
+
+
+### Save a Home Assistant station before soil calibration
+
+In the selected bed profile, enter the complete station entity (for example
+`switch.opensprinkler_s01_station_enabled`) and click **SHRANI POVEZAVO VENTILA**.
+This separate button stores only the station assignment, without requiring soil
+or flow values and without calling Home Assistant. It does not register a physical
+controller output or enable watering. A missing complete bed profile still blocks
+calculation. Saving the full profile later includes the displayed station and
+replaces the preliminary mapping. Existing complete profiles retain all other
+parameters when only the station is saved. Migration 0021 adds preliminary mappings;
+backups include them and older backups without that table remain supported.

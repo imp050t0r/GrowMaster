@@ -87,6 +87,14 @@ class IrrigationCropProfile(Base):
     parameters: Mapped[str] = mapped_column(Text)
 
 
+class IrrigationStationMapping(Base):
+    """Station assignment saved before a complete irrigation profile exists."""
+    __tablename__ = "irrigation_station_mappings"
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="CASCADE"), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
+    station_entity: Mapped[str] = mapped_column(String(150))
+
+
 class IrrigationBedProfile(Base):
     __tablename__ = "irrigation_bed_profiles"
     __table_args__ = (UniqueConstraint("farm_id", "bed_id", name="uq_irrigation_bed"),)

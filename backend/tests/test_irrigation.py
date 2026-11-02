@@ -1317,3 +1317,37 @@ def test_confirmed_ha_run_format_is_never_sent_by_legacy_automation(irrigation, 
     result = irrigation_routes.automatic_irrigation_tick(db)
     assert result["status"] == "blocked" and result["started"] == 0
     assert "opensprinkler.run" in result["reason"]
+
+
+def test_station_mapping_without_soil_profile_is_not_calculable(irrigation):
+    db, client, _ = irrigation
+    row = db.scalar(select(irrigation_routes.IrrigationBedProfile))
+    db.delete(row); db.commit()
+    station = {"opensprinkler_station_entity": "switch.opensprinkler_s01_station_enabled"}
+    assert client.put("/api/irrigation/beds/1/station", json=station).status_code == 200
+    profiles = client.get("/api/irrigation/profiles").json()
+    assert profiles["beds"] == []
+    assert profiles["station_mappings"] == [{"bed_id": 1, **station}]
+    content, _ = create_backup_bytes(db)
+    parsed = parse_backup(content)
+    assert parsed.rows_by_table["irrigation_station_mappings"][0]["station_entity"] == station["opensprinkler_station_entity"]
+    restore_parsed_backup(db, parsed)
+    assert calc(client).json()["status"] == "missing_data"
+    assert client.put("/api/irrigation/beds/1", json=station).status_code == 422
+    assert client.put("/api/irrigation/beds/1", json={**BP, **station}).status_code == 200
+    profiles = client.get("/api/irrigation/profiles").json()
+    assert profiles["station_mappings"] == []
+    assert profiles["beds"][0]["opensprinkler_station_entity"] == station["opensprinkler_station_entity"]
+
+
+def test_station_mapping_preserves_profile_and_validates_scope(irrigation):
+    _, client, _ = irrigation
+    station = {"opensprinkler_station_entity": "switch.opensprinkler_s01_station_enabled"}
+    assert client.put("/api/irrigation/beds/2/station", json=station).status_code == 404
+    assert client.put("/api/irrigation/beds/999/station", json=station).status_code == 404
+    assert client.put("/api/irrigation/beds/1/station", json={"opensprinkler_station_entity": "bad"}).status_code == 422
+    assert client.put("/api/irrigation/beds/1/station", json=station).status_code == 200
+    profiles = client.get("/api/irrigation/profiles").json()
+    assert profiles["station_mappings"] == []
+    assert all(profiles["beds"][0][key] == value for key, value in BP.items())
+    assert profiles["beds"][0]["opensprinkler_station_entity"] == station["opensprinkler_station_entity"]

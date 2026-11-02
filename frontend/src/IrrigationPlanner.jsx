@@ -17,6 +17,8 @@ export function IrrigationPlanner({crops,beds}) {
   const [report,setReport]=useState(null),[saved,setSaved]=useState([]),[error,setError]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
   const [readiness,setReadiness]=useState(null);
   const [ledger,setLedger]=useState([]),[ledgerOpening,setLedgerOpening]=useState(""),[ledgerRain,setLedgerRain]=useState("0"),[ledgerApplied,setLedgerApplied]=useState("0"),[ledgerSource,setLedgerSource]=useState("Ročni pregled"),[ledgerBusy,setLedgerBusy]=useState(false);
+  const [stationMessage,setStationMessage]=useState("");
+  useEffect(()=>setStationMessage(""),[bedId,bp.opensprinkler_station_entity]);
   const generation=useRef(0);
   const [osPreview,setOsPreview]=useState(null),[osBusy,setOsBusy]=useState(false);
   const osGeneration=useRef(0);
@@ -35,7 +37,7 @@ export function IrrigationPlanner({crops,beds}) {
   useEffect(()=>{let closed=false;apiRequest("/api/irrigation/home-assistant/status").then(r=>{if(!closed){setHaStatus(r);setHaConfig(value=>({...value,url:r.url||""}));}}).catch(()=>{if(!closed)setHaStatus({configured:false,token_configured:false});});return()=>{closed=true;};},[]);
   useEffect(()=>{let closed=false;apiRequest("/api/irrigation/automatic-irrigation").then(r=>{if(!closed)setAutoConfig(r);}).catch(()=>{});return()=>{closed=true;};},[]);
   useEffect(()=>{setCp(profiles.crops.find(p=>String(p.crop_id)===cropId)||cropEmpty);},[cropId,profiles]);
-  useEffect(()=>{setBp({...bedEmpty,...profiles.beds.find(p=>String(p.bed_id)===bedId)});},[bedId,profiles]);
+  useEffect(()=>{setBp({...bedEmpty,...profiles.station_mappings?.find(p=>String(p.bed_id)===bedId),...profiles.beds.find(p=>String(p.bed_id)===bedId)});},[bedId,profiles]);
   useEffect(()=>{generation.current++;setReport(null);setMessage("");setBusy(false);},[cropId,bedId,cp,bp,day]);
   useEffect(()=>{let closed=false;setSaved([]);apiRequest(`/api/irrigation/daily?day=${day.day}`).then(r=>{if(!closed)setSaved(r.rows);}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;};},[day.day]);
   useEffect(()=>{
@@ -118,6 +120,14 @@ export function IrrigationPlanner({crops,beds}) {
       const p=await apiRequest("/api/irrigation/profiles");if(n===generation.current){setProfiles(p);setMessage("Profil je shranjen.");}
     } catch(e){if(n===generation.current)setError(e.message);}finally{if(n===generation.current)setBusy(false);}
   }
+  async function saveStationMapping() {
+    const n=++generation.current;setBusy(true);setError("");
+    try {
+      await apiRequest(`/api/irrigation/beds/${bedId}/station`,{method:"PUT",body:JSON.stringify({opensprinkler_station_entity:bp.opensprinkler_station_entity})});
+      const p=await apiRequest("/api/irrigation/profiles");
+      if(n===generation.current){setProfiles(p);setStationMessage("Povezava ventila je shranjena. Zalivanje ni bilo zagnano.");}
+    } catch(e){if(n===generation.current)setError(e.message);}finally{if(n===generation.current)setBusy(false);}
+  }
   async function saveSensorGroup(group) {
     setBusy(true);setError("");setMessage("");
     try {await apiRequest(`/api/irrigation/sensor-groups/${group.group_number}`,{method:"PUT",body:JSON.stringify({name:group.name,entity_id:group.entity_id||null})});const p=await apiRequest("/api/irrigation/profiles");setProfiles(p);setSensorGroups(Array.from({length:16},(_,i)=>p.sensor_groups.find(item=>item.group_number===i+1)||{group_number:i+1,name:`WH51 ${i+1}`,entity_id:""}));setMessage(`WH51 skupina ${group.group_number} je shranjena.`);}
@@ -198,6 +208,7 @@ export function IrrigationPlanner({crops,beds}) {
         <label>Vir profila tal in umerjanja<input required maxLength={500} value={bp.source} onChange={e=>setBp({...bp,source:e.target.value})}/></label>
         <label>Razporeditev ventila<select value={bp.valve_mode||"individual"} onChange={e=>setBp({...bp,valve_mode:e.target.value})}><option value="individual">Individualni ventil — samo ta gredica</option><option value="shared">Skupni ventil — deli ga več gredic</option></select></label>
         <label>Postaja OpenSprinkler v Home Assistantu<input placeholder="switch.greda_1_station_enabled" pattern="switch\.[a-z0-9_]+" maxLength={150} value={bp.opensprinkler_station_entity||""} onChange={e=>setBp({...bp,opensprinkler_station_entity:e.target.value})}/></label>
+        <div><button type="button" className="secondary-button" disabled={!bedId||!bp.opensprinkler_station_entity||busy} onClick={saveStationMapping}>SHRANI POVEZAVO VENTILA</button>{stationMessage&&<p role="status">{stationMessage}</p>}<p>Shrani samo postajo za izbrano gredico. Podatki o tleh in pretoku niso potrebni za to povezavo; brez popolnega profila zalivanje ni pripravljeno.</p></div>
         {bp.valve_mode==="shared"&&<p>Na vsaki gredici, ki jo napaja ta ventil, izberi »Skupni ventil« in vpiši isti OpenSprinkler entity ID. Osnutek bo pripravljen le, če vse povezane gredice isti dan potrebujejo vodo in skupni čas ne preseže varne meje nobene od njih.</p>}
         <label>Smart Irrigation cona v Home Assistantu<input placeholder="sensor.smart_irrigation_greda_1" pattern="sensor\.smart_irrigation_[a-z0-9_]+" maxLength={150} value={bp.smart_irrigation_entity||""} onChange={e=>setBp({...bp,smart_irrigation_entity:e.target.value})}/></label>
         <label>Ročno dodeljena WH51 skupina<select value={bp.wh51_group||""} onChange={e=>setBp({...bp,wh51_group:e.target.value?Number(e.target.value):null})}><option value="">Brez WH51</option>{sensorGroups.map(group=><option key={group.group_number} value={group.group_number}>{group.group_number}. {group.name}{group.entity_id?" · senzor nastavljen":" · brez senzorja"}</option>)}</select></label>

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, get_db
 from app.irrigation_sequence import DELAY_SECONDS, ValveRun, preview_sequence
 from app.ha_credentials import delete_config as delete_home_assistant_config, read_config as read_stored_home_assistant_config, write_config as write_home_assistant_config
-from app.models import Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, IrrigationValveBed, IrrigationValveZone, Planting, Variety
+from app.models import IrrigationStationMapping, Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, IrrigationValveBed, IrrigationValveZone, Planting, Variety
 
 router = APIRouter(prefix="/api/irrigation")
 logger = logging.getLogger(__name__)
@@ -47,6 +47,10 @@ class CropProfile(Input):
     root_depth_m: float = Field(gt=0, le=3)
     depletion_fraction: float = Field(gt=0, lt=1)
     source: str = Field(min_length=1, max_length=500)
+
+
+class StationMappingInput(Input):
+    opensprinkler_station_entity: str = Field(pattern=r"^switch\.[a-z0-9_]+$", max_length=150)
 
 
 class BedProfile(Input):
@@ -395,7 +399,9 @@ def profile_row(db, model, key, identifier):
 
 @router.get("/profiles")
 def profiles(db: Session = Depends(get_db)):
-    return {"crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
+    return {"station_mappings": [{"bed_id": r.bed_id, "opensprinkler_station_entity": r.station_entity}
+                                 for r in db.scalars(select(IrrigationStationMapping).where(IrrigationStationMapping.farm_id == FARM_ID))],
+            "crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
                       db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))],
             "beds": [{"bed_id": r.bed_id, **BedProfile.model_validate_json(r.parameters).model_dump()} for r in
                      db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID))],
@@ -433,9 +439,30 @@ def save_crop(crop_id: int, payload: CropProfile, db: Session = Depends(get_db))
     return save_profile(db, IrrigationCropProfile, "crop_id", crop_id, payload)
 
 
+@router.put("/beds/{bed_id}/station")
+def save_station_mapping(bed_id: int, payload: StationMappingInput, db: Session = Depends(get_db)):
+    entity(db, Bed, bed_id)
+    profile = profile_row(db, IrrigationBedProfile, "bed_id", bed_id)
+    if profile is not None:
+        parameters = json.loads(profile.parameters)
+        parameters["opensprinkler_station_entity"] = payload.opensprinkler_station_entity
+        profile.parameters = BedProfile.model_validate(parameters).model_dump_json()
+    else:
+        row = db.get(IrrigationStationMapping, bed_id)
+        if row is None:
+            row = IrrigationStationMapping(bed_id=bed_id, farm_id=FARM_ID)
+            db.add(row)
+        row.station_entity = payload.opensprinkler_station_entity
+    db.commit()
+    return {"bed_id": bed_id, **payload.model_dump()}
+
+
 @router.put("/beds/{bed_id}")
 def save_bed(bed_id: int, payload: BedProfile, db: Session = Depends(get_db)):
     entity(db, Bed, bed_id)
+    mapping = db.get(IrrigationStationMapping, bed_id)
+    if mapping is not None:
+        db.delete(mapping)
     return save_profile(db, IrrigationBedProfile, "bed_id", bed_id, payload)
 
 
