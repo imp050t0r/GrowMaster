@@ -8,8 +8,6 @@ from typing import Iterable, Literal
 
 
 DELAY_SECONDS = 5
-PUMP_CONTROLLER = "opensprinkler-1"
-PUMP_STATION = 0
 
 
 @dataclass(frozen=True)
@@ -49,8 +47,6 @@ def preview_sequence(runs: Iterable[ValveRun]) -> tuple[SequenceEvent, ...]:
         if type(run.run_seconds) is not int or not 1 <= run.run_seconds <= 86400:
             raise ValueError("Run duration must be an integer from 1 to 86400 seconds.")
         valve = (run.controller_id, run.station_number)
-        if valve == (PUMP_CONTROLLER, PUMP_STATION):
-            raise ValueError("OpenSprinkler 1 S01 je rezerviran za črpalko.")
         if run.bed_id in beds or valve in valves:
             raise ValueError("Each bed and physical valve may occur only once per plan.")
         beds.add(run.bed_id)

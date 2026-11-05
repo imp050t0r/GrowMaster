@@ -407,18 +407,23 @@ parameters when only the station is saved. Migration 0021 adds preliminary mappi
 backups include them and older backups without that table remain supported.
 
 
-### Pump reservation: OpenSprinkler 1 / S01
+### Shared pump through a separate local relay
 
-The agreed installation reserves zero-based output 0 (S01) on
-`opensprinkler-1` for the pump/VFD control. Registration rejects bed assignments
-to that output. Capacity reports keep 144 physical outputs, expose one reserved
-output and 143 bed outputs, and exclude the reservation from free outputs.
-OpenSprinkler 2 S01 remains available. A1 uses OpenSprinkler 1 S02 (index 1)
-and `switch.opensprinkler_s02_station_enabled` in its separate HA mapping.
+The selected architecture uses an independent local relay to command the VFD's
+run/stop input. Neither OpenSprinkler reserves a station for the pump: S01 (index
+0) is available on both controllers, with 144 possible bed outputs in total.
+Existing bed assignments are not moved; A1 may remain on OpenSprinkler 1 S02
+(index 1), with HA entity `switch.opensprinkler_s02_station_enabled`.
 
-Existing conflicting physical assignments are retained, flagged in inventory,
-and rejected by sequence previews (including fault simulation). No automatic
-rewiring or reassignment occurs. This reservation does not configure OpenSprinkler
-master settings, verify HA entity correspondence, or activate hardware. Pump
-on/off events remain abstract simulation events with the existing five-second
-ordering; hardware control still requires a separately validated executor.
+GrowMaster remains the irrigation decision maker. The local sequencer must open
+the first valve, wait five seconds, then command the pump. Transitions retain
+make-before-break overlap; shutdown commands the pump off before final valve
+closure. The relay is a control interface, not the sequencer itself. Loss-of-link
+shutdown requires a validated local executor/watchdog; a generic network relay
+alone does not provide this guarantee.
+
+Current pump events remain abstract and simulation-only. This change restores
+station availability; it does not implement a relay transport, configure Home
+Assistant or OpenSprinkler master settings, or activate hardware. The VFD model,
+run-input requirements and compatible relay must be confirmed before implementing
+the hardware adapter. The relay must not be assumed suitable for motor power.

@@ -2014,8 +2014,6 @@ def create_irrigation_valve_group(
         raise HTTPException(status_code=422, detail="Dovoljena krmilnika: opensprinkler-1 in opensprinkler-2.")
     if station_number >= 72:
         raise HTTPException(status_code=422, detail="OpenSprinkler podpira največ 72 izhodov (0–71) na krmilnik.")
-    if controller_id == "opensprinkler-1" and station_number == 0:
-        raise HTTPException(status_code=422, detail="OpenSprinkler 1 S01 je rezerviran za črpalko. Za prvo gredico izberi S02 (izhod 1).")
     beds = list(db.scalars(select(Bed).where(
         Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID
     )).all())
@@ -2071,18 +2069,14 @@ def irrigation_controller_capacity(db: Session = Depends(get_db)) -> dict:
     result = []
     for controller_id in ("opensprinkler-1", "opensprinkler-2"):
         used = {zone.station_number for zone in zones if zone.controller_id == controller_id}
-        reserved = {0} if controller_id == "opensprinkler-1" else set()
         result.append({
             "controller_id": controller_id,
-            "reserved_stations": sorted(reserved),
-            "bed_capacity": 72 - len(reserved),
-            "conflicting_stations": sorted(used & reserved),
             "capacity": 72,
             "assigned": len(used),
-            "free": 72 - len(used | reserved),
-            "next_free_station": next((n for n in range(72) if n not in used | reserved), None),
+            "free": 72 - len(used),
+            "next_free_station": next((n for n in range(72) if n not in used), None),
         })
-    return {"controllers": result, "total_capacity": 144, "bed_capacity": 143, "reserved": 1,
+    return {"controllers": result, "total_capacity": 144,
             "assigned": sum(item["assigned"] for item in result),
             "free": sum(item["free"] for item in result)}
 
