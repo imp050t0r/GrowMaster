@@ -14,7 +14,7 @@ export function IrrigationValveGroups({crops,beds=[]}) {
   const [cycleCount,setCycleCount]=useState(1),[cycleInterval,setCycleInterval]=useState(21);
   const [expectedYield,setExpectedYield]=useState("1");
   const [newName,setNewName]=useState(""),[controllerId,setControllerId]=useState("opensprinkler-1");
-  const [stationNumber,setStationNumber]=useState("0"),[selectedBeds,setSelectedBeds]=useState([]);
+  const [stationNumber,setStationNumber]=useState("1"),[selectedBeds,setSelectedBeds]=useState([]);
   const [configBusy,setConfigBusy]=useState(false);
   const [busy,setBusy]=useState(false),[message,setMessage]=useState(""),[error,setError]=useState("");
   const refresh=async()=>{
@@ -91,15 +91,16 @@ export function IrrigationValveGroups({crops,beds=[]}) {
   };
   return <section className="panel">
     <h3>Namakalni ventili – 2 × OpenSprinkler</h3>
-    {capacity&&<p>Zasedeni izhodi: {capacity.assigned} / {capacity.total_capacity}. Prosti: {capacity.free}. {capacity.controllers.map(c=>`${c.controller_id}: ${c.assigned}/72`).join(" · ")}</p>}
+    {capacity&&<p>Zasedeni izhodi: {capacity.assigned} / {capacity.total_capacity}. Rezerviran za črpalko: {capacity.reserved||0}. Prosti za gredice: {capacity.free}. {capacity.controllers.map(c=>`${c.controller_id}: ${c.assigned}/72`).join(" · ")}</p>}
+    {capacity?.controllers.some(c=>c.conflicting_stations?.length>0)&&<p role="alert">Obstoječa gredica uporablja S01 na OpenSprinklerju 1, ki je rezerviran za črpalko. Predogled je za to preslikavo blokiran; najprej je treba popraviti fizično razporeditev.</p>}
     <p>Vse gredice istega ventila dobijo isto kulturo, sorto in datum setve. Pred shranjevanjem se preveri kolobar vsake gredice.</p>
     <details>
       <summary>Trajna konfiguracija fizičnih ventilov</summary>
-      <p>Priporočilo: en ventil za vsako gredico. Dva neodvisna krmilnika omogočata do 144 izhodov skupaj.</p>
+      <p>Priporočilo: en ventil za vsako gredico. S01 (izhod 0) na OpenSprinklerju 1 je rezerviran za črpalko. Za gredice ostane 143 izhodov; A1 na S02 uporablja izhod 1.</p>
       <form onSubmit={register}>
         <label>Ime ventila <input value={newName} onChange={e=>setNewName(e.target.value)} required maxLength={100}/></label>
         <label>Krmilnik <select value={controllerId} onChange={e=>setControllerId(e.target.value)}><option value="opensprinkler-1">OpenSprinkler 1</option><option value="opensprinkler-2">OpenSprinkler 2</option></select></label>
-        <label>Številka izhoda (0–71) <input type="number" min="0" max="71" value={stationNumber} onChange={e=>setStationNumber(e.target.value)} required/></label>
+        <label>Številka izhoda (0–71) <input type="number" min={controllerId==="opensprinkler-1"?1:0} max="71" value={stationNumber} onChange={e=>setStationNumber(e.target.value)} required/></label>
         <fieldset><legend>Gredice na ventilu (priporočena ena)</legend>
           {beds.filter(b=>!assigned.has(b.id)).map(b=><label key={b.id}>
             <input type="checkbox" checked={selectedBeds.includes(b.id)}

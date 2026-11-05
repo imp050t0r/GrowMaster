@@ -1054,7 +1054,7 @@ def sequence_mapping(irrigation, monkeypatch):
     db, client, _ = irrigation
     db.add(Bed(id=3, farm_id=1, name="A2", width_m=1, length_m=10, status="empty"))
     db.add_all([
-        IrrigationValveZone(id=1, farm_id=1, name="A1", controller_id="opensprinkler-1", station_number=0, enabled=False),
+        IrrigationValveZone(id=1, farm_id=1, name="A1", controller_id="opensprinkler-1", station_number=1, enabled=False),
         IrrigationValveZone(id=2, farm_id=1, name="A2", controller_id="opensprinkler-2", station_number=71, enabled=False),
     ])
     db.flush()
@@ -1084,8 +1084,8 @@ def test_sequence_api_resolves_disabled_valves_preserves_order_and_has_no_side_e
     assert all(r["valve_enabled"] is False for r in result["runs"])
     assert [(e["at_seconds"], e["action"], e["controller_id"], e["station_number"]) for e in result["events"]] == [
         (0, "valve_open", "opensprinkler-2", 71), (5, "pump_on", None, None),
-        (15, "valve_open", "opensprinkler-1", 0), (20, "valve_close", "opensprinkler-2", 71),
-        (40, "pump_off", None, None), (45, "valve_close", "opensprinkler-1", 0),
+        (15, "valve_open", "opensprinkler-1", 1), (20, "valve_close", "opensprinkler-2", 71),
+        (40, "pump_off", None, None), (45, "valve_close", "opensprinkler-1", 1),
     ]
     assert list(db.scalars(select(IrrigationValveZone.enabled))) == [False, False]
     assert list(db.scalars(select(IrrigationDailyReport))) == []
@@ -1351,3 +1351,34 @@ def test_station_mapping_preserves_profile_and_validates_scope(irrigation):
     assert profiles["station_mappings"] == []
     assert all(profiles["beds"][0][key] == value for key, value in BP.items())
     assert profiles["beds"][0]["opensprinkler_station_entity"] == station["opensprinkler_station_entity"]
+
+
+def test_pump_station_reserved_for_registration_and_capacity(irrigation):
+    from fastapi import HTTPException
+    from app.main import create_irrigation_valve_group, irrigation_controller_capacity
+    db, _, _ = irrigation
+    payload = {"name": "A1", "controller_id": "opensprinkler-1", "station_number": 0, "bed_ids": [1]}
+    with pytest.raises(HTTPException) as exc:
+        create_irrigation_valve_group(payload, db)
+    assert exc.value.status_code == 422
+    capacity = irrigation_controller_capacity(db)
+    assert capacity["free"] == capacity["bed_capacity"] == 143
+    assert capacity["controllers"][0]["next_free_station"] == 1
+    assert capacity["controllers"][1]["next_free_station"] == 0
+    result = create_irrigation_valve_group({**payload, "station_number": 1}, db)
+    assert result["enabled"] is False
+    assert irrigation_controller_capacity(db)["free"] == 142
+
+
+def test_legacy_pump_station_assignment_blocks_preview(sequence_mapping):
+    from app.models import IrrigationValveZone
+    db, client = sequence_mapping
+    zone = db.get(IrrigationValveZone, 1)
+    zone.station_number = 0
+    db.commit()
+    response = sequence_request(client, [{"bed_id": 1, "run_seconds": 60}])
+    assert response.status_code == 409
+    from app.main import irrigation_controller_capacity
+    capacity = irrigation_controller_capacity(db)
+    assert capacity["controllers"][0]["conflicting_stations"] == [0]
+    assert capacity["free"] == 142

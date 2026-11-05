@@ -405,3 +405,20 @@ calculation. Saving the full profile later includes the displayed station and
 replaces the preliminary mapping. Existing complete profiles retain all other
 parameters when only the station is saved. Migration 0021 adds preliminary mappings;
 backups include them and older backups without that table remain supported.
+
+
+### Pump reservation: OpenSprinkler 1 / S01
+
+The agreed installation reserves zero-based output 0 (S01) on
+`opensprinkler-1` for the pump/VFD control. Registration rejects bed assignments
+to that output. Capacity reports keep 144 physical outputs, expose one reserved
+output and 143 bed outputs, and exclude the reservation from free outputs.
+OpenSprinkler 2 S01 remains available. A1 uses OpenSprinkler 1 S02 (index 1)
+and `switch.opensprinkler_s02_station_enabled` in its separate HA mapping.
+
+Existing conflicting physical assignments are retained, flagged in inventory,
+and rejected by sequence previews (including fault simulation). No automatic
+rewiring or reassignment occurs. This reservation does not configure OpenSprinkler
+master settings, verify HA entity correspondence, or activate hardware. Pump
+on/off events remain abstract simulation events with the existing five-second
+ordering; hardware control still requires a separately validated executor.

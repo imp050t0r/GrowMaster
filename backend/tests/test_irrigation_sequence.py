@@ -8,11 +8,11 @@ def test_empty_plan_never_starts_pump():
 
 
 def test_single_valve_waits_before_start_and_after_stop():
-    assert preview_sequence([ValveRun(1, "opensprinkler-1", 0, 60)]) == (
-        SequenceEvent(0, "valve_open", "opensprinkler-1", 0),
+    assert preview_sequence([ValveRun(1, "opensprinkler-1", 1, 60)]) == (
+        SequenceEvent(0, "valve_open", "opensprinkler-1", 1),
         SequenceEvent(5, "pump_on"),
         SequenceEvent(65, "pump_off"),
-        SequenceEvent(70, "valve_close", "opensprinkler-1", 0),
+        SequenceEvent(70, "valve_close", "opensprinkler-1", 1),
     )
 
 
@@ -43,22 +43,22 @@ def test_invalid_input_rejected_even_after_valid_run(field, value):
     values = dict(bed_id=2, controller_id="opensprinkler-2", station_number=1, run_seconds=60)
     values[field] = value
     with pytest.raises(ValueError):
-        preview_sequence([ValveRun(1, "opensprinkler-1", 0, 60), ValveRun(**values)])
+        preview_sequence([ValveRun(1, "opensprinkler-1", 1, 60), ValveRun(**values)])
 
 
 @pytest.mark.parametrize("second", [
     ValveRun(1, "opensprinkler-2", 0, 60),
-    ValveRun(2, "opensprinkler-1", 0, 60),
+    ValveRun(2, "opensprinkler-1", 1, 60),
 ])
 def test_duplicate_bed_or_valve_rejected(second):
     with pytest.raises(ValueError):
-        preview_sequence([ValveRun(1, "opensprinkler-1", 0, 60), second])
+        preview_sequence([ValveRun(1, "opensprinkler-1", 1, 60), second])
 
 
 def test_full_capacity_never_runs_pump_without_open_valve_and_finishes_off():
     runs = [ValveRun(controller * 72 + station + 1, f"opensprinkler-{controller + 1}",
                      station, 1 if station % 2 else 86400)
-            for controller in range(2) for station in range(72)]
+            for controller in range(2) for station in range(72) if (controller, station) != (0, 0)]
     events = preview_sequence(iter(runs))
     opened = set()
     pump_on = False
@@ -86,14 +86,14 @@ def test_full_capacity_never_runs_pump_without_open_valve_and_finishes_off():
     assert events[-1].at_seconds == sum(r.run_seconds for r in runs) + 5 * (len(runs) + 1)
 
 
-FAULT_RUNS = [ValveRun(1, "opensprinkler-1", 0, 10), ValveRun(2, "opensprinkler-2", 71, 20)]
+FAULT_RUNS = [ValveRun(1, "opensprinkler-1", 1, 10), ValveRun(2, "opensprinkler-2", 71, 20)]
 
 
 def test_unconfirmed_first_valve_never_starts_pump_or_assumes_closed():
     result = simulate_sequence_fault(FAULT_RUNS, fault_kind="valve_open_unconfirmed", fault_at_seconds=0)
     assert result.events == (SequenceEvent(0, "pump_off"),)
-    assert result.uncertain_event == SequenceEvent(0, "valve_open", "opensprinkler-1", 0)
-    assert result.unresolved_valves == (("opensprinkler-1", 0),)
+    assert result.uncertain_event == SequenceEvent(0, "valve_open", "opensprinkler-1", 1)
+    assert result.unresolved_valves == (("opensprinkler-1", 1),)
     assert result.status == "pump_stop_unconfirmed"
     assert result.pump_stop_confirmed_at_seconds is None
     assert result.simulation_only and result.manual_reset_required
@@ -101,9 +101,9 @@ def test_unconfirmed_first_valve_never_starts_pump_or_assumes_closed():
 
 def test_unconfirmed_transition_preserves_old_and_possibly_open_new_valve():
     result = simulate_sequence_fault(FAULT_RUNS, fault_kind="valve_open_unconfirmed", fault_at_seconds=15)
-    assert result.events == (SequenceEvent(0, "valve_open", "opensprinkler-1", 0),
+    assert result.events == (SequenceEvent(0, "valve_open", "opensprinkler-1", 1),
                              SequenceEvent(5, "pump_on"), SequenceEvent(15, "pump_off"))
-    assert result.unresolved_valves == (("opensprinkler-1", 0), ("opensprinkler-2", 71))
+    assert result.unresolved_valves == (("opensprinkler-1", 1), ("opensprinkler-2", 71))
     assert result.status == "pump_stop_unconfirmed"
 
 
@@ -111,7 +111,7 @@ def test_shutdown_waits_from_stop_confirmation_not_request():
     result = simulate_sequence_fault(FAULT_RUNS, fault_kind="valve_open_unconfirmed", fault_at_seconds=15,
         pump_stop_confirmed_after_seconds=7, valve_link_available=True, valve_close_confirmed=True)
     assert result.pump_stop_confirmed_at_seconds == 22
-    assert result.events[-2:] == (SequenceEvent(27, "valve_close", "opensprinkler-1", 0),
+    assert result.events[-2:] == (SequenceEvent(27, "valve_close", "opensprinkler-1", 1),
                                   SequenceEvent(27, "valve_close", "opensprinkler-2", 71))
     assert result.status == "stopped" and result.unresolved_valves == ()
     assert result.manual_reset_required  # Even a successful abort never resumes watering.
@@ -134,7 +134,7 @@ def test_lost_valve_connection_does_not_block_local_stop_or_claim_valves_closed(
                                      pump_stop_confirmed_after_seconds=2)
     assert result.pump_stop_confirmed_at_seconds == 19
     assert result.status == "valves_unconfirmed"
-    assert result.unresolved_valves == (("opensprinkler-1", 0), ("opensprinkler-2", 71))
+    assert result.unresolved_valves == (("opensprinkler-1", 1), ("opensprinkler-2", 71))
     assert not any(e.action == "valve_close" for e in result.events)
 
 
@@ -237,7 +237,7 @@ def test_timeout_cleanup_delays_are_relative_to_expiry_and_stop_confirmation():
     assert result.fault_at_seconds == 25
     assert result.pump_stop_confirmed_at_seconds == 32
     assert result.events[-3:] == (SequenceEvent(25, "pump_off"),
-        SequenceEvent(37, "valve_close", "opensprinkler-1", 0),
+        SequenceEvent(37, "valve_close", "opensprinkler-1", 1),
         SequenceEvent(37, "valve_close", "opensprinkler-2", 71))
     assert result.status == "stopped" and not result.unresolved_valves
     assert result.manual_reset_required
@@ -264,3 +264,9 @@ def test_connection_loss_cannot_be_delayed_by_open_timeout():
     with pytest.raises(ValueError, match="only to an unconfirmed opening"):
         simulate_sequence_fault(FAULT_RUNS, fault_kind="connection_lost",
             fault_at_seconds=15, valve_open_timeout_seconds=5)
+
+
+def test_pump_output_cannot_be_used_as_bed_valve():
+    with pytest.raises(ValueError, match="rezerviran"):
+        preview_sequence([ValveRun(1, "opensprinkler-1", 0, 60)])
+    assert preview_sequence([ValveRun(1, "opensprinkler-2", 0, 60)])
