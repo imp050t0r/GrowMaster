@@ -69,6 +69,7 @@ from app.planting_advisor import (
 from app.planting_calendar import default_calendar_for_crop
 from app.models import (
     Bed,
+    IrrigationValveBed,
     Cost,
     Crop,
     CropPlan,
@@ -1761,9 +1762,445 @@ def apply_task_review(payload: TaskReviewApply, db: Session = Depends(get_db)) -
     }
 
 
+def require_group_planting_workflow(db: Session, bed_id: int) -> None:
+    """Fail closed until an atomic whole-zone planting workflow is implemented.
+
+    Existing single-bed endpoints must never create a partial planting on a
+    shared valve. Unmapped beds and single-bed valves retain legacy behavior.
+    """
+    mapping = db.scalar(select(IrrigationValveBed).where(IrrigationValveBed.bed_id == bed_id))
+    if mapping is None:
+        return
+    member_count = db.scalar(
+        select(func.count(IrrigationValveBed.id))
+        .where(IrrigationValveBed.zone_id == mapping.zone_id)
+    )
+    if member_count and member_count > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Gredica pripada skupnemu ventilu. Zasaditev celotne skupine "
+                   "mora biti potrjena skupaj; posamično urejanje ni dovoljeno.",
+        )
+
+
+@app.post("/api/irrigation/valves/{zone_id}/plans", status_code=status.HTTP_201_CREATED)
+def plan_irrigation_valve_group(
+    zone_id: int,
+    payload: CropPlanCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create identical succession plans for every bed on one physical valve."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(select(IrrigationValveZone).where(
+        IrrigationValveZone.id == zone_id,
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+    ).with_for_update())
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    ).order_by(IrrigationValveBed.bed_id)).all())
+    bed_ids = [member.bed_id for member in members]
+    if not bed_ids or payload.bed_id not in bed_ids:
+        raise HTTPException(status_code=422, detail="Izbrana gredica ni del namakalne skupine.")
+    beds = list(db.scalars(select(Bed).where(
+        Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID
+    )).all())
+    crop = db.get(Crop, payload.crop_id)
+    variety = db.get(Variety, payload.variety_id)
+    if len(beds) != len(bed_ids) or crop is None or variety is None or variety.crop_id != crop.id:
+        raise HTTPException(status_code=422, detail="Neveljavna gredica, kultura ali sorta.")
+    if payload.transplant_date and payload.transplant_date < payload.sowing_date:
+        raise HTTPException(status_code=422, detail="Presajanje ne sme biti pred setvijo.")
+    first_start = payload.transplant_date or payload.sowing_date
+    if payload.expected_harvest_date and payload.expected_harvest_date < first_start:
+        raise HTTPException(status_code=422, detail="Žetev ne sme biti pred začetkom rasti.")
+    existing = list(db.scalars(select(CropPlan).where(
+        CropPlan.bed_id.in_(bed_ids), CropPlan.farm_id == DEFAULT_FARM_ID,
+        CropPlan.status == "planned"
+    )).all())
+    active = list(db.scalars(select(Planting).where(
+        Planting.bed_id.in_(bed_ids), Planting.farm_id == DEFAULT_FARM_ID,
+        Planting.status == "active"
+    )).all())
+    if active:
+        raise HTTPException(status_code=409, detail="Skupina ima aktivno zasaditev; najprej jo zaključite.")
+    schedule = []
+    for index in range(payload.succession_count):
+        offset = timedelta(days=index * payload.succession_interval_days)
+        sow = payload.sowing_date + offset
+        transplant = payload.transplant_date + offset if payload.transplant_date else None
+        start = transplant or sow
+        harvest = (payload.expected_harvest_date + offset if payload.expected_harvest_date
+                   else start + timedelta(days=maturity_days_for_date(variety, start)))
+        for other in existing:
+            other_start = other.transplant_date or other.sowing_date
+            if other_start <= harvest and other.expected_harvest_date >= start:
+                raise HTTPException(status_code=409, detail="Načrt se prekriva z obstoječim načrtom skupine.")
+        if any(prior_start <= harvest and prior_end >= start for prior_start, prior_end, _, _ in schedule):
+            raise HTTPException(status_code=409, detail="Zaporedne setve iste skupine se časovno prekrivajo.")
+        schedule.append((start, harvest, sow, transplant))
+    series_id = str(uuid4())
+    created = []
+    for bed in beds:
+        for start, harvest, sow, transplant in schedule:
+            plan = CropPlan(
+                farm_id=DEFAULT_FARM_ID, bed_id=bed.id,
+                crop_id=crop.id, variety_id=variety.id,
+                series_id=series_id, sowing_date=sow,
+                transplant_date=transplant, expected_harvest_date=harvest,
+                expected_yield_kg=payload.expected_yield_kg,
+                status="planned",
+                notes=payload.notes.strip() if payload.notes else None,
+            )
+            store_prediction(plan, variety)
+            db.add(plan)
+            created.append(plan)
+    db.flush()
+    result = {"zone_id": zone_id, "series_id": series_id,
+              "bed_ids": sorted(bed_ids), "plan_ids": [plan.id for plan in created],
+              "cycles": len(schedule)}
+    db.commit()
+    return result
+
+
+@app.post("/api/irrigation/valves/{zone_id}/finish")
+def finish_irrigation_valve_group(
+    zone_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Finish the entire valve planting group atomically, never one bed alone."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(
+        select(IrrigationValveZone)
+        .where(IrrigationValveZone.id == zone_id,
+               IrrigationValveZone.farm_id == DEFAULT_FARM_ID)
+        .with_for_update()
+    )
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    )).all())
+    if not members:
+        raise HTTPException(status_code=409, detail="Ventil nima povezanih gredic.")
+    bed_ids = [m.bed_id for m in members]
+    beds = {b.id: b for b in db.scalars(
+        select(Bed).where(Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID)
+    ).all()}
+    plantings = list(db.scalars(
+        select(Planting).where(
+            Planting.bed_id.in_(bed_ids), Planting.farm_id == DEFAULT_FARM_ID,
+            Planting.status == "active"
+        ).options(selectinload(Planting.crop))
+    ).all())
+    if len(beds) != len(bed_ids) or len(plantings) != len(bed_ids):
+        raise HTTPException(
+            status_code=409,
+            detail="Vse gredice skupine morajo imeti aktivno zasaditev.",
+        )
+    signatures = {(p.crop_id, p.variety_id, p.sowing_date) for p in plantings}
+    if len(signatures) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Aktivne zasaditve skupine niso usklajene.",
+        )
+    finished_on = date.today()
+    for planting in plantings:
+        planting.status = "completed"
+        planting.completed_on = finished_on
+        beds[planting.bed_id].status = "empty"
+        beds[planting.bed_id].last_crop_family = planting.crop.family
+    db.commit()
+    return {
+        "zone_id": zone_id, "completed_on": finished_on.isoformat(),
+        "finished_planting_ids": sorted(p.id for p in plantings),
+        "bed_ids": sorted(bed_ids),
+    }
+
+
+@app.get("/api/irrigation/valves/{zone_id}/suggestions")
+def irrigation_valve_planting_suggestions(
+    zone_id: int,
+    sowing_date: date = Query(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Only offer crop/variety combinations suitable for every member bed."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(select(IrrigationValveZone).where(
+        IrrigationValveZone.id == zone_id,
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+    ))
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    )).all())
+    if not members:
+        return {"zone_id": zone_id, "sowing_date": sowing_date, "suggestions": []}
+    beds = list(db.scalars(select(Bed).where(
+        Bed.farm_id == DEFAULT_FARM_ID,
+        Bed.id.in_([m.bed_id for m in members]),
+    )).all())
+    if len(beds) != len(members):
+        raise HTTPException(status_code=409, detail="Namakalna skupina vsebuje neveljavno gredico.")
+    crops = list(db.scalars(select(Crop).options(selectinload(Crop.varieties))).all())
+    suggestions = []
+    for crop in crops:
+        for variety in crop.varieties:
+            warnings = []
+            eligible = True
+            for bed in beds:
+                candidate = PlantingCreate(
+                    crop_id=crop.id, variety_id=variety.id,
+                    bed_id=bed.id, sowing_date=sowing_date,
+                )
+                preview = rotation_preview(candidate, db)
+                if not preview.allowed:
+                    eligible = False
+                    break
+                if preview.requires_override:
+                    # Strict recommendation policy: no override-requiring crops.
+                    eligible = False
+                    break
+                warnings.extend(preview.warnings)
+            if eligible:
+                seasonal_score, seasonal_reason, seasonal_warning = seasonal_assessment(
+                    crop.name, crop.category, sowing_date
+                )
+                if seasonal_warning:
+                    continue
+                maturity_days = maturity_days_for_date(variety, sowing_date)
+                suggestions.append({
+                    "crop_id": crop.id, "crop_name": crop.name,
+                    "variety_id": variety.id, "variety_name": variety.name,
+                    "expected_harvest_date": (sowing_date + timedelta(days=maturity_days)).isoformat(),
+                    "maturity_days": maturity_days,
+                    "score": 70 + seasonal_score,
+                    "seasonal_reason": seasonal_reason,
+                    "warnings": sorted(set(warnings)),
+                })
+    suggestions.sort(key=lambda item: (-item["score"], item["maturity_days"], item["crop_name"], item["variety_name"]))
+    return {
+        "zone_id": zone_id, "sowing_date": sowing_date,
+        "bed_ids": [bed.id for bed in beds],
+        "suggestions": suggestions,
+    }
+
+
+@app.post("/api/irrigation/valves", status_code=status.HTTP_201_CREATED)
+def create_irrigation_valve_group(
+    payload: dict,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Register a physical valve with explicit, permanent member beds."""
+    from app.models import IrrigationValveZone
+    controller_id = str(payload.get("controller_id") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    station_number = payload.get("station_number")
+    bed_ids = payload.get("bed_ids")
+    if not controller_id or len(controller_id) > 80 or not name or len(name) > 100:
+        raise HTTPException(status_code=422, detail="Ime ventila in krmilnik sta obvezna.")
+    if type(station_number) is not int or not 0 <= station_number <= 255:
+        raise HTTPException(status_code=422, detail="Številka postaje mora biti med 0 in 255.")
+    if not isinstance(bed_ids, list) or not bed_ids or any(type(x) is not int for x in bed_ids):
+        raise HTTPException(status_code=422, detail="Izberite najmanj eno veljavno gredico.")
+    if len(bed_ids) != len(set(bed_ids)):
+        raise HTTPException(status_code=422, detail="Gredice se ne smejo ponavljati.")
+    # Two independent OpenSprinkler controllers, each with up to 72 stations.
+    # This endpoint only registers mappings; it never switches outputs.
+    allowed_controllers = {"opensprinkler-1", "opensprinkler-2"}
+    if controller_id not in allowed_controllers:
+        raise HTTPException(status_code=422, detail="Dovoljena krmilnika: opensprinkler-1 in opensprinkler-2.")
+    if station_number >= 72:
+        raise HTTPException(status_code=422, detail="OpenSprinkler podpira največ 72 izhodov (0–71) na krmilnik.")
+    beds = list(db.scalars(select(Bed).where(
+        Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID
+    )).all())
+    if len(beds) != len(bed_ids):
+        raise HTTPException(status_code=422, detail="Nekatere gredice ne obstajajo.")
+    assigned = db.scalar(select(IrrigationValveBed.bed_id).where(
+        IrrigationValveBed.bed_id.in_(bed_ids)
+    ).limit(1))
+    if assigned is not None:
+        raise HTTPException(status_code=409, detail="Gredica je že trajno povezana z ventilom.")
+    existing = db.scalar(select(IrrigationValveZone.id).where(
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+        IrrigationValveZone.controller_id == controller_id,
+        IrrigationValveZone.station_number == station_number,
+    ).limit(1))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Ta ventil je že registriran.")
+    # Do not group beds with incompatible active plantings.
+    active = list(db.scalars(select(Planting).where(
+        Planting.bed_id.in_(bed_ids), Planting.status == "active"
+    )).all())
+    if active:
+        signatures = {(p.crop_id, p.variety_id, p.sowing_date) for p in active}
+        if len(active) != len(bed_ids) or len(signatures) != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Gredic z različnimi ali nepopolnimi aktivnimi zasaditvami ni dovoljeno združiti.",
+            )
+    zone = IrrigationValveZone(
+        farm_id=DEFAULT_FARM_ID, controller_id=controller_id,
+        station_number=station_number, name=name, enabled=False,
+    )
+    try:
+        db.add(zone)
+        db.flush()
+        for bed_id in bed_ids:
+            db.add(IrrigationValveBed(zone_id=zone.id, bed_id=bed_id))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ventil ali gredica je že dodeljena.")
+    return {"id": zone.id, "name": name, "controller_id": controller_id,
+            "station_number": station_number, "bed_ids": bed_ids, "enabled": False}
+
+
+@app.get("/api/irrigation/controllers/capacity")
+def irrigation_controller_capacity(db: Session = Depends(get_db)) -> dict:
+    """Inventory two OpenSprinkler station spaces without commanding hardware."""
+    from app.models import IrrigationValveZone
+    zones = list(db.scalars(select(IrrigationValveZone).where(
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID
+    )).all())
+    result = []
+    for controller_id in ("opensprinkler-1", "opensprinkler-2"):
+        used = {zone.station_number for zone in zones if zone.controller_id == controller_id}
+        result.append({
+            "controller_id": controller_id,
+            "capacity": 72,
+            "assigned": len(used),
+            "free": 72 - len(used),
+            "next_free_station": next((n for n in range(72) if n not in used), None),
+        })
+    return {"controllers": result, "total_capacity": 144,
+            "assigned": sum(item["assigned"] for item in result),
+            "free": sum(item["free"] for item in result)}
+
+
+@app.get("/api/irrigation/valves")
+def list_irrigation_valve_groups(db: Session = Depends(get_db)) -> list[dict]:
+    """Read-only permanent mapping for planting UI; no hardware operations."""
+    from app.models import IrrigationValveZone
+    zones = list(db.scalars(
+        select(IrrigationValveZone)
+        .where(IrrigationValveZone.farm_id == DEFAULT_FARM_ID)
+        .order_by(IrrigationValveZone.controller_id, IrrigationValveZone.station_number)
+    ).all())
+    mappings = list(db.scalars(
+        select(IrrigationValveBed)
+        .where(IrrigationValveBed.zone_id.in_([zone.id for zone in zones]))
+    ).all()) if zones else []
+    bed_ids = [mapping.bed_id for mapping in mappings]
+    beds = {bed.id: bed for bed in db.scalars(
+        select(Bed).where(Bed.id.in_(bed_ids), Bed.farm_id == DEFAULT_FARM_ID)
+    ).all()} if bed_ids else {}
+    return [{
+        "id": zone.id,
+        "name": zone.name,
+        "controller_id": zone.controller_id,
+        "station_number": zone.station_number,
+        "enabled": zone.enabled,
+        "beds": [
+            {"id": mapping.bed_id, "name": beds[mapping.bed_id].name}
+            for mapping in mappings
+            if mapping.zone_id == zone.id and mapping.bed_id in beds
+        ],
+    } for zone in zones]
+
+
+@app.post("/api/irrigation/valves/{zone_id}/plant", status_code=status.HTTP_201_CREATED)
+def plant_irrigation_valve_group(
+    zone_id: int,
+    payload: PlantingCreate,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create one identical planting on every bed of a permanently wired valve."""
+    from app.models import IrrigationValveZone
+    from app.irrigation_zone_planning import ZonePlanting, validate_zone_plantings
+
+    zone = db.scalar(
+        select(IrrigationValveZone).where(
+            IrrigationValveZone.id == zone_id,
+            IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+        )
+    )
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    # Lock valve row so simultaneous group planting requests cannot interleave.
+    zone = db.scalar(
+        select(IrrigationValveZone)
+        .where(IrrigationValveZone.id == zone_id)
+        .with_for_update()
+    )
+    members = list(db.scalars(
+        select(IrrigationValveBed)
+        .where(IrrigationValveBed.zone_id == zone_id)
+        .order_by(IrrigationValveBed.bed_id)
+    ).all())
+    if not members:
+        raise HTTPException(status_code=409, detail="Ventil nima povezanih gredic.")
+    bed_ids = [member.bed_id for member in members]
+    if payload.bed_id not in bed_ids:
+        raise HTTPException(status_code=422, detail="Izbrana gredica ni del tega ventila.")
+    validate_zone_plantings(
+        bed_ids,
+        [ZonePlanting(bed_id, payload.crop_id, payload.variety_id, payload.sowing_date)
+         for bed_id in bed_ids],
+    )
+    previews = []
+    selections = []
+    for bed_id in bed_ids:
+        candidate = payload.model_copy(update={"bed_id": bed_id})
+        crop, variety, bed = resolve_selection(candidate, db)
+        preview = rotation_preview(candidate, db)
+        if not preview.allowed or (preview.requires_override and not payload.override_rotation):
+            raise HTTPException(
+                status_code=409,
+                detail={"bed_id": bed_id, "rotation": preview.model_dump()},
+            )
+        selections.append((crop, variety, bed))
+        previews.append({"bed_id": bed_id, "rotation": preview.model_dump()})
+
+    created = []
+    for crop, variety, bed in selections:
+        planting = Planting(
+            farm_id=DEFAULT_FARM_ID,
+            bed_id=bed.id,
+            crop_id=crop.id,
+            variety_id=variety.id,
+            sowing_date=payload.sowing_date,
+            expected_harvest_date=payload.sowing_date
+            + timedelta(days=maturity_days_for_date(variety, payload.sowing_date)),
+            rotation_override=payload.override_rotation,
+            status="active",
+        )
+        store_prediction(planting, variety)
+        bed.status = "growing"
+        db.add(planting)
+        db.flush()
+        planting.crop = crop
+        planting.variety = variety
+        add_automatic_tasks(db, planting, bed)
+        created.append({"planting_id": planting.id, "bed_id": bed.id})
+    db.commit()
+    return {
+        "zone_id": zone_id,
+        "crop_id": payload.crop_id,
+        "variety_id": payload.variety_id,
+        "sowing_date": payload.sowing_date.isoformat(),
+        "plantings": created,
+        "rotation_checks": previews,
+    }
+
+
 @app.post("/api/plantings", status_code=status.HTTP_201_CREATED)
 def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> dict:
     crop, variety, bed = resolve_selection(payload, db)
+    require_group_planting_workflow(db, bed.id)
     preview = rotation_preview(payload, db)
 
     if not preview.allowed:
@@ -1804,6 +2241,49 @@ def create_planting(payload: PlantingCreate, db: Session = Depends(get_db)) -> d
     }
 
 
+@app.post("/api/irrigation/valves/{zone_id}/finish")
+def finish_irrigation_valve_group(
+    zone_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Finish all active crop cycles on a valve together, preserving bed histories."""
+    from app.models import IrrigationValveZone
+    zone = db.scalar(select(IrrigationValveZone).where(
+        IrrigationValveZone.id == zone_id,
+        IrrigationValveZone.farm_id == DEFAULT_FARM_ID,
+    ).with_for_update())
+    if zone is None:
+        raise HTTPException(status_code=404, detail="Namakalni ventil ne obstaja.")
+    members = list(db.scalars(select(IrrigationValveBed).where(
+        IrrigationValveBed.zone_id == zone_id
+    )).all())
+    if not members:
+        raise HTTPException(status_code=409, detail="Ventil nima povezanih gredic.")
+    bed_ids = [m.bed_id for m in members]
+    plantings = list(db.scalars(
+        select(Planting).where(
+            Planting.farm_id == DEFAULT_FARM_ID,
+            Planting.bed_id.in_(bed_ids),
+            Planting.status == "active",
+        ).options(selectinload(Planting.bed), selectinload(Planting.crop))
+    ).all())
+    signatures = {(p.crop_id, p.variety_id, p.sowing_date) for p in plantings}
+    if len(plantings) != len(bed_ids) or len(signatures) != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Skupina nima enotne aktivne zasaditve na vseh gredicah.",
+        )
+    completed_on = date.today()
+    for planting in plantings:
+        planting.status = "completed"
+        planting.completed_on = completed_on
+        planting.bed.status = "empty"
+        planting.bed.last_crop_family = planting.crop.family
+    db.commit()
+    return {"zone_id": zone_id, "completed_on": completed_on.isoformat(),
+            "completed_planting_ids": [p.id for p in plantings]}
+
+
 @app.post("/api/plantings/{planting_id}/finish")
 def finish_planting(planting_id: int, db: Session = Depends(get_db)) -> dict:
     planting = db.scalar(
@@ -1815,6 +2295,7 @@ def finish_planting(planting_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="Rastni cikel ne obstaja.")
     if planting.status != "active":
         raise HTTPException(status_code=409, detail="Rastni cikel je že zaključen.")
+    require_group_planting_workflow(db, planting.bed_id)
 
     planting.status = "completed"
     planting.completed_on = date.today()
@@ -3464,6 +3945,7 @@ def list_crop_plans(
 
 @app.post("/api/plans", status_code=status.HTTP_201_CREATED)
 def create_crop_plan(payload: CropPlanCreate, db: Session = Depends(get_db)) -> dict:
+    require_group_planting_workflow(db, payload.bed_id)
     bed = db.get(Bed, payload.bed_id)
     crop = db.get(Crop, payload.crop_id)
     variety = db.get(Variety, payload.variety_id)
@@ -3560,6 +4042,7 @@ def activate_crop_plan(
         raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
     if plan.status != "planned":
         raise HTTPException(status_code=409, detail="Aktivirati je mogoče le načrtovano setev.")
+    require_group_planting_workflow(db, plan.bed_id)
     planting_payload = PlantingCreate(
         crop_id=plan.crop_id,
         variety_id=plan.variety_id,
@@ -3621,6 +4104,7 @@ def update_crop_plan_status(
         raise HTTPException(status_code=404, detail="Načrt ne obstaja.")
     if plan.status != "planned":
         raise HTTPException(status_code=409, detail="Spremeniti je mogoče le načrtovano setev.")
+    require_group_planting_workflow(db, plan.bed_id)
     plan.status = payload.status
     db.commit()
     return {"message": "Načrt je preklican.", **serialize_crop_plan(plan)}

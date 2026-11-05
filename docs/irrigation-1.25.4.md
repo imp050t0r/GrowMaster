@@ -1,3 +1,5 @@
+> Posodobitev povezave HA: aktualni osnutki uporabljajo `opensprinkler.run` z `data.entity_id` in `data.run_seconds`, brez `queue_option`. Spodnji opis `run_station` je zgodovinski. Nova oblika je samo za pregled in je starejša samodejna pot ne izvaja.
+
 # GrowMaster 1.25.4 — namakanje in Home Assistant Smart Irrigation
 
 Profil posamezne gredice lahko poleg entity ID-ja OpenSprinkler postaje vsebuje tudi entity ID trajanja Smart Irrigation cone, na primer `sensor.smart_irrigation_greda_1`. Entity ID je treba prepisati iz Home Assistanta; pred pošiljanjem ga GrowMaster potrdi prek shranjenega dnevnega izračuna, dejansko stanje HA entity-ja pa ni prebrano.

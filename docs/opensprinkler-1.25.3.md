@@ -1,3 +1,5 @@
+> Posodobitev povezave HA: aktualni osnutki uporabljajo `opensprinkler.run` z `data.entity_id` in `data.run_seconds`, brez `queue_option`. Spodnji opis `run_station` je zgodovinski. Nova oblika je samo za pregled in je starejša samodejna pot ne izvaja.
+
 # GrowMaster 1.25.3 — Priprava akcij OpenSprinkler za Home Assistant
 
 V **Plan → Namakanje → Profil grede** sta novi polji: **Postaja OpenSprinkler v Home Assistantu** (entity ID stikala postaje, npr. `switch.greda_1_station_enabled`) in **Največji čas postaje (sekunde)** (privzeto 3600). Pretok velja za eno gredico. Prazna postaja pomeni, da greda ni povezana.
