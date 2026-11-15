@@ -1,0 +1,9 @@
+.fertilization-panel fieldset { border: 0; padding: 0; min-width: 0; }
+.fertilization-panel label { display: grid; gap: .35rem; margin: .7rem 0; }
+.fertilization-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin: 1rem 0; }
+.fertilization-form p { grid-column: 1 / -1; }
+.fertilization-panel details { margin: 1rem 0; padding: .8rem; border: 1px solid #cbd5c0; border-radius: 8px; }
+.fertilization-panel summary { cursor: pointer; font-weight: 600; }
+.fertilization-record { border-top: 1px solid #cbd5c0; padding: 1rem 0; }
+.fertilization-panel button { margin: .3rem .5rem .3rem 0; }
+.fertilization-panel [role=alert] { color: #a02323; }

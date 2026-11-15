@@ -1,3 +1,5 @@
+> Posodobitev povezave HA: aktualni osnutki uporabljajo `opensprinkler.run` z `data.entity_id` in `data.run_seconds`, brez `queue_option`. Spodnji opis `run_station` je zgodovinski. Nova oblika je samo za pregled in je starejša samodejna pot ne izvaja.
+
 # GrowMaster 1.25.6 — dnevni pregled akcij po gredici
 
 Vsaka gredica ima trajno povezavo do svoje OpenSprinkler postaje/ventila. Aktivna zasaditev določa trenutno kulturo in njen profil; menjava kulture ne spremeni povezave gredice z ventilom.

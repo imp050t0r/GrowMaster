@@ -25,9 +25,8 @@ def test_manual_draft_correct_action_seconds_and_no_writes(irrigation):
     r=export(c);draft=r["rows"][0]
     assert not r["automatic_execution"] and r["requires_manual_review"]
     assert draft["status"]=="draft" and draft["run_seconds"]==1125
-    assert draft["action"]=={"action":"opensprinkler.run_station","target":{"entity_id":STATION},
-                             "data":{"run_seconds":1125,"queue_option":"append"}}
-    assert "run_seconds: 1125" in draft["yaml"] and "switch.turn_on" not in draft["yaml"]
+    assert draft["action"]=={"action":"opensprinkler.run","data":{"entity_id":STATION,"run_seconds":1125}}
+    assert draft["yaml"] == f"action: opensprinkler.run\ndata:\n  entity_id: {STATION}\n  run_seconds: 1125\n"
     assert row.report==before and not db.dirty and not db.new
 
 @pytest.mark.parametrize("changes",[{"opensprinkler_station_entity":None},{"flow_l_min":None},{"max_run_seconds":100}])

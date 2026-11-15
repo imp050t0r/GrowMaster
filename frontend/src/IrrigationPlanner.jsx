@@ -1,4 +1,6 @@
 import React, {useEffect, useRef, useState} from "react";
+import {IrrigationDailySequence} from "./IrrigationDailySequence";
+import {IrrigationValveGroups} from "./IrrigationValveGroups";
 import {apiRequest} from "./platform";
 import {cropIdForBed,dailyBedStates} from "./irrigationHelpers";
 
@@ -15,13 +17,19 @@ export function IrrigationPlanner({crops,beds}) {
   const [report,setReport]=useState(null),[saved,setSaved]=useState([]),[error,setError]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
   const [readiness,setReadiness]=useState(null);
   const [ledger,setLedger]=useState([]),[ledgerOpening,setLedgerOpening]=useState(""),[ledgerRain,setLedgerRain]=useState("0"),[ledgerApplied,setLedgerApplied]=useState("0"),[ledgerSource,setLedgerSource]=useState("Ročni pregled"),[ledgerBusy,setLedgerBusy]=useState(false);
+  const [stationMessage,setStationMessage]=useState("");
+  const [smartMappingMessage,setSmartMappingMessage]=useState("");
+  useEffect(()=>setSmartMappingMessage(""),[bedId,bp.smart_irrigation_entity]);
+  useEffect(()=>setStationMessage(""),[bedId,bp.opensprinkler_station_entity]);
   const generation=useRef(0);
+  const preserveStationDraft=useRef(null);
   const [osPreview,setOsPreview]=useState(null),[osBusy,setOsBusy]=useState(false);
   const osGeneration=useRef(0);
   const [siPreview,setSiPreview]=useState(null),[siBusy,setSiBusy]=useState(false),[siConfirmed,setSiConfirmed]=useState(false);
   const siGeneration=useRef(0);
   const [haStatus,setHaStatus]=useState(null),[haBusy,setHaBusy]=useState(false);
   const [haConfig,setHaConfig]=useState({url:"",token:""});
+  const [haTestResult,setHaTestResult]=useState(null);
   const [autoConfig,setAutoConfig]=useState({enabled:false,run_after_local_time:"07:00",last_runs:[]});
   const [haStates,setHaStates]=useState(null);
   function chooseBed(value) {
@@ -32,8 +40,8 @@ export function IrrigationPlanner({crops,beds}) {
   useEffect(()=>{let closed=false; apiRequest("/api/irrigation/profiles").then(p=>{if(!closed){setProfiles(p);setSensorGroups(Array.from({length:16},(_,i)=>p.sensor_groups?.find(item=>item.group_number===i+1)||{group_number:i+1,name:`WH51 ${i+1}`,entity_id:""}));}}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;generation.current++;};},[]);
   useEffect(()=>{let closed=false;apiRequest("/api/irrigation/home-assistant/status").then(r=>{if(!closed){setHaStatus(r);setHaConfig(value=>({...value,url:r.url||""}));}}).catch(()=>{if(!closed)setHaStatus({configured:false,token_configured:false});});return()=>{closed=true;};},[]);
   useEffect(()=>{let closed=false;apiRequest("/api/irrigation/automatic-irrigation").then(r=>{if(!closed)setAutoConfig(r);}).catch(()=>{});return()=>{closed=true;};},[]);
-  useEffect(()=>{setCp(profiles.crops.find(p=>String(p.crop_id)===cropId)||cropEmpty);},[cropId,profiles]);
-  useEffect(()=>{setBp({...bedEmpty,...profiles.beds.find(p=>String(p.bed_id)===bedId)});},[bedId,profiles]);
+  useEffect(()=>{if(preserveStationDraft.current?.cropId===cropId)return;setCp(profiles.crops.find(p=>String(p.crop_id)===cropId)||cropEmpty);},[cropId,profiles]);
+  useEffect(()=>{const keep=preserveStationDraft.current?.bedId===bedId;preserveStationDraft.current=null;if(keep)return;setBp({...bedEmpty,...profiles.station_mappings?.find(p=>String(p.bed_id)===bedId),...profiles.smart_mappings?.find(p=>String(p.bed_id)===bedId),...profiles.beds.find(p=>String(p.bed_id)===bedId)});},[bedId,profiles]);
   useEffect(()=>{generation.current++;setReport(null);setMessage("");setBusy(false);},[cropId,bedId,cp,bp,day]);
   useEffect(()=>{let closed=false;setSaved([]);apiRequest(`/api/irrigation/daily?day=${day.day}`).then(r=>{if(!closed)setSaved(r.rows);}).catch(e=>{if(!closed)setError(e.message);});return()=>{closed=true;};},[day.day]);
   useEffect(()=>{
@@ -73,12 +81,12 @@ export function IrrigationPlanner({crops,beds}) {
     await saveAutomaticIrrigationSettings(enabled);
   }
   async function testHomeAssistant() {
-    setHaBusy(true);setError("");setMessage("");
-    try {const r=await apiRequest("/api/irrigation/home-assistant/test",{method:"POST"});setHaStatus(previous=>({...previous,configured:true,connected:true}));setMessage(`Povezava s Home Assistantom deluje (${r.message}).`);}
-    catch(e){setError(e.message);}finally{setHaBusy(false);}
+    setHaBusy(true);setError("");setMessage("");setHaTestResult({status:"pending",text:"Preverjam povezavo …"});
+    try {const r=await apiRequest("/api/irrigation/home-assistant/test",{method:"POST"});setHaStatus(previous=>({...previous,configured:true,connected:true}));setHaTestResult({status:"success",text:`Povezava s Home Assistantom deluje (${r.message}).`});}
+    catch(e){setHaStatus(previous=>({...previous,connected:false}));setHaTestResult({status:"error",text:e.message||"Preverjanje povezave ni uspelo."});}finally{setHaBusy(false);}
   }
   async function saveHomeAssistantConfig(event) {
-    event.preventDefault();setHaBusy(true);setError("");setMessage("");
+    event.preventDefault();setHaBusy(true);setError("");setMessage("");setHaTestResult(null);
     try {
       const r=await apiRequest("/api/irrigation/home-assistant/config",{method:"PUT",body:JSON.stringify(haConfig)});
       setHaStatus({...r,connected:false});setHaConfig({url:r.url,token:""});
@@ -87,7 +95,7 @@ export function IrrigationPlanner({crops,beds}) {
   }
   async function clearHomeAssistantConfig() {
     if(!window.confirm("Izbrišem povezavo Home Assistanta, shranjeno v GrowMasterju?"))return;
-    setHaBusy(true);setError("");setMessage("");setHaStates(null);
+    setHaBusy(true);setError("");setMessage("");setHaStates(null);setHaTestResult(null);
     try {
       const r=await apiRequest("/api/irrigation/home-assistant/config",{method:"DELETE"});
       setHaStatus({...r,connected:false});setHaConfig({url:r.url||"",token:""});
@@ -115,6 +123,24 @@ export function IrrigationPlanner({crops,beds}) {
     try {const payload=numeric(kind==="crops"?cp:bp);await apiRequest(`/api/irrigation/${kind}/${kind==="crops"?cropId:bedId}`,{method:"PUT",body:JSON.stringify(payload)});
       const p=await apiRequest("/api/irrigation/profiles");if(n===generation.current){setProfiles(p);setMessage("Profil je shranjen.");}
     } catch(e){if(n===generation.current)setError(e.message);}finally{if(n===generation.current)setBusy(false);}
+  }
+  async function saveStationMapping() {
+    if(!bedId||busy||!bp.opensprinkler_station_entity?.trim())return;
+    const n=++generation.current;setBusy(true);setError("");setStationMessage("");
+    try {
+      await apiRequest(`/api/irrigation/beds/${bedId}/station`,{method:"PUT",body:JSON.stringify({opensprinkler_station_entity:bp.opensprinkler_station_entity})});
+      const p=await apiRequest("/api/irrigation/profiles");
+      if(n===generation.current){preserveStationDraft.current={bedId,cropId};setProfiles(p);setStationMessage("Povezava ventila je shranjena. Zalivanje ni bilo zagnano.");}
+    } catch(e){if(n===generation.current)setError(e.message);}finally{if(n===generation.current)setBusy(false);}
+  }
+  async function saveSmartMapping() {
+    if(!bedId||busy||!bp.smart_irrigation_entity?.trim())return;
+    const n=++generation.current;setBusy(true);setSmartMappingMessage("");
+    try {
+      await apiRequest(`/api/irrigation/beds/${bedId}/smart-irrigation`,{method:"PUT",body:JSON.stringify({smart_irrigation_entity:bp.smart_irrigation_entity.trim()})});
+      const p=await apiRequest("/api/irrigation/profiles");
+      if(n===generation.current){preserveStationDraft.current={bedId,cropId};setProfiles(p);setSmartMappingMessage("Povezava Smart Irrigation je shranjena. Zalivanje ni bilo zagnano.");}
+    } catch(e){if(n===generation.current)setSmartMappingMessage(e.message);}finally{if(n===generation.current)setBusy(false);}
   }
   async function saveSensorGroup(group) {
     setBusy(true);setError("");setMessage("");
@@ -144,6 +170,8 @@ export function IrrigationPlanner({crops,beds}) {
   const dailyStates=dailyBedStates(beds,crops,profiles,saved);
   const dirty=JSON.stringify(numeric(cp))!==JSON.stringify(numeric(storedCrop||cropEmpty))||JSON.stringify(numeric(bp))!==JSON.stringify(numeric({...bedEmpty,...storedBed}));
   return <section className="panel" aria-label="Namakanje">
+    <IrrigationValveGroups crops={crops} beds={beds}/>
+    <IrrigationDailySequence day={day.day} beds={beds} profiles={profiles} saved={saved}/>
     <p className="eyebrow">Dnevna vodna bilanca</p><h2>Namakanje</h2>
     <p>Dnevni pregled uporablja trenutno aktivno kulturo. Za gredice brez WH51 GrowMaster prebere sveže trajanje Smart Irrigation in iz nastavljenega pretoka oceni količino vode. Pregled se osveži ob odprtju, ob vrnitvi v aplikacijo in vsakih 15 minut. Ročni vodni izračun ET₀, dežja in začetnega primanjkljaja je ločen. Ročni OpenSprinkler osnutek je namenjen pregledu in sam ne zažene ventila. Ločena avtomatika deluje samo, če jo izrecno vklopiš.</p>
     <div className="irrigation-bed-review" aria-label={`Pregled gredic za ${day.day}`}>
@@ -161,8 +189,8 @@ export function IrrigationPlanner({crops,beds}) {
       })}
     </div>
     {readiness&&<article aria-label="Dnevna pripravljenost namakanja"><h3>Dnevno preverjanje: {readiness.ready_beds}/{readiness.active_beds} gredic pripravljenih</h3>
-      <p>{readiness.note}</p><ul>{readiness.rows.map(row=><li key={row.bed_id}><strong>{row.bed} · {row.crop}{row.variety?` (${row.variety})`:""}</strong>{row.suggested_stage?` · faza ${row.suggested_stage==="initial"?"začetna":row.suggested_stage==="mid"?"polna rast":"pozna"} (${row.stage_progress_pct}% cikla)`:" · faza ni določena"} · {row.mode==="smart_irrigation"?`Smart Irrigation: ${row.smart_irrigation_seconds==null?"ni izračuna":`${row.smart_irrigation_seconds} sekund`} · ${row.estimated_litres==null?"pretok ni vpisan":`≈ ${row.estimated_litres} l`} · ${row.kc_sync_status==="matched"?`Kc ${row.kc_expected} usklajen`:row.kc_sync_status==="needs_update"?`Kc ${row.smart_irrigation_multiplier} → ${row.kc_expected}, posodobi`:row.kc_sync_status==="unknown"?"Kc ni preverjen":"Kc ni uporabljen"} · ${row.decision==="irrigate"?"zalivanje priporočeno":row.decision==="hold"?"zalivanje ni potrebno":"pregled potreben"}`:`WH51 skupina ${row.wh51_group_name||row.wh51_group||"ni dodeljena"} · ${row.sensor_group_beds} gredic`} {!row.ready?` · ${row.reasons.join(" ")}`:" · pripravljeno"}{row.action&&<><p>Osnutek za ročni pregled: {row.action.target.entity_id} · {row.action.data.run_seconds} sekund</p><textarea aria-label={`Osnutek OpenSprinkler za gredico ${row.bed}`} readOnly rows={6} value={`action: opensprinkler.run_station\ntarget:\n  entity_id: ${row.action.target.entity_id}\ndata:\n  run_seconds: ${row.action.data.run_seconds}\n  queue_option: append`}/></>}</li>)}</ul>
-      {readiness.valve_groups?.map(group=><article key={group.station} aria-label={`Skupni ventil ${group.station}`}><strong>Skupni ventil · gredice {group.bed_ids.join(", ")} · {group.status==="draft"?`${group.run_seconds} sekund · približno ${group.estimated_litres} l`:"blokirano"}</strong>{group.status==="draft"&&<p>Ocena vode po gredici: {group.bed_water_estimates.map(item=>`${readiness.rows.find(row=>row.bed_id===item.bed_id)?.bed||`gredica ${item.bed_id}`}: ${item.litres} l`).join(" · ")}. Dejanska količina je odvisna od izmerjenega pretoka posamezne veje.</p>}{group.reasons.map((reason,index)=><p key={index}>{reason}</p>)}{group.action&&<textarea aria-label={`Akcija za skupni ventil ${group.station}`} readOnly rows={6} value={`action: opensprinkler.run_station\ntarget:\n  entity_id: ${group.station}\ndata:\n  run_seconds: ${group.run_seconds}\n  queue_option: append`}/>}</article>)}
+      <p>{readiness.note}</p><ul>{readiness.rows.map(row=><li key={row.bed_id}><strong>{row.bed} · {row.crop}{row.variety?` (${row.variety})`:""}</strong>{row.suggested_stage?` · faza ${row.suggested_stage==="initial"?"začetna":row.suggested_stage==="mid"?"polna rast":"pozna"} (${row.stage_progress_pct}% cikla)`:" · faza ni določena"} · {row.mode==="smart_irrigation"?`Smart Irrigation: ${row.smart_irrigation_seconds==null?"ni izračuna":`${row.smart_irrigation_seconds} sekund`} · ${row.estimated_litres==null?"pretok ni vpisan":`≈ ${row.estimated_litres} l`} · ${row.kc_sync_status==="matched"?`Kc ${row.kc_expected} usklajen`:row.kc_sync_status==="needs_update"?`Kc ${row.smart_irrigation_multiplier} → ${row.kc_expected}, posodobi`:row.kc_sync_status==="unknown"?"Kc ni preverjen":"Kc ni uporabljen"} · ${row.decision==="irrigate"?"zalivanje priporočeno":row.decision==="hold"?"zalivanje ni potrebno":"pregled potreben"}`:`WH51 skupina ${row.wh51_group_name||row.wh51_group||"ni dodeljena"} · ${row.sensor_group_beds} gredic`} {!row.ready?` · ${row.reasons.join(" ")}`:" · pripravljeno"}{row.action&&<><p>Osnutek za ročni pregled: {row.action.data.entity_id} · {row.action.data.run_seconds} sekund</p><textarea aria-label={`Osnutek OpenSprinkler za gredico ${row.bed}`} readOnly rows={6} value={`action: opensprinkler.run\ndata:\n  entity_id: ${row.action.data.entity_id}\n  run_seconds: ${row.action.data.run_seconds}`}/></>}</li>)}</ul>
+      {readiness.valve_groups?.map(group=><article key={group.station} aria-label={`Skupni ventil ${group.station}`}><strong>Skupni ventil · gredice {group.bed_ids.join(", ")} · {group.status==="draft"?`${group.run_seconds} sekund · približno ${group.estimated_litres} l`:"blokirano"}</strong>{group.status==="draft"&&<p>Ocena vode po gredici: {group.bed_water_estimates.map(item=>`${readiness.rows.find(row=>row.bed_id===item.bed_id)?.bed||`gredica ${item.bed_id}`}: ${item.litres} l`).join(" · ")}. Dejanska količina je odvisna od izmerjenega pretoka posamezne veje.</p>}{group.reasons.map((reason,index)=><p key={index}>{reason}</p>)}{group.action&&<textarea aria-label={`Akcija za skupni ventil ${group.station}`} readOnly rows={6} value={`action: opensprinkler.run\ndata:\n  entity_id: ${group.action.data.entity_id}\n  run_seconds: ${group.action.data.run_seconds}`}/>}</article>)}
     </article>}
     <div className="range-form"><label>Kultura<select value={cropId} onChange={e=>setCropId(e.target.value)}><option value="">Izberi kulturo</option>{crops.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
       <label>Gredica<select value={bedId} onChange={e=>chooseBed(e.target.value)}><option value="">Izberi gredico</option>{beds.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label></div>
@@ -194,8 +222,10 @@ export function IrrigationPlanner({crops,beds}) {
         <label>Vir profila tal in umerjanja<input required maxLength={500} value={bp.source} onChange={e=>setBp({...bp,source:e.target.value})}/></label>
         <label>Razporeditev ventila<select value={bp.valve_mode||"individual"} onChange={e=>setBp({...bp,valve_mode:e.target.value})}><option value="individual">Individualni ventil — samo ta gredica</option><option value="shared">Skupni ventil — deli ga več gredic</option></select></label>
         <label>Postaja OpenSprinkler v Home Assistantu<input placeholder="switch.greda_1_station_enabled" pattern="switch\.[a-z0-9_]+" maxLength={150} value={bp.opensprinkler_station_entity||""} onChange={e=>setBp({...bp,opensprinkler_station_entity:e.target.value})}/></label>
+        <div><label>Gredica za povezavo ventila<select value={bedId} disabled={busy} onChange={e=>chooseBed(e.target.value)}><option value="">Izberi gredico</option>{beds.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label><button type="button" className="secondary-button" disabled={!bedId||!bp.opensprinkler_station_entity?.trim()||busy} onClick={saveStationMapping}>{busy?"SHRANJEVANJE…":"SHRANI POVEZAVO VENTILA"}</button>{!bedId?<p>Najprej izberi gredico v zgornjem izbirniku.</p>:!bp.opensprinkler_station_entity?.trim()?<p>Vnesi postajo OpenSprinkler za izbrano gredico.</p>:null}{stationMessage&&<p role="status">{stationMessage}</p>}<p>Shrani samo postajo za izbrano gredico. Podatki o tleh in pretoku niso potrebni za to povezavo; brez popolnega profila zalivanje ni pripravljeno.</p></div>
         {bp.valve_mode==="shared"&&<p>Na vsaki gredici, ki jo napaja ta ventil, izberi »Skupni ventil« in vpiši isti OpenSprinkler entity ID. Osnutek bo pripravljen le, če vse povezane gredice isti dan potrebujejo vodo in skupni čas ne preseže varne meje nobene od njih.</p>}
         <label>Smart Irrigation cona v Home Assistantu<input placeholder="sensor.smart_irrigation_greda_1" pattern="sensor\.smart_irrigation_[a-z0-9_]+" maxLength={150} value={bp.smart_irrigation_entity||""} onChange={e=>setBp({...bp,smart_irrigation_entity:e.target.value})}/></label>
+        <div><button type="button" className="secondary-button" disabled={!bedId||!bp.smart_irrigation_entity?.trim()||busy} onClick={saveSmartMapping}>SHRANI POVEZAVO SMART IRRIGATION</button><p>Shrani samo senzor za izbrano gredico, brez podatkov o tleh. To ne omogoči zalivanja.</p>{smartMappingMessage&&<p role="status">{smartMappingMessage}</p>}</div>
         <label>Ročno dodeljena WH51 skupina<select value={bp.wh51_group||""} onChange={e=>setBp({...bp,wh51_group:e.target.value?Number(e.target.value):null})}><option value="">Brez WH51</option>{sensorGroups.map(group=><option key={group.group_number} value={group.group_number}>{group.group_number}. {group.name}{group.entity_id?" · senzor nastavljen":" · brez senzorja"}</option>)}</select></label>
         {field(bp,setBp,"max_run_seconds","Največji čas postaje (sekunde)",1,86400)}
         <p>Gredico ročno dodeli WH51 skupini; v isto skupino lahko dodaš poljubno število gredic. Dodelitev se ne spreminja samodejno. Entity ID senzorja nastavi enkrat v konfiguraciji skupin spodaj.</p>
@@ -234,7 +264,7 @@ export function IrrigationPlanner({crops,beds}) {
     <button type="button" className="secondary-button" disabled={dirty||busy||osBusy} onClick={prepareOpenSprinkler}>PRIPRAVI AKCIJE OPENSPRINKLER</button>
     {osPreview&&<div aria-label="Osnutki OpenSprinkler"><p>{osPreview.note}</p>{!osPreview.rows.length&&<p>Za izbrani dan ni shranjenih izračunov.</p>}
       {osPreview.rows.map(r=><article key={r.bed_id}><strong>Gredica {r.bed||r.bed_id} · {r.status==="draft"?"Osnutek za ročni pregled":"Akcija ni pripravljena"}</strong>
-        {r.status==="draft"?<><p>{r.litres} l · {r.run_seconds} sekund · {r.action.target.entity_id}</p><ul>{r.warnings.map((w,i)=><li key={i}>{w}</li>)}</ul><p>Spodnji zapis lahko po preverjanju uporabiš v Home Assistantu, Orodja za razvijalce → Akcije → YAML. Izvedba tam dejansko odpre ventil.</p><textarea aria-label={`Akcija OpenSprinkler za gredico ${r.bed||r.bed_id}`} readOnly rows={8} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
+        {r.status==="draft"?<><p>{r.litres} l · {r.run_seconds} sekund · {r.action.data.entity_id}</p><ul>{r.warnings.map((w,i)=><li key={i}>{w}</li>)}</ul><p>Spodnji zapis lahko po preverjanju uporabiš v Home Assistantu, Orodja za razvijalce → Akcije → YAML. Izvedba tam dejansko odpre ventil.</p><textarea aria-label={`Akcija OpenSprinkler za gredico ${r.bed||r.bed_id}`} readOnly rows={8} value={r.yaml}/></>:<ul>{r.reasons.map((w,i)=><li key={i}>{w}</li>)}</ul>}
       </article>)}</div>}
     <section className="irrigation-automation">
       <h3>Samodejno zalivanje</h3>
@@ -258,6 +288,7 @@ export function IrrigationPlanner({crops,beds}) {
     {haStatus?.source==="application"&&<button type="button" className="danger-button" disabled={haBusy} onClick={clearHomeAssistantConfig}>IZBRIŠI POVEZAVO</button>}
     <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={testHomeAssistant}>PREVERI POVEZAVO</button>
     <button type="button" className="secondary-button" disabled={haBusy||!haStatus?.configured} onClick={readHomeAssistantStates}>PREBERI NASTAVLJENE SENZORJE</button>
+    {haTestResult&&<p role={haTestResult.status==="error"?"alert":"status"}>{haTestResult.text}</p>}
     {haStates&&<article aria-label="Stanja Home Assistant senzorjev"><h4>Prebrane vrednosti senzorjev</h4><p>{haStates.note} WH51: {haStates.configured_wh51_count}/{haStates.maximum_wh51_count} skupin.</p><ul>{haStates.sensor_groups.map(group=><li key={`${group.group_number}-${group.entity_id}`}><strong>{group.name}</strong>{group.group_number?` (${group.group_number})`:""} · {group.entity_id} · {group.assigned_beds} gredic {group.needs_migration?" · premakni v novo skupino":""}</li>)}</ul><ul>{haStates.entities.map(item=><li key={item.entity_id}><strong>{item.entity_id}</strong>: {item.available?`${item.state}${item.unit?` ${item.unit}`:""}`:item.issue||item.error||"nedosegljiv"}{item.last_updated?` · posodobljeno ${new Date(item.last_updated).toLocaleString()}`:""}</li>)}</ul>{Object.entries(haStates.numeric_summary_by_unit||{}).map(([unit,summary])=><p key={unit}>Povzetek {unit}: {summary.count} senzorjev · povprečje {summary.mean} · min {summary.minimum} · max {summary.maximum}</p>)}</article>}
     <p>GrowMaster primerja Kc aktivne kulture in samodejno določene faze s trenutnim atributom multiplier v Smart Irrigation. Ob neskladju dnevni pregled označi gredico za pregled in ne pripravi osnutka ventila. Po pošiljanju Kc počakaj, da Smart Irrigation po svojem urniku ponovno izračuna cono.</p>
     <button type="button" className="secondary-button" disabled={dirty||busy||siBusy} onClick={prepareSmartIrrigation}>PRIPRAVI Kc ZA SMART IRRIGATION</button>

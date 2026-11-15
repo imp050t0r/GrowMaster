@@ -2,6 +2,11 @@ name: Platform builds
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the built version as a GitHub release
+        type: boolean
+        default: false
   pull_request:
     paths:
       - "frontend/**"
@@ -136,7 +141,7 @@ jobs:
         run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
 
   publish-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: [windows-installer, android-app]
     runs-on: ubuntu-latest
     permissions:
