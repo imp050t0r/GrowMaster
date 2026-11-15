@@ -1396,3 +1396,43 @@ def test_kc_action_cannot_be_replaced_with_watering_command():
     with pytest.raises(ValueError):
         irrigation_routes.validated_kc_action({"action": "smart_irrigation.water_zone",
             "target": {"entity_id": "sensor.smart_irrigation_a1"}, "data": {"new_multiplier_value": 1}})
+
+def test_smart_mapping_without_soil_roundtrips_and_remains_incomplete(irrigation, monkeypatch):
+    db, client, _ = irrigation
+    db.delete(db.scalar(select(irrigation_routes.IrrigationBedProfile)))
+    db.commit()
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Mapping must not contact hardware or change automation')
+    monkeypatch.setattr(irrigation_routes.httpx, 'Client', forbidden)
+    monkeypatch.setattr(irrigation_routes, '_write_automatic_state', forbidden)
+    payload = {'smart_irrigation_entity': 'sensor.smart_irrigation_a1'}
+    response = client.put('/api/irrigation/beds/1/smart-irrigation', json=payload)
+    assert response.status_code == 200
+    assert response.json()['automatic_execution'] is False
+    profiles = client.get('/api/irrigation/profiles').json()
+    assert profiles['beds'] == []
+    assert profiles['smart_mappings'] == [{'bed_id': 1, **payload}]
+    content, _ = create_backup_bytes(db)
+    parsed = parse_backup(content)
+    assert parsed.rows_by_table['irrigation_smart_mappings'][0]['sensor_entity'] == payload['smart_irrigation_entity']
+    restore_parsed_backup(db, parsed)
+    assert calc(client).json()['status'] == 'missing_data'
+    assert client.put('/api/irrigation/beds/1', json=payload).status_code == 422
+    assert client.put('/api/irrigation/beds/1', json=BP).status_code == 200
+    profiles = client.get('/api/irrigation/profiles').json()
+    assert profiles['smart_mappings'] == []
+    assert profiles['beds'][0]['smart_irrigation_entity'] == payload['smart_irrigation_entity']
+
+
+def test_smart_mapping_preserves_profile_and_rejects_wrong_scope(irrigation):
+    _, client, _ = irrigation
+    payload = {'smart_irrigation_entity': 'sensor.smart_irrigation_a1'}
+    before = client.get('/api/irrigation/profiles').json()['beds'][0]
+    for bed_id in (2, 999):
+        assert client.put(f'/api/irrigation/beds/{bed_id}/smart-irrigation', json=payload).status_code == 404
+    for value in ('', 'all', 'valve.smart_irrigation_a1', 'sensor.other', 'sensor.smart_irrigation_a1/other'):
+        assert client.put('/api/irrigation/beds/1/smart-irrigation', json={'smart_irrigation_entity': value}).status_code == 422
+    assert client.put('/api/irrigation/beds/1/smart-irrigation', json=payload).status_code == 200
+    profiles = client.get('/api/irrigation/profiles').json()
+    assert profiles['smart_mappings'] == []
+    assert profiles['beds'][0] == {**before, **payload}

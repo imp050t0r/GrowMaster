@@ -269,6 +269,10 @@ def add_irrigation_station_mappings(connection: Connection) -> None:
     Base.metadata.tables["irrigation_station_mappings"].create(connection, checkfirst=True)
 
 
+def add_irrigation_smart_mappings(connection: Connection) -> None:
+    Base.metadata.tables["irrigation_smart_mappings"].create(connection, checkfirst=True)
+
+
 MIGRATIONS = (
     Migration("0001_current_schema", create_current_schema),
     Migration("0002_authentication", create_authentication_schema),
@@ -291,6 +295,7 @@ MIGRATIONS = (
     Migration("0019_permanent_irrigation_valve_groups", add_permanent_irrigation_valve_groups),
     Migration("0020_fertilization", add_fertilization_schema),
     Migration("0021_irrigation_station_mappings", add_irrigation_station_mappings),
+    Migration("0022_irrigation_smart_mappings", add_irrigation_smart_mappings),
 )
 
 

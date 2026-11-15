@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, get_db
 from app.irrigation_sequence import DELAY_SECONDS, ValveRun, preview_sequence
 from app.ha_credentials import delete_config as delete_home_assistant_config, read_config as read_stored_home_assistant_config, write_config as write_home_assistant_config
-from app.models import IrrigationStationMapping, Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, IrrigationValveBed, IrrigationValveZone, Planting, Variety
+from app.models import IrrigationSmartMapping, IrrigationStationMapping, Bed, Crop, IrrigationBedProfile, IrrigationCropProfile, IrrigationDailyReport, IrrigationSensorGroup, IrrigationWaterLedger, IrrigationValveBed, IrrigationValveZone, Planting, Variety
 
 router = APIRouter(prefix="/api/irrigation")
 logger = logging.getLogger(__name__)
@@ -61,6 +61,10 @@ class CropProfile(Input):
     root_depth_m: float = Field(gt=0, le=3)
     depletion_fraction: float = Field(gt=0, lt=1)
     source: str = Field(min_length=1, max_length=500)
+
+
+class SmartMappingInput(Input):
+    smart_irrigation_entity: str = Field(pattern=r"^sensor\.smart_irrigation_[a-z0-9_]+$", max_length=150)
 
 
 class StationMappingInput(Input):
@@ -421,6 +425,8 @@ def profile_row(db, model, key, identifier):
 def profiles(db: Session = Depends(get_db)):
     return {"station_mappings": [{"bed_id": r.bed_id, "opensprinkler_station_entity": r.station_entity}
                                  for r in db.scalars(select(IrrigationStationMapping).where(IrrigationStationMapping.farm_id == FARM_ID))],
+            "smart_mappings": [{"bed_id": r.bed_id, "smart_irrigation_entity": r.sensor_entity}
+                               for r in db.scalars(select(IrrigationSmartMapping).where(IrrigationSmartMapping.farm_id == FARM_ID))],
             "crops": [{"crop_id": r.crop_id, **json.loads(r.parameters)} for r in
                       db.scalars(select(IrrigationCropProfile).where(IrrigationCropProfile.farm_id == FARM_ID))],
             "beds": [{"bed_id": r.bed_id, **BedProfile.model_validate_json(r.parameters).model_dump()} for r in
@@ -477,12 +483,35 @@ def save_station_mapping(bed_id: int, payload: StationMappingInput, db: Session 
     return {"bed_id": bed_id, **payload.model_dump()}
 
 
+@router.put("/beds/{bed_id}/smart-irrigation")
+def save_smart_mapping(bed_id: int, payload: SmartMappingInput, db: Session = Depends(get_db)):
+    entity(db, Bed, bed_id)
+    profile = profile_row(db, IrrigationBedProfile, "bed_id", bed_id)
+    if profile is not None:
+        parameters = json.loads(profile.parameters)
+        parameters["smart_irrigation_entity"] = payload.smart_irrigation_entity
+        profile.parameters = BedProfile.model_validate(parameters).model_dump_json()
+    else:
+        row = db.get(IrrigationSmartMapping, bed_id)
+        if row is None:
+            row = IrrigationSmartMapping(bed_id=bed_id, farm_id=FARM_ID)
+            db.add(row)
+        row.sensor_entity = payload.smart_irrigation_entity
+    db.commit()
+    return {"bed_id": bed_id, **payload.model_dump(), "automatic_execution": False}
+
+
 @router.put("/beds/{bed_id}")
 def save_bed(bed_id: int, payload: BedProfile, db: Session = Depends(get_db)):
     entity(db, Bed, bed_id)
     mapping = db.get(IrrigationStationMapping, bed_id)
     if mapping is not None:
         db.delete(mapping)
+    smart_mapping = db.get(IrrigationSmartMapping, bed_id)
+    if smart_mapping is not None:
+        if "smart_irrigation_entity" not in payload.model_fields_set:
+            payload.smart_irrigation_entity = smart_mapping.sensor_entity
+        db.delete(smart_mapping)
     return save_profile(db, IrrigationBedProfile, "bed_id", bed_id, payload)
 
 
@@ -1439,7 +1468,12 @@ def home_assistant_states(db: Session = Depends(get_db)):
     base_url, token = home_assistant_config()
     if not base_url:
         raise HTTPException(503, "Nastavi HOME_ASSISTANT_URL in HOME_ASSISTANT_TOKEN na strežniku GrowMaster.")
-    entities = set()
+    entities = {row.sensor_entity for row in db.scalars(
+        select(IrrigationSmartMapping).where(IrrigationSmartMapping.farm_id == FARM_ID))}
+    for row in db.scalars(select(IrrigationBedProfile).where(IrrigationBedProfile.farm_id == FARM_ID)):
+        sensor = BedProfile.model_validate_json(row.parameters).smart_irrigation_entity
+        if sensor:
+            entities.add(sensor)
     groups = list(db.scalars(select(IrrigationSensorGroup).where(IrrigationSensorGroup.farm_id == FARM_ID)))
     for group in groups:
         if group.entity_id:

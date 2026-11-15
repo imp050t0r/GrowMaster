@@ -95,6 +95,14 @@ class IrrigationStationMapping(Base):
     station_entity: Mapped[str] = mapped_column(String(150))
 
 
+class IrrigationSmartMapping(Base):
+    """Sensor assignment alone does not constitute an irrigation profile."""
+    __tablename__ = "irrigation_smart_mappings"
+    bed_id: Mapped[int] = mapped_column(ForeignKey("beds.id", ondelete="CASCADE"), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"))
+    sensor_entity: Mapped[str] = mapped_column(String(150))
+
+
 class IrrigationBedProfile(Base):
     __tablename__ = "irrigation_bed_profiles"
     __table_args__ = (UniqueConstraint("farm_id", "bed_id", name="uq_irrigation_bed"),)
