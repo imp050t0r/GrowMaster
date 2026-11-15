@@ -31,6 +31,20 @@ class Input(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, str_strip_whitespace=True)
 
 
+class SmartIrrigationKcPayload(Input):
+    # SI 2026.11 treats an omitted target as all zones. Never emit one.
+    entity_id: str = Field(pattern=r"^sensor\.smart_irrigation_[a-z0-9_]+$", max_length=150)
+    new_multiplier_value: float = Field(ge=0, le=2, strict=True)
+
+
+def validated_kc_action(action):
+    if (not isinstance(action, dict) or action.get("action") != "smart_irrigation.set_multiplier"
+            or not isinstance(action.get("target"), dict) or set(action["target"]) != {"entity_id"}
+            or not isinstance(action.get("data"), dict) or set(action["data"]) != {"new_multiplier_value"}):
+        raise ValueError("Posodobitev Kc mora določati eno Smart Irrigation cono.")
+    return SmartIrrigationKcPayload.model_validate({**action["target"], **action["data"]}).model_dump()
+
+
 class SequenceRunInput(Input):
     bed_id: int = Field(gt=0, strict=True)
     run_seconds: int = Field(ge=1, le=86400, strict=True)
@@ -297,10 +311,16 @@ def automatic_irrigation_tick(db: Session):
                 else:
                     kc_updates[zone] = expected
     if kc_updates:
+        try:
+            kc_payloads = [SmartIrrigationKcPayload(entity_id=zone, new_multiplier_value=value).model_dump()
+                           for zone, value in kc_updates.items()]
+        except ValueError:
+            return {"status": "blocked", "reason": "Neveljavna cona ali Kc; posodobitve niso poslane.", "started": 0}
         with httpx.Client(timeout=10.0, follow_redirects=False) as client:
-            for zone, multiplier in kc_updates.items():
+            for kc_payload in kc_payloads:
+                zone, multiplier = kc_payload["entity_id"], kc_payload["new_multiplier_value"]
                 response = client.post(f"{base_url}/api/services/smart_irrigation/set_multiplier",
-                    headers=ha_headers(token), json={"entity_id": zone, "new_multiplier_value": multiplier})
+                    headers=ha_headers(token), json=kc_payload)
                 if response.status_code < 200 or response.status_code >= 300:
                     return {"status": "blocked", "reason": "Home Assistant ni sprejel posodobitve Kc.", "started": 0}
                 state.setdefault("kc_pending", {})[zone] = {"value": multiplier, "sent_at": local_now.isoformat()}
@@ -1500,11 +1520,15 @@ def send_smart_irrigation(day: date, db: Session = Depends(get_db)):
     ready = [row for row in preview["rows"] if row["status"] == "draft"]
     if not ready:
         raise HTTPException(409, "Ni veljavnih Kc posodobitev. Preveri aktivno kulturo, profil kulture in Smart Irrigation cono.")
+    try:
+        kc_payloads = [validated_kc_action(row.get("action")) for row in ready]
+    except ValueError as exc:
+        raise HTTPException(409, "Neveljavna cona ali Kc; nobena posodobitev ni bila poslana.") from exc
     sent = []
     blocked = [row for row in preview["rows"] if row["status"] != "draft"]
     try:
         with httpx.Client(timeout=8.0, follow_redirects=False) as client:
-            for row in ready:
+            for row, kc_payload in zip(ready, kc_payloads):
                 action = row["action"]
                 automation_state = _read_automatic_state()
                 if automation_state.get("enabled"):
@@ -1515,7 +1539,7 @@ def send_smart_irrigation(day: date, db: Session = Depends(get_db)):
                 response = client.post(
                     f"{base_url}/api/services/smart_irrigation/set_multiplier",
                     headers=ha_headers(token),
-                    json={**action["target"], **action["data"]},
+                    json=kc_payload,
                 )
                 if response.status_code == 401:
                     raise HTTPException(502, "Home Assistant je zavrnil žeton; posodobitev ni potrjena.")

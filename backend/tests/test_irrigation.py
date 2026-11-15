@@ -1364,3 +1364,35 @@ def test_separate_pump_relay_leaves_both_s01_outputs_available(irrigation):
     }, db)
     assert result["enabled"] is False
     assert irrigation_controller_capacity(db)["free"] == 143
+
+
+@pytest.mark.parametrize("target,value", [
+    ({}, 1), ({"entity_id": ""}, 1), ({"entity_id": "all"}, 1),
+    ({"entity_id": []}, 1), ({"area_id": "garden"}, 1),
+    ({"entity_id": "sensor.smart_irrigation_a1", "area_id": "garden"}, 1),
+    ({"entity_id": "switch.opensprinkler_s01_station_enabled"}, 1),
+    ({"entity_id": "sensor.smart_irrigation_a1"}, True),
+    ({"entity_id": "sensor.smart_irrigation_a1"}, float("nan")),
+    ({"entity_id": "sensor.smart_irrigation_a1"}, 3),
+])
+def test_kc_batch_rejects_unscoped_or_invalid_update_before_any_io(irrigation, monkeypatch, target, value):
+    _, client, _ = irrigation
+    monkeypatch.setattr(irrigation_routes, "home_assistant_config", lambda: ("http://ha.local", "test"))
+    valid = {"status": "draft", "action": {"action": "smart_irrigation.set_multiplier",
+             "target": {"entity_id": "sensor.smart_irrigation_a1"}, "data": {"new_multiplier_value": 0.5}}}
+    invalid = {"status": "draft", "action": {"action": "smart_irrigation.set_multiplier",
+               "target": target, "data": {"new_multiplier_value": value}}}
+    monkeypatch.setattr(irrigation_routes, "smart_irrigation_preview", lambda *args: {"rows": [valid, invalid]})
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid batch must not contact HA or touch automation state")
+    monkeypatch.setattr(irrigation_routes.httpx, "Client", forbidden)
+    monkeypatch.setattr(irrigation_routes, "_read_automatic_state", forbidden)
+    monkeypatch.setattr(irrigation_routes, "_write_automatic_state", forbidden)
+    response = client.post(f"/api/irrigation/home-assistant/smart-irrigation?day={date.today()}")
+    assert response.status_code == 409
+
+
+def test_kc_action_cannot_be_replaced_with_watering_command():
+    with pytest.raises(ValueError):
+        irrigation_routes.validated_kc_action({"action": "smart_irrigation.water_zone",
+            "target": {"entity_id": "sensor.smart_irrigation_a1"}, "data": {"new_multiplier_value": 1}})
